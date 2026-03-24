@@ -51,14 +51,16 @@ if (text === "1") {
 } else if (text === "4") {
   replyText = "📞 Support\nContact us here: https://lsa-global.com/contact-us-lsa-global/";
 } else {
-  replyText = `Hello 👋 Welcome to LSA GLOBAL.
+ replyText = `Hello 👋 Welcome to LSA GLOBAL.
 
 Please choose a service:
 
 1️⃣ Translation Services  
 2️⃣ Language Courses  
 3️⃣ Get a Quote  
-4️⃣ Speak to Support`;
+4️⃣ Speak to Support
+
+Reply with 1, 2, 3 or 4.`;
 }
         console.log("Message received:", text);
 
