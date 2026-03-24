@@ -40,7 +40,26 @@ app.post("/webhook", async (req, res) => {
       if (message) {
         const from = message.from;
         const text = message.text?.body;
+let replyText = "";
 
+if (text === "1") {
+  replyText = "📄 Translation Services\nSend your document or describe your needs.";
+} else if (text === "2") {
+  replyText = "🎓 Language Courses\nWhich language would you like to learn?";
+} else if (text === "3") {
+  replyText = "💰 Get a Quote\nVisit: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/";
+} else if (text === "4") {
+  replyText = "📞 Support\nContact us here: https://lsa-global.com/contact-us-lsa-global/";
+} else {
+  replyText = `Hello 👋 Welcome to LSA GLOBAL.
+
+Please choose a service:
+
+1️⃣ Translation Services  
+2️⃣ Language Courses  
+3️⃣ Get a Quote  
+4️⃣ Speak to Support`;
+}
         console.log("Message received:", text);
 
         // ✅ AUTO REPLY
@@ -50,7 +69,16 @@ app.post("/webhook", async (req, res) => {
             messaging_product: "whatsapp",
             to: from,
             text: {
-              body: "Hello 👋 Welcome to LSA GLOBAL. How can we assist you today?",
+              body: body: body: replyText
+
+Please choose a service:
+
+1️⃣ Translation Services  
+2️⃣ Language Courses  
+3️⃣ Get a Quote  
+4️⃣ Speak to Support
+
+Reply with 1, 2, 3 or 4.`,
             },
           },
           {
