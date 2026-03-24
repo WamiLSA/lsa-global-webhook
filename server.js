@@ -21,8 +21,8 @@ app.get("/webhook", (req, res) => {
 // RECEIVE
 const axios = require("axios");
 
-const PHONE_NUMBER_ID = "YOUR_PHONE_NUMBER_ID";
-const ACCESS_TOKEN = "YOUR_PERMANENT_TOKEN";
+const PHONE_NUMBER_ID = "1075889828943774";
+const ACCESS_TOKEN = "EAAYRx6VTgZCEBREHkfR7FpZAJBwJ3s98bZCfArbPBVETNPHSrfQrG7ZAlO5Q1N8HGHvbMxZB6Te4Vlgu9pZBbMzVqdcGPbRQMscc7ztkZACWoQN2FtSP8yzKPrudbGUL5IzHyf1dRZCP2GnoGJI7yXkc0vt8WTmAc8TXUjZCJZCSlhrfpl1rTGvhPhBZCVBB2Cn2cyF0hksxlkgTtWbtKAWWSGUx4YZC5kxJFTT1WfpTryR4nvP1EJbmiMfhH84bQWe7ANzDILaFsjYL1ztReyGq7mhfh7FBW211jDUYZBX64xQZDZD";
 
 app.post("/webhook", async (req, res) => {
   try {
