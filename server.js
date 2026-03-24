@@ -69,7 +69,8 @@ Please choose a service:
             messaging_product: "whatsapp",
             to: from,
             text: {
-              body: body: body: replyText
+  body: replyText
+}
 
 Please choose a service:
 
