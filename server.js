@@ -7,7 +7,7 @@ app.use(express.json());
 // ===== CONFIG =====
 const VERIFY_TOKEN = "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = "EAAYRx6VTgZCEBRM3wVaZC2p8OCD1tmaZCe7lxPvBofsFoogBVaGGdsOP4EBN3haBSX9mHMNM7ZA6SRzx98mLnWqvLYTCOxRMyTHcRA6xZCBi05ZCFLZBgGZCvRSmusM2l3ZC8Ai0dZAsAcVmqhbyewxQZBc2iMavuLuHTa0YIzZBZAqPJ3dnVrrh77DKKdywwooeDTpSwAAZDZD";
-const PHONE_NUMBER_ID = "4087446328213155";
+const PHONE_NUMBER_ID = "1075889828943774";
 
 // ===== VERIFY (GET) =====
 app.get("/webhook", (req, res) => {
