@@ -25,66 +25,137 @@ app.get("/webhook", (req, res) => {
 // ===== RECEIVE MESSAGE (POST) =====
 app.post("/webhook", async (req, res) => {
   try {
-    const message =
-      req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const body = req.body;
 
-    if (message) {
-      const from = message.from;
-      const text = message.text?.body?.trim();
+    if (body.object) {
+      const entry = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const messages = value?.messages;
 
-      console.log("Message received:", text);
+      if (messages && messages[0]) {
+        const message = messages[0];
+        const from = message.from;
+        const text = message.text?.body?.toLowerCase() || "";
 
-      let replyText = "";
+        console.log("Message received:", text);
 
-      // ===== MENU LOGIC =====
-      if (!text || text.toLowerCase() === "hi") {
-        replyText = `Hello 👋 Welcome to LSA GLOBAL.
+        let reply = "";
 
-Please choose a service:
+        // 🧠 INTENT DETECTION
+        if (text.includes("hello") || text.includes("hi")) {
+          reply = `Hello 👋 Welcome to LSA GLOBAL.
 
-1️⃣ Translation Services  
-2️⃣ Language Courses  
-3️⃣ Get a Quote  
-4️⃣ Speak to Support  
+We offer:
 
-Reply with 1, 2, 3 or 4.`;
-      } else if (text === "1") {
-        replyText = "📄 Translation Services\nSend your document or describe your needs.";
-      } else if (text === "2") {
-        replyText = "🎓 Language Courses\nVisit: https://lsa-global.com/register-now-2/";
-      } else if (text === "3") {
-        replyText = "💰 Get a Quote\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/";
-      } else if (text === "4") {
-        replyText = "📞 Support\nEmail: support@lsaglobal-translate.co.uk";
-      } else {
-        replyText = "Please reply with 1, 2, 3 or 4.";
+1️⃣ Translation services  
+2️⃣ Language courses  
+3️⃣ Interpreting services  
+4️⃣ Speak to an advisor  
+
+Please reply with 1, 2, 3 or 4.`;
+        }
+
+        else if (text === "1" || text.includes("translation")) {
+          reply = `🌍 Translation Services
+
+We provide certified translations in:
+EN, FR, ES, DE, IT, AR, ZH + more.
+
+✔ Legal documents  
+✔ Academic transcripts  
+✔ Business & websites  
+
+👉 Get a free quote:
+https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/
+
+Or type:
+NAME + LANGUAGE + DEADLINE`;
+        }
+
+        else if (text === "2" || text.includes("course") || text.includes("learn")) {
+          reply = `🎓 Language Courses (A1–C2)
+
+✔ English, French, Spanish, German, Chinese  
+✔ Exam prep: IELTS, TOEFL, TCF, TEF, DELE  
+
+👉 Register here:
+https://lsa-global.com/register-now-2/
+
+Or tell us:
+Your level + target exam`;
+        }
+
+        else if (text === "3" || text.includes("interpreting")) {
+          reply = `🎤 Interpreting Services
+
+✔ Online & onsite  
+✔ Conferences, meetings, interviews  
+
+Tell us:
+• Language pair  
+• Date  
+• Duration`;
+        }
+
+        else if (text === "4" || text.includes("advisor")) {
+          reply = `👤 Speak to an advisor
+
+Our team will contact you shortly.
+
+You can also submit your request here:
+https://lsa-global.com/contact-us-lsa-global/`;
+        }
+
+        // 💼 LEAD CAPTURE (SMART DETECTION)
+        else if (
+          text.includes("deadline") ||
+          text.includes("translate") ||
+          text.split(" ").length > 4
+        ) {
+          reply = `✅ Thank you. Your request has been received.
+
+Our team will review and get back to you shortly.
+
+For faster processing:
+https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/`;
+        }
+
+        // 🔁 DEFAULT RESPONSE
+        else {
+          reply = `Welcome to LSA GLOBAL 👋
+
+Please choose:
+
+1️⃣ Translation  
+2️⃣ Courses  
+3️⃣ Interpreting  
+4️⃣ Advisor`;
+        }
+
+        // 📤 SEND MESSAGE
+        await axios.post(
+          `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+          {
+            messaging_product: "whatsapp",
+            to: from,
+            text: { body: reply },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
       }
 
-      // ===== SEND MESSAGE =====
-      await axios.post(
-        `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-        {
-          messaging_product: "whatsapp",
-          to: from,
-          text: { body: replyText },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      res.sendStatus(200);
+    } else {
+      res.sendStatus(404);
     }
-
-    res.sendStatus(200);
   } catch (error) {
     console.error("Error:", error.response?.data || error.message);
     res.sendStatus(500);
   }
-});
-
-// ===== START SERVER =====
-app.listen(process.env.PORT || 10000, () => {
-  console.log("Server running");
 });
