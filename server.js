@@ -13,7 +13,7 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
 function normalizeTextMessage(message) {
   if (!message) return "";
