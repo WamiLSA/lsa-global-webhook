@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL Inbox</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      display: flex;
+      height: 100vh;
+    }
+    #sidebar {
+      width: 32%;
+      border-right: 1px solid #ddd;
+      overflow-y: auto;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    #chatPane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #chatHeader {
+      padding: 12px;
+      border-bottom: 1px solid #ddd;
+      font-weight: bold;
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: #f7f7f7;
+    }
+    .msg {
+      max-width: 75%;
+      margin-bottom: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+    }
+    .in {
+      background: #fff;
+      border: 1px solid #ddd;
+    }
+    .out {
+      background: #dcf8c6;
+      margin-left: auto;
+    }
+    #composer {
+      display: flex;
+      border-top: 1px solid #ddd;
+      padding: 10px;
+      gap: 10px;
+    }
+    #composer textarea {
+      flex: 1;
+      height: 70px;
+      resize: none;
+      padding: 10px;
+    }
+    #composer button {
+      width: 120px;
+    }
+    .thread {
+      border-bottom: 1px solid #eee;
+      padding: 10px;
+      cursor: pointer;
+    }
+    .thread:hover {
+      background: #f2f2f2;
+    }
+    .small {
+      color: #666;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h3>LSA GLOBAL Inbox</h3>
+    <div id="threads"></div>
+  </div>
+
+  <div id="chatPane">
+    <div id="chatHeader">Select a conversation</div>
+    <div id="messages"></div>
+    <div id="composer">
+      <textarea id="replyBox" placeholder="Type your reply..."></textarea>
+      <button onclick="sendReply()">Send</button>
+    </div>
+  </div>
+
+  <script>
+    let currentWaId = null;
+
+    async function loadThreads() {
+      const res = await fetch("/api/conversations");
+      const threads = await res.json();
+
+      const container = document.getElementById("threads");
+      container.innerHTML = "";
+
+      threads.forEach(thread => {
+        const div = document.createElement("div");
+        div.className = "thread";
+        div.innerHTML = `
+          <div><strong>${thread.contact_name || "Unknown"}</strong></div>
+          <div>${thread.wa_id}</div>
+          <div class="small">${thread.last_message || ""}</div>
+        `;
+        div.onclick = () => loadConversation(thread.wa_id, thread.contact_name);
+        container.appendChild(div);
+      });
+    }
+
+    async function loadConversation(wa_id, contactName = "") {
+      currentWaId = wa_id;
+      document.getElementById("chatHeader").textContent =
+        `${contactName || "Contact"} — ${wa_id}`;
+
+      const res = await fetch(`/api/conversations/${encodeURIComponent(wa_id)}`);
+      const messages = await res.json();
+
+      const container = document.getElementById("messages");
+      container.innerHTML = "";
+
+      messages.forEach(msg => {
+        const div = document.createElement("div");
+        div.className = `msg ${msg.direction}`;
+        div.textContent = msg.body || "";
+        container.appendChild(div);
+      });
+
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function sendReply() {
+      const box = document.getElementById("replyBox");
+      const body = box.value.trim();
+
+      if (!currentWaId) {
+        alert("Select a conversation first.");
+        return;
+      }
+
+      if (!body) {
+        return;
+      }
+
+      const res = await fetch("/api/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          wa_id: currentWaId,
+          body
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Send failed: " + JSON.stringify(result));
+        return;
+      }
+
+      box.value = "";
+      await loadConversation(currentWaId);
+      await loadThreads();
+    }
+
+    loadThreads();
+    setInterval(loadThreads, 5000);
+  </script>
+</body>
+</html>
