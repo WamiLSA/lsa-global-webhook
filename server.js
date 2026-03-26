@@ -1,16 +1,60 @@
 const express = require("express");
 const axios = require("axios");
+const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
-// ===== CONFIG (FROM RENDER ENV) =====
-const VERIFY_TOKEN = "LSA_GLOBAL_TOKEN";
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ===== VERIFY (GET) =====
+function normalizeTextMessage(message) {
+  if (!message) return "";
+  return message.text?.body?.trim() || "";
+}
+
+async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
+  const { error } = await supabase.from("conversations").insert([
+    {
+      wa_id,
+      contact_name,
+      direction,
+      body,
+      message_type
+    }
+  ]);
+
+  if (error) {
+    console.error("Supabase insert error:", error);
+  }
+}
+
+async function sendWhatsAppText(to, body) {
+  const response = await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: "whatsapp",
+      to,
+      text: { body }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+  return response.data;
+}
+
+// ===== VERIFY WEBHOOK =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -18,145 +62,186 @@ app.get("/webhook", (req, res) => {
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     return res.status(200).send(challenge);
-  } else {
-    return res.sendStatus(403);
   }
+  return res.sendStatus(403);
 });
 
-// ===== RECEIVE MESSAGE (POST) =====
+// ===== RECEIVE WHATSAPP MESSAGES =====
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
 
-    if (body.object) {
-      const entry = body.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const value = changes?.value;
-      const messages = value?.messages;
-
-      if (messages && messages[0]) {
-        const message = messages[0];
-        const from = message.from;
-        const text = message.text?.body?.toLowerCase() || "";
-
-        console.log("Message received:", text);
-
-        let reply = "";
-
-        // ===== MENU =====
-        if (text.includes("hello") || text.includes("hi")) {
-          reply =
-            "👋 Welcome to LSA GLOBAL\n\n" +
-            "We offer:\n\n" +
-            "1️⃣ Translation services\n" +
-            "2️⃣ Language courses\n" +
-            "3️⃣ Interpreting services\n" +
-            "4️⃣ Speak to an advisor\n\n" +
-            "Please reply with 1, 2, 3 or 4.";
-        }
-
-        // ===== TRANSLATION =====
-        else if (text === "1" || text.includes("translation")) {
-          reply =
-            "🌍 Translation Services\n\n" +
-            "We provide certified translations in:\n" +
-            "EN, FR, ES, DE, IT, AR, ZH + more.\n\n" +
-            "✔ Legal documents\n" +
-            "✔ Academic transcripts\n" +
-            "✔ Business & websites\n\n" +
-            "👉 Get a free quote:\n" +
-            "https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/\n\n" +
-            "Or type:\nName + Language + Deadline";
-        }
-
-        // ===== COURSES =====
-        else if (
-          text === "2" ||
-          text.includes("course") ||
-          text.includes("learn")
-        ) {
-          reply =
-            "📚 Language Courses (A1–C2)\n\n" +
-            "✔ English, French, Spanish, German, Chinese\n" +
-            "✔ Exam prep: IELTS, TOEFL, TCF, TEF, DELE\n\n" +
-            "👉 Register here:\n" +
-            "https://lsa-global.com/register-now-2/\n\n" +
-            "Or tell us:\nYour level + target exam";
-        }
-
-        // ===== INTERPRETING =====
-        else if (text === "3" || text.includes("interpreting")) {
-          reply =
-            "🎤 Interpreting Services\n\n" +
-            "✔ Online & onsite\n" +
-            "✔ Conferences, meetings, interviews\n\n" +
-            "Tell us:\n" +
-            "- Language pair\n" +
-            "- Date\n" +
-            "- Duration";
-        }
-
-        // ===== ADVISOR =====
-        else if (text === "4" || text.includes("advisor")) {
-          reply =
-            "👨‍💼 Speak to an advisor\n\n" +
-            "Our team will contact you shortly.\n\n" +
-            "👉 Contact us:\n" +
-            "https://lsa-global.com/contact-us-lsa-global/";
-        }
-
-        // ===== LEAD CAPTURE =====
-        else if (
-          text.includes("deadline") ||
-          text.includes("translate") ||
-          text.split(" ").length > 4
-        ) {
-          reply =
-            "✅ Thank you. Your request has been received.\n\n" +
-            "Our team will review and get back to you shortly.\n\n" +
-            "👉 Faster processing:\n" +
-            "https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/";
-        }
-
-        // ===== DEFAULT =====
-        else {
-          reply =
-            "👋 Welcome to LSA GLOBAL\n\n" +
-            "Please choose:\n\n" +
-            "1️⃣ Translation\n" +
-            "2️⃣ Courses\n" +
-            "3️⃣ Interpreting\n" +
-            "4️⃣ Advisor";
-        }
-
-        // ===== SEND MESSAGE =====
-        await axios.post(
-          `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-          {
-            messaging_product: "whatsapp",
-            to: from,
-            text: { body: reply },
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-      }
-
-      return res.sendStatus(200);
-    } else {
+    if (body.object !== "whatsapp_business_account") {
       return res.sendStatus(404);
     }
+
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const message = value?.messages?.[0];
+    const contact = value?.contacts?.[0];
+
+    if (!message) {
+      return res.sendStatus(200);
+    }
+
+    const from = message.from;
+    const contactName = contact?.profile?.name || null;
+    const text = normalizeTextMessage(message);
+
+    console.log("Message received from:", from, "| text:", text);
+
+    await saveMessage({
+      wa_id: from,
+      contact_name: contactName,
+      direction: "in",
+      body: text,
+      message_type: message.type || "text"
+    });
+
+    // ===== SIMPLE BOT LOGIC =====
+    let reply = "";
+
+    if (text.toLowerCase() === "hi" || text.toLowerCase() === "hello") {
+      reply =
+        "Hello 👋 Welcome to LSA GLOBAL.\n\n" +
+        "Please choose a service:\n" +
+        "1️⃣ Translation services\n" +
+        "2️⃣ Language courses\n" +
+        "3️⃣ Interpreting services\n" +
+        "4️⃣ Speak to an advisor";
+    } else if (text === "1") {
+      reply =
+        "🌍 Translation Services\n\n" +
+        "Please send:\n" +
+        "- document type\n" +
+        "- source language\n" +
+        "- target language\n" +
+        "- deadline";
+    } else if (text === "2") {
+      reply =
+        "📚 Language Courses\n\n" +
+        "Please tell us:\n" +
+        "- language\n" +
+        "- current level\n" +
+        "- target exam (if any)";
+    } else if (text === "3") {
+      reply =
+        "🎤 Interpreting Services\n\n" +
+        "Please tell us:\n" +
+        "- language pair\n" +
+        "- date\n" +
+        "- duration\n" +
+        "- online or onsite";
+    } else if (text === "4") {
+      reply =
+        "👨‍💼 Advisor Request\n\n" +
+        "Please describe your need briefly. Our team will contact you shortly.";
+    }
+
+    if (reply) {
+      await sendWhatsAppText(from, reply);
+
+      await saveMessage({
+        wa_id: from,
+        contact_name: contactName,
+        direction: "out",
+        body: reply,
+        message_type: "text"
+      });
+    }
+
+    return res.sendStatus(200);
   } catch (error) {
-    console.error("Error:", error.response?.data || error.message);
+    console.error("Webhook error:", error.response?.data || error.message || error);
     return res.sendStatus(500);
   }
 });
 
-// ===== START SERVER =====
+// ===== INBOX API =====
+
+// List conversation summaries
+app.get("/api/conversations", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("wa_id, contact_name, body, created_at, direction")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const map = new Map();
+
+    for (const row of data) {
+      if (!map.has(row.wa_id)) {
+        map.set(row.wa_id, {
+          wa_id: row.wa_id,
+          contact_name: row.contact_name,
+          last_message: row.body,
+          last_direction: row.direction,
+          last_time: row.created_at
+        });
+      }
+    }
+
+    return res.json(Array.from(map.values()));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Get one thread
+app.get("/api/conversations/:wa_id", async (req, res) => {
+  try {
+    const wa_id = req.params.wa_id;
+
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("wa_id", wa_id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual send from inbox
+app.post("/api/send", async (req, res) => {
+  try {
+    const { wa_id, body } = req.body;
+
+    if (!wa_id || !body) {
+      return res.status(400).json({ error: "wa_id and body are required" });
+    }
+
+    const sendResult = await sendWhatsAppText(wa_id, body);
+
+    await saveMessage({
+      wa_id,
+      direction: "out",
+      body,
+      message_type: "text"
+    });
+
+    return res.json({ ok: true, sendResult });
+  } catch (error) {
+    console.error("Manual send error:", error.response?.data || error.message || error);
+    return res.status(500).json({ error: error.response?.data || error.message });
+  }
+});
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 app.listen(process.env.PORT || 10000, () => {
-  console.log("🚀 Server running...");
+  console.log("Server running");
 });
