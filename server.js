@@ -5,6 +5,7 @@ const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -21,7 +22,6 @@ app.use(
   })
 );
 
-// ===== CONFIG =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -32,7 +32,6 @@ const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
-// ===== AUTH =====
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
@@ -40,7 +39,6 @@ function requireAuth(req, res, next) {
   return res.redirect("/login");
 }
 
-// ===== LOGIN PAGE =====
 app.get("/login", (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -116,7 +114,6 @@ app.get("/logout", (req, res) => {
   });
 });
 
-// ===== VERIFY WEBHOOK =====
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -128,7 +125,6 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// ===== SUPABASE HELPERS =====
 function normalizeTextMessage(message) {
   if (!message) return "";
   return message.text?.body?.trim() || "";
@@ -168,7 +164,6 @@ async function sendWhatsAppText(to, body) {
   return response.data;
 }
 
-// ===== RECEIVE WHATSAPP MESSAGES =====
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
@@ -259,7 +254,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ===== PROTECTED INBOX PAGE =====
 app.get("/", (req, res) => {
   return res.redirect("/inbox");
 });
@@ -268,10 +262,8 @@ app.get("/inbox", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// ===== PROTECT API =====
 app.use("/api", requireAuth);
 
-// List conversation summaries
 app.get("/api/conversations", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -304,7 +296,6 @@ app.get("/api/conversations", async (req, res) => {
   }
 });
 
-// Get one thread
 app.get("/api/conversations/:wa_id", async (req, res) => {
   try {
     const wa_id = req.params.wa_id;
@@ -325,7 +316,6 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
   }
 });
 
-// Manual send from inbox
 app.post("/api/send", async (req, res) => {
   try {
     const { wa_id, body } = req.body;
@@ -350,7 +340,6 @@ app.post("/api/send", async (req, res) => {
   }
 });
 
-// Update label
 app.post("/api/label", async (req, res) => {
   try {
     const { wa_id, label } = req.body;
@@ -374,7 +363,6 @@ app.post("/api/label", async (req, res) => {
   }
 });
 
-// ===== START SERVER =====
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
