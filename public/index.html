@@ -84,7 +84,20 @@
   </div>
 
   <div id="chatPane">
-    <div id="chatHeader">Select a conversation</div>
+   <div id="chatHeader">
+  <div id="chatTitle">Select a conversation</div>
+  <div style="margin-top:8px;">
+    <select id="labelSelect" onchange="updateLabel()">
+      <option value="">No label</option>
+      <option value="Hot">Hot</option>
+      <option value="Quote">Quote</option>
+      <option value="Course">Course</option>
+      <option value="Interpreting">Interpreting</option>
+      <option value="Advisor">Advisor</option>
+      <option value="Follow-up">Follow-up</option>
+    </select>
+  </div>
+</div>
     <div id="messages"></div>
     <div id="composer">
       <textarea id="replyBox" placeholder="Type your reply..."></textarea>
@@ -105,11 +118,12 @@
       threads.forEach(thread => {
         const div = document.createElement("div");
         div.className = "thread";
-        div.innerHTML = `
-          <div><strong>${thread.contact_name || "Unknown"}</strong></div>
-          <div>${thread.wa_id}</div>
-          <div class="small">${thread.last_message || ""}</div>
-        `;
+       div.innerHTML = `
+  <div><strong>${thread.contact_name || "Unknown"}</strong></div>
+  <div>${thread.wa_id}</div>
+  <div class="small">${thread.last_message || ""}</div>
+  <div class="small"><strong>Label:</strong> ${thread.label || "None"}</div>
+`;
         div.onclick = () => loadConversation(thread.wa_id, thread.contact_name);
         container.appendChild(div);
       });
@@ -117,8 +131,14 @@
 
     async function loadConversation(wa_id, contactName = "") {
       currentWaId = wa_id;
-      document.getElementById("chatHeader").textContent =
-        `${contactName || "Contact"} — ${wa_id}`;
+     document.getElementById("chatTitle").textContent =
+  `${contactName || "Contact"} — ${wa_id}`;
+      const labelSelect = document.getElementById("labelSelect");
+if (messages.length > 0) {
+  labelSelect.value = messages[messages.length - 1].label || "";
+} else {
+  labelSelect.value = "";
+}
 
       const res = await fetch(`/api/conversations/${encodeURIComponent(wa_id)}`);
       const messages = await res.json();
@@ -171,7 +191,34 @@
       await loadConversation(currentWaId);
       await loadThreads();
     }
+async function updateLabel() {
+  if (!currentWaId) {
+    return;
+  }
 
+  const label = document.getElementById("labelSelect").value;
+
+  const res = await fetch("/api/label", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      wa_id: currentWaId,
+      label
+    })
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    alert("Label update failed: " + JSON.stringify(result));
+    return;
+  }
+
+  await loadThreads();
+  await loadConversation(currentWaId);
+}
     loadThreads();
     setInterval(loadThreads, 5000);
   </script>
