@@ -16,16 +16,22 @@
       overflow-y: auto;
       padding: 12px;
       box-sizing: border-box;
+      background: #fff;
     }
     #chatPane {
       flex: 1;
       display: flex;
       flex-direction: column;
+      background: #f7f7f7;
     }
     #chatHeader {
       padding: 12px;
       border-bottom: 1px solid #ddd;
+      background: #fff;
+    }
+    #chatTitle {
       font-weight: bold;
+      margin-bottom: 8px;
     }
     #messages {
       flex: 1;
@@ -39,10 +45,12 @@
       padding: 10px 12px;
       border-radius: 12px;
       white-space: pre-wrap;
+      word-break: break-word;
     }
     .in {
       background: #fff;
       border: 1px solid #ddd;
+      margin-right: auto;
     }
     .out {
       background: #dcf8c6;
@@ -53,6 +61,7 @@
       border-top: 1px solid #ddd;
       padding: 10px;
       gap: 10px;
+      background: #fff;
     }
     #composer textarea {
       flex: 1;
@@ -75,6 +84,14 @@
       color: #666;
       font-size: 12px;
     }
+    .badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: #efefef;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -84,21 +101,23 @@
   </div>
 
   <div id="chatPane">
-   <div id="chatHeader">
-  <div id="chatTitle">Select a conversation</div>
-  <div style="margin-top:8px;">
-    <select id="labelSelect" onchange="updateLabel()">
-      <option value="">No label</option>
-      <option value="Hot">Hot</option>
-      <option value="Quote">Quote</option>
-      <option value="Course">Course</option>
-      <option value="Interpreting">Interpreting</option>
-      <option value="Advisor">Advisor</option>
-      <option value="Follow-up">Follow-up</option>
-    </select>
-  </div>
-</div>
+    <div id="chatHeader">
+      <div id="chatTitle">Select a conversation</div>
+      <div>
+        <select id="labelSelect" onchange="updateLabel()">
+          <option value="">No label</option>
+          <option value="Hot">Hot</option>
+          <option value="Quote">Quote</option>
+          <option value="Course">Course</option>
+          <option value="Interpreting">Interpreting</option>
+          <option value="Advisor">Advisor</option>
+          <option value="Follow-up">Follow-up</option>
+        </select>
+      </div>
+    </div>
+
     <div id="messages"></div>
+
     <div id="composer">
       <textarea id="replyBox" placeholder="Type your reply..."></textarea>
       <button onclick="sendReply()">Send</button>
@@ -118,27 +137,22 @@
       threads.forEach(thread => {
         const div = document.createElement("div");
         div.className = "thread";
-       div.innerHTML = `
-  <div><strong>${thread.contact_name || "Unknown"}</strong></div>
-  <div>${thread.wa_id}</div>
-  <div class="small">${thread.last_message || ""}</div>
-  <div class="small"><strong>Label:</strong> ${thread.label || "None"}</div>
-`;
-        div.onclick = () => loadConversation(thread.wa_id, thread.contact_name);
+        div.innerHTML = `
+          <div><strong>${thread.contact_name || "Unknown"}</strong></div>
+          <div>${thread.wa_id}</div>
+          <div class="small">${thread.last_message || ""}</div>
+          <div class="badge">${thread.label || "No label"}</div>
+        `;
+        div.onclick = () => loadConversation(thread.wa_id, thread.contact_name || "Contact");
         container.appendChild(div);
       });
     }
 
-    async function loadConversation(wa_id, contactName = "") {
+    async function loadConversation(wa_id, contactName = "Contact") {
       currentWaId = wa_id;
-     document.getElementById("chatTitle").textContent =
-  `${contactName || "Contact"} — ${wa_id}`;
-      const labelSelect = document.getElementById("labelSelect");
-if (messages.length > 0) {
-  labelSelect.value = messages[messages.length - 1].label || "";
-} else {
-  labelSelect.value = "";
-}
+
+      document.getElementById("chatTitle").textContent =
+        `${contactName} — ${wa_id}`;
 
       const res = await fetch(`/api/conversations/${encodeURIComponent(wa_id)}`);
       const messages = await res.json();
@@ -146,12 +160,21 @@ if (messages.length > 0) {
       const container = document.getElementById("messages");
       container.innerHTML = "";
 
+      if (!Array.isArray(messages) || messages.length === 0) {
+        container.innerHTML = "<div class='small'>No messages yet.</div>";
+        document.getElementById("labelSelect").value = "";
+        return;
+      }
+
       messages.forEach(msg => {
         const div = document.createElement("div");
-        div.className = `msg ${msg.direction}`;
+        div.className = `msg ${msg.direction === "out" ? "out" : "in"}`;
         div.textContent = msg.body || "";
         container.appendChild(div);
       });
+
+      const last = messages[messages.length - 1];
+      document.getElementById("labelSelect").value = last.label || "";
 
       container.scrollTop = container.scrollHeight;
     }
@@ -165,9 +188,7 @@ if (messages.length > 0) {
         return;
       }
 
-      if (!body) {
-        return;
-      }
+      if (!body) return;
 
       const res = await fetch("/api/send", {
         method: "POST",
@@ -191,34 +212,34 @@ if (messages.length > 0) {
       await loadConversation(currentWaId);
       await loadThreads();
     }
-async function updateLabel() {
-  if (!currentWaId) {
-    return;
-  }
 
-  const label = document.getElementById("labelSelect").value;
+    async function updateLabel() {
+      if (!currentWaId) return;
 
-  const res = await fetch("/api/label", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      wa_id: currentWaId,
-      label
-    })
-  });
+      const label = document.getElementById("labelSelect").value;
 
-  const result = await res.json();
+      const res = await fetch("/api/label", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          wa_id: currentWaId,
+          label
+        })
+      });
 
-  if (!res.ok) {
-    alert("Label update failed: " + JSON.stringify(result));
-    return;
-  }
+      const result = await res.json();
 
-  await loadThreads();
-  await loadConversation(currentWaId);
-}
+      if (!res.ok) {
+        alert("Label update failed: " + JSON.stringify(result));
+        return;
+      }
+
+      await loadThreads();
+      await loadConversation(currentWaId);
+    }
+
     loadThreads();
     setInterval(loadThreads, 5000);
   </script>
