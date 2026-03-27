@@ -296,7 +296,38 @@ app.post("/webhook", async (req, res) => {
         "👨‍💼 Advisor Request\n\n" +
         "Please describe your need briefly. Our team will contact you shortly.";
     }
+else {
+  try {
+    const aiResponse = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions: `
+You are the LSA GLOBAL AI assistant.
 
+Rules:
+1. Use LSA GLOBAL knowledge base first.
+2. Never invent prices, legal guarantees, turnaround promises, or policies.
+3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
+4. Keep answers businesslike, clear, and concise.
+5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
+6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
+`,
+      input: `
+Customer message:
+${text}
+
+Knowledge base matches:
+${JSON.stringify(await searchKnowledgeBase(text))}
+`
+    });
+
+    reply =
+      aiResponse.output_text ||
+      "Thank you. Our team will review your message and reply shortly.";
+  } catch (err) {
+    console.error("AI fallback error:", err.response?.data || err.message || err);
+    reply =
+      "Thank you. We have received your message. A human advisor will assist you shortly.";
+  }
     if (reply) {
   if (reply.length > 180) {
     const ack = "Thank you. We are reviewing your request.";
