@@ -297,6 +297,23 @@ app.post("/webhook", async (req, res) => {
         "Please describe your need briefly. Our team will contact you shortly.";
     }
 else {
+  const kbMatches = await searchKnowledgeBase(text);
+
+  const kbContext = kbMatches.length
+    ? kbMatches.map((item, index) => {
+        return `
+[KB ${index + 1}]
+Category: ${item.kb_categories?.name || "None"}
+Title: ${item.title || ""}
+Question: ${item.question || ""}
+Keywords: ${item.keywords || ""}
+Audience: ${item.audience || ""}
+Language: ${item.language || "en"}
+Answer: ${item.answer || ""}
+`;
+      }).join("\n")
+    : "NO_MATCH";
+
   try {
     const aiResponse = await openai.responses.create({
       model: "gpt-5-mini",
@@ -316,7 +333,7 @@ Customer message:
 ${text}
 
 Knowledge base matches:
-${JSON.stringify(await searchKnowledgeBase(text))}
+${kbContext}
 `
     });
 
@@ -324,10 +341,11 @@ ${JSON.stringify(await searchKnowledgeBase(text))}
       aiResponse.output_text ||
       "Thank you. Our team will review your message and reply shortly.";
   } catch (err) {
-    console.error("AI fallback error:", err.response?.data || err.message || err);
+    console.error("AI fallback error:", err.message || err);
     reply =
       "Thank you. We have received your message. A human advisor will assist you shortly.";
   }
+}
     if (reply) {
   if (reply.length > 180) {
     const ack = "Thank you. We are reviewing your request.";
