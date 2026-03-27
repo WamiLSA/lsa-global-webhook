@@ -589,6 +589,78 @@ app.delete("/api/kb/articles/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+app.post("/api/ai-reply", async (req, res) => {
+  try {
+    const { message, channel = "internal", wa_id = null } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: "message is required" });
+    }
+
+    const kbMatches = await searchKnowledgeBase(message);
+
+    const kbContext = kbMatches.length
+      ? kbMatches.map((item, index) => {
+          return `
+[KB ${index + 1}]
+Category: ${item.kb_categories?.name || "None"}
+Title: ${item.title || ""}
+Question: ${item.question || ""}
+Keywords: ${item.keywords || ""}
+Audience: ${item.audience || ""}
+Language: ${item.language || "en"}
+Answer: ${item.answer || ""}
+`;
+        }).join("\n")
+      : "NO_MATCH";
+
+    const instructions = `
+You are the LSA GLOBAL AI assistant.
+
+Rules:
+1. Use LSA GLOBAL knowledge base first.
+2. Never invent prices, legal guarantees, turnaround promises, or policies.
+3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
+4. Keep answers businesslike, clear, and concise.
+5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
+6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
+`;
+
+    const input = `
+Customer message:
+${message}
+
+Channel:
+${channel}
+
+Knowledge base matches:
+${kbContext}
+
+Write the best answer for LSA GLOBAL.
+`;
+
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions,
+      input
+    });
+
+    const answer =
+      response.output_text ||
+      "Thank you. Our team will review your message and reply shortly.";
+
+    return res.json({
+      ok: true,
+      answer,
+      kb_matches: kbMatches.length
+    });
+  } catch (error) {
+    console.error("AI route error:", error.response?.data || error.message || error);
+    return res.status(500).json({
+      error: "AI reply failed"
+    });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
