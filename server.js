@@ -1,20 +1,134 @@
 const express = require("express");
 const axios = require("axios");
 const path = require("path");
+const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.urlencoded({ extended: true }));
 
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "change_this_secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false
+    }
+  })
+);
+
+// ===== CONFIG =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+const INBOX_USERNAME = process.env.INBOX_USERNAME;
+const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 
+// ===== AUTH =====
+function requireAuth(req, res, next) {
+  if (req.session && req.session.authenticated) {
+    return next();
+  }
+  return res.redirect("/login");
+}
+
+// ===== LOGIN PAGE =====
+app.get("/login", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <title>LSA GLOBAL Inbox Login</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          background: #f5f5f5;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          margin: 0;
+        }
+        .box {
+          width: 360px;
+          background: white;
+          padding: 24px;
+          border-radius: 12px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        }
+        h2 {
+          margin-top: 0;
+        }
+        input {
+          width: 100%;
+          padding: 10px;
+          margin-bottom: 12px;
+          box-sizing: border-box;
+        }
+        button {
+          width: 100%;
+          padding: 10px;
+        }
+        .err {
+          color: red;
+          margin-bottom: 12px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <h2>LSA GLOBAL Inbox</h2>
+        ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
+        <form method="POST" action="/login">
+          <input type="text" name="username" placeholder="Username" required />
+          <input type="password" name="password" placeholder="Password" required />
+          <button type="submit">Login</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  if (username === INBOX_USERNAME && password === INBOX_PASSWORD) {
+    req.session.authenticated = true;
+    return res.redirect("/inbox");
+  }
+
+  return res.redirect("/login?error=1");
+});
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.redirect("/login");
+  });
+});
+
+// ===== VERIFY WEBHOOK =====
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+  return res.sendStatus(403);
+});
+
+// ===== SUPABASE HELPERS =====
 function normalizeTextMessage(message) {
   if (!message) return "";
   return message.text?.body?.trim() || "";
@@ -54,18 +168,6 @@ async function sendWhatsAppText(to, body) {
   return response.data;
 }
 
-// ===== VERIFY WEBHOOK =====
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-  return res.sendStatus(403);
-});
-
 // ===== RECEIVE WHATSAPP MESSAGES =====
 app.post("/webhook", async (req, res) => {
   try {
@@ -99,7 +201,6 @@ app.post("/webhook", async (req, res) => {
       message_type: message.type || "text"
     });
 
-    // ===== SIMPLE BOT LOGIC =====
     let reply = "";
 
     if (text.toLowerCase() === "hi" || text.toLowerCase() === "hello") {
@@ -158,14 +259,24 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ===== INBOX API =====
+// ===== PROTECTED INBOX PAGE =====
+app.get("/", (req, res) => {
+  return res.redirect("/inbox");
+});
+
+app.get("/inbox", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// ===== PROTECT API =====
+app.use("/api", requireAuth);
 
 // List conversation summaries
 app.get("/api/conversations", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("conversations")
-     .select("wa_id, contact_name, body, created_at, direction, label")
+      .select("wa_id, contact_name, body, created_at, direction, label")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -181,8 +292,8 @@ app.get("/api/conversations", async (req, res) => {
           contact_name: row.contact_name,
           last_message: row.body,
           last_direction: row.direction,
-         last_time: row.created_at,
-         label: row.label || ""
+          last_time: row.created_at,
+          label: row.label || ""
         });
       }
     }
@@ -238,6 +349,8 @@ app.post("/api/send", async (req, res) => {
     return res.status(500).json({ error: error.response?.data || error.message });
   }
 });
+
+// Update label
 app.post("/api/label", async (req, res) => {
   try {
     const { wa_id, label } = req.body;
@@ -260,10 +373,8 @@ app.post("/api/label", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
 
+// ===== START SERVER =====
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
