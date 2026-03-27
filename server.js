@@ -362,7 +362,124 @@ app.post("/api/label", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+// ===== KNOWLEDGE BASE PAGE =====
+app.get("/kb", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "kb.html"));
+});
 
+// ===== KB API: CATEGORIES =====
+app.get("/api/kb/categories", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("kb_categories")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/kb/categories", async (req, res) => {
+  try {
+    const { name, description } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ error: "Category name is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_categories")
+      .insert([
+        {
+          name,
+          description: description || null
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== KB API: ARTICLES =====
+app.get("/api/kb/articles", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("kb_articles")
+      .select(`
+        *,
+        kb_categories (
+          id,
+          name
+        )
+      `)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/kb/articles", async (req, res) => {
+  try {
+    const {
+      category_id,
+      title,
+      question,
+      answer,
+      keywords,
+      audience,
+      language,
+      status
+    } = req.body;
+
+    if (!title || !answer) {
+      return res.status(400).json({ error: "Title and answer are required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_articles")
+      .insert([
+        {
+          category_id: category_id || null,
+          title,
+          question: question || null,
+          answer,
+          keywords: keywords || null,
+          audience: audience || null,
+          language: language || "en",
+          status: status || "published",
+          source_type: "manual"
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
