@@ -147,7 +147,23 @@ async function saveMessage({ wa_id, contact_name = null, direction, body, messag
   }
 }
 
-async function sendWhatsAppText(to, body) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function estimateDelayMs(text) {
+  const length = (text || "").length;
+
+  if (length < 80) return 2000;
+  if (length < 250) return 4000;
+  if (length < 600) return 6000;
+  return 8000;
+}
+
+async function sendWhatsAppText(to, body, delayMs = null) {
+  const wait = delayMs ?? estimateDelayMs(body);
+  await sleep(wait);
+
   const response = await axios.post(
     `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
     {
@@ -162,6 +178,7 @@ async function sendWhatsAppText(to, body) {
       }
     }
   );
+
   return response.data;
 }
 async function searchKnowledgeBase(userMessage) {
@@ -281,16 +298,40 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (reply) {
-      await sendWhatsAppText(from, reply);
+  if (reply.length > 180) {
+    const ack = "Thank you. We are reviewing your request.";
 
-      await saveMessage({
-        wa_id: from,
-        contact_name: contactName,
-        direction: "out",
-        body: reply,
-        message_type: "text"
-      });
-    }
+    await sendWhatsAppText(from, ack, 1500);
+
+    await saveMessage({
+      wa_id: from,
+      contact_name: contactName,
+      direction: "out",
+      body: ack,
+      message_type: "text"
+    });
+
+    await sendWhatsAppText(from, reply, 5000);
+
+    await saveMessage({
+      wa_id: from,
+      contact_name: contactName,
+      direction: "out",
+      body: reply,
+      message_type: "text"
+    });
+  } else {
+    await sendWhatsAppText(from, reply, 2500);
+
+    await saveMessage({
+      wa_id: from,
+      contact_name: contactName,
+      direction: "out",
+      body: reply,
+      message_type: "text"
+    });
+  }
+}
 
     return res.sendStatus(200);
   } catch (error) {
