@@ -480,6 +480,70 @@ app.post("/api/kb/articles", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+// ===== KB API: UPDATE ARTICLE =====
+app.put("/api/kb/articles/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const {
+      category_id,
+      title,
+      question,
+      answer,
+      keywords,
+      audience,
+      language,
+      status
+    } = req.body;
+
+    if (!title || !answer) {
+      return res.status(400).json({ error: "Title and answer are required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_articles")
+      .update({
+        category_id: category_id || null,
+        title,
+        question: question || null,
+        answer,
+        keywords: keywords || null,
+        audience: audience || null,
+        language: language || "en",
+        status: status || "published",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== KB API: DELETE ARTICLE =====
+app.delete("/api/kb/articles/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const { error } = await supabase
+      .from("kb_articles")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
