@@ -165,7 +165,7 @@ app.get("/api/conversations", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction")
+     .select("wa_id, contact_name, body, created_at, direction, label")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -181,7 +181,8 @@ app.get("/api/conversations", async (req, res) => {
           contact_name: row.contact_name,
           last_message: row.body,
           last_direction: row.direction,
-          last_time: row.created_at
+         last_time: row.created_at,
+         label: row.label || ""
         });
       }
     }
@@ -237,7 +238,28 @@ app.post("/api/send", async (req, res) => {
     return res.status(500).json({ error: error.response?.data || error.message });
   }
 });
+app.post("/api/label", async (req, res) => {
+  try {
+    const { wa_id, label } = req.body;
 
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    const { error } = await supabase
+      .from("conversations")
+      .update({ label: label || null })
+      .eq("wa_id", wa_id);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
