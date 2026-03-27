@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL Knowledge Base Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      background: #f7f7f7;
+    }
+
+    #left {
+      width: 38%;
+      border-right: 1px solid #ddd;
+      background: #fff;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    #right {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    input, textarea, select, button {
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 10px;
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .answer {
+      white-space: pre-wrap;
+      margin-top: 8px;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .topbar a {
+      text-decoration: none;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: #000;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="left">
+    <div class="topbar">
+      <a href="/inbox">Inbox</a>
+      <a href="/logout">Logout</a>
+    </div>
+
+    <h2>KB Manager</h2>
+
+    <div class="card">
+      <h3>Create Category</h3>
+      <input id="catName" placeholder="Category name" />
+      <textarea id="catDesc" placeholder="Category description"></textarea>
+      <button onclick="createCategory()">Save Category</button>
+    </div>
+
+    <div class="card">
+      <h3>Create Knowledge Article</h3>
+
+      <select id="articleCategory"></select>
+
+      <input id="articleTitle" placeholder="Title" />
+      <input id="articleQuestion" placeholder="Question (optional)" />
+      <textarea id="articleAnswer" placeholder="Answer / content"></textarea>
+      <input id="articleKeywords" placeholder="Keywords (comma separated)" />
+      <input id="articleAudience" placeholder="Audience (e.g. client, student, partner, staff)" />
+
+      <select id="articleLanguage">
+        <option value="en">English</option>
+        <option value="fr">French</option>
+        <option value="es">Spanish</option>
+      </select>
+
+      <select id="articleStatus">
+        <option value="published">Published</option>
+        <option value="draft">Draft</option>
+      </select>
+
+      <button onclick="createArticle()">Save Article</button>
+    </div>
+  </div>
+
+  <div id="right">
+    <h2>Knowledge Articles</h2>
+    <div id="articles"></div>
+  </div>
+
+  <script>
+    async function loadCategories() {
+      const res = await fetch("/api/kb/categories");
+      const data = await res.json();
+
+      const select = document.getElementById("articleCategory");
+      select.innerHTML = '<option value="">No category</option>';
+
+      data.forEach(cat => {
+        const option = document.createElement("option");
+        option.value = cat.id;
+        option.textContent = cat.name;
+        select.appendChild(option);
+      });
+    }
+
+    async function loadArticles() {
+      const res = await fetch("/api/kb/articles");
+      const data = await res.json();
+
+      const container = document.getElementById("articles");
+      container.innerHTML = "";
+
+      data.forEach(article => {
+        const div = document.createElement("div");
+        div.className = "card";
+
+        div.innerHTML = `
+          <div class="title">${article.title}</div>
+          <div class="small">
+            Category: ${article.kb_categories?.name || "None"} |
+            Language: ${article.language || "en"} |
+            Status: ${article.status || "published"} |
+            Audience: ${article.audience || ""}
+          </div>
+          <div class="small">Question: ${article.question || ""}</div>
+          <div class="small">Keywords: ${article.keywords || ""}</div>
+          <div class="answer">${article.answer || ""}</div>
+        `;
+
+        container.appendChild(div);
+      });
+    }
+
+    async function createCategory() {
+      const name = document.getElementById("catName").value.trim();
+      const description = document.getElementById("catDesc").value.trim();
+
+      const res = await fetch("/api/kb/categories", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name, description })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Category creation failed: " + JSON.stringify(result));
+        return;
+      }
+
+      document.getElementById("catName").value = "";
+      document.getElementById("catDesc").value = "";
+
+      await loadCategories();
+    }
+
+    async function createArticle() {
+      const category_id = document.getElementById("articleCategory").value;
+      const title = document.getElementById("articleTitle").value.trim();
+      const question = document.getElementById("articleQuestion").value.trim();
+      const answer = document.getElementById("articleAnswer").value.trim();
+      const keywords = document.getElementById("articleKeywords").value.trim();
+      const audience = document.getElementById("articleAudience").value.trim();
+      const language = document.getElementById("articleLanguage").value;
+      const status = document.getElementById("articleStatus").value;
+
+      const res = await fetch("/api/kb/articles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          category_id,
+          title,
+          question,
+          answer,
+          keywords,
+          audience,
+          language,
+          status
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Article creation failed: " + JSON.stringify(result));
+        return;
+      }
+
+      document.getElementById("articleTitle").value = "";
+      document.getElementById("articleQuestion").value = "";
+      document.getElementById("articleAnswer").value = "";
+      document.getElementById("articleKeywords").value = "";
+      document.getElementById("articleAudience").value = "";
+      document.getElementById("articleLanguage").value = "en";
+      document.getElementById("articleStatus").value = "published";
+
+      await loadArticles();
+    }
+
+    loadCategories();
+    loadArticles();
+  </script>
+</body>
+</html>
