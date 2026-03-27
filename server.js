@@ -1,3 +1,4 @@
+const OpenAI = require("openai");
 const express = require("express");
 const axios = require("axios");
 const path = require("path");
@@ -21,7 +22,7 @@ app.use(
     }
   })
 );
-
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -31,7 +32,7 @@ const INBOX_USERNAME = process.env.INBOX_USERNAME;
 const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
-
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
@@ -163,7 +164,51 @@ async function sendWhatsAppText(to, body) {
   );
   return response.data;
 }
+async function searchKnowledgeBase(userMessage) {
+  const terms = userMessage
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8);
 
+  let query = supabase
+    .from("kb_articles")
+    .select(`
+      id,
+      title,
+      question,
+      answer,
+      keywords,
+      audience,
+      language,
+      status,
+      kb_categories (
+        name
+      )
+    `)
+    .eq("status", "published")
+    .limit(8);
+
+  if (terms.length > 0) {
+    const orParts = [];
+    for (const term of terms) {
+      orParts.push(`title.ilike.%${term}%`);
+      orParts.push(`question.ilike.%${term}%`);
+      orParts.push(`answer.ilike.%${term}%`);
+      orParts.push(`keywords.ilike.%${term}%`);
+    }
+    query = query.or(orParts.join(","));
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("KB search error:", error);
+    return [];
+  }
+
+  return data || [];
+}
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
