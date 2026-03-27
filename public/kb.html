@@ -82,6 +82,28 @@
       border-radius: 8px;
       color: #000;
     }
+
+    .filters {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .actions button {
+      width: auto;
+      flex: 1;
+    }
+
+    .edit-mode {
+      background: #fff8dc;
+    }
   </style>
 </head>
 <body>
@@ -101,8 +123,8 @@
       <button onclick="createCategory()">Save Category</button>
     </div>
 
-    <div class="card">
-      <h3>Create Knowledge Article</h3>
+    <div class="card" id="articleFormCard">
+      <h3 id="formTitle">Create Knowledge Article</h3>
 
       <select id="articleCategory"></select>
 
@@ -123,39 +145,103 @@
         <option value="draft">Draft</option>
       </select>
 
-      <button onclick="createArticle()">Save Article</button>
+      <button id="saveArticleBtn" onclick="createOrUpdateArticle()">Save Article</button>
+      <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
     </div>
   </div>
 
   <div id="right">
     <h2>Knowledge Articles</h2>
+
+    <input id="searchBox" placeholder="Search title, question, answer, keywords..." oninput="renderArticles()" />
+
+    <div class="filters">
+      <select id="filterCategory" onchange="renderArticles()">
+        <option value="">All categories</option>
+      </select>
+
+      <select id="filterAudience" onchange="renderArticles()">
+        <option value="">All audiences</option>
+        <option value="client">client</option>
+        <option value="student">student</option>
+        <option value="partner">partner</option>
+        <option value="staff">staff</option>
+      </select>
+
+      <select id="filterLanguage" onchange="renderArticles()">
+        <option value="">All languages</option>
+        <option value="en">English</option>
+        <option value="fr">French</option>
+        <option value="es">Spanish</option>
+      </select>
+    </div>
+
     <div id="articles"></div>
   </div>
 
   <script>
+    let categories = [];
+    let articles = [];
+    let editingArticleId = null;
+
     async function loadCategories() {
       const res = await fetch("/api/kb/categories");
-      const data = await res.json();
+      categories = await res.json();
 
-      const select = document.getElementById("articleCategory");
-      select.innerHTML = '<option value="">No category</option>';
+      const articleCategory = document.getElementById("articleCategory");
+      const filterCategory = document.getElementById("filterCategory");
 
-      data.forEach(cat => {
-        const option = document.createElement("option");
-        option.value = cat.id;
-        option.textContent = cat.name;
-        select.appendChild(option);
+      articleCategory.innerHTML = '<option value="">No category</option>';
+      filterCategory.innerHTML = '<option value="">All categories</option>';
+
+      categories.forEach(cat => {
+        const option1 = document.createElement("option");
+        option1.value = cat.id;
+        option1.textContent = cat.name;
+        articleCategory.appendChild(option1);
+
+        const option2 = document.createElement("option");
+        option2.value = cat.name;
+        option2.textContent = cat.name;
+        filterCategory.appendChild(option2);
       });
     }
 
     async function loadArticles() {
       const res = await fetch("/api/kb/articles");
-      const data = await res.json();
+      articles = await res.json();
+      renderArticles();
+    }
+
+    function renderArticles() {
+      const search = document.getElementById("searchBox").value.toLowerCase().trim();
+      const categoryFilter = document.getElementById("filterCategory").value;
+      const audienceFilter = document.getElementById("filterAudience").value;
+      const languageFilter = document.getElementById("filterLanguage").value;
 
       const container = document.getElementById("articles");
       container.innerHTML = "";
 
-      data.forEach(article => {
+      const filtered = articles.filter(article => {
+        const categoryName = article.kb_categories?.name || "";
+        const haystack = [
+          article.title || "",
+          article.question || "",
+          article.answer || "",
+          article.keywords || "",
+          article.audience || "",
+          categoryName
+        ].join(" ").toLowerCase();
+
+        const matchesSearch = !search || haystack.includes(search);
+        const matchesCategory = !categoryFilter || categoryName === categoryFilter;
+        const matchesAudience = !audienceFilter || (article.audience || "").toLowerCase() === audienceFilter.toLowerCase();
+        const matchesLanguage = !languageFilter || (article.language || "") === languageFilter;
+
+        return matchesSearch && matchesCategory && matchesAudience && matchesLanguage;
+      });
+
+      filtered.forEach(article => {
         const div = document.createElement("div");
         div.className = "card";
 
@@ -170,6 +256,10 @@
           <div class="small">Question: ${article.question || ""}</div>
           <div class="small">Keywords: ${article.keywords || ""}</div>
           <div class="answer">${article.answer || ""}</div>
+          <div class="actions">
+            <button onclick="editArticle(${article.id})">Edit</button>
+            <button onclick="deleteArticle(${article.id})">Delete</button>
+          </div>
         `;
 
         container.appendChild(div);
@@ -201,7 +291,7 @@
       await loadCategories();
     }
 
-    async function createArticle() {
+    async function createOrUpdateArticle() {
       const category_id = document.getElementById("articleCategory").value;
       const title = document.getElementById("articleTitle").value.trim();
       const question = document.getElementById("articleQuestion").value.trim();
@@ -211,30 +301,84 @@
       const language = document.getElementById("articleLanguage").value;
       const status = document.getElementById("articleStatus").value;
 
-      const res = await fetch("/api/kb/articles", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          category_id,
-          title,
-          question,
-          answer,
-          keywords,
-          audience,
-          language,
-          status
-        })
-      });
+      const payload = {
+        category_id,
+        title,
+        question,
+        answer,
+        keywords,
+        audience,
+        language,
+        status
+      };
+
+      let res;
+
+      if (editingArticleId) {
+        res = await fetch(`/api/kb/articles/${editingArticleId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch("/api/kb/articles", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+      }
 
       const result = await res.json();
 
       if (!res.ok) {
-        alert("Article creation failed: " + JSON.stringify(result));
+        alert("Article save failed: " + JSON.stringify(result));
         return;
       }
 
+      clearForm();
+      await loadArticles();
+    }
+
+    function editArticle(id) {
+      const article = articles.find(a => a.id === id);
+      if (!article) return;
+
+      editingArticleId = id;
+
+      document.getElementById("formTitle").textContent = "Edit Knowledge Article";
+      document.getElementById("articleFormCard").classList.add("edit-mode");
+      document.getElementById("saveArticleBtn").textContent = "Update Article";
+      document.getElementById("cancelEditBtn").style.display = "block";
+
+      document.getElementById("articleCategory").value = article.category_id || "";
+      document.getElementById("articleTitle").value = article.title || "";
+      document.getElementById("articleQuestion").value = article.question || "";
+      document.getElementById("articleAnswer").value = article.answer || "";
+      document.getElementById("articleKeywords").value = article.keywords || "";
+      document.getElementById("articleAudience").value = article.audience || "";
+      document.getElementById("articleLanguage").value = article.language || "en";
+      document.getElementById("articleStatus").value = article.status || "published";
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function cancelEdit() {
+      clearForm();
+    }
+
+    function clearForm() {
+      editingArticleId = null;
+
+      document.getElementById("formTitle").textContent = "Create Knowledge Article";
+      document.getElementById("articleFormCard").classList.remove("edit-mode");
+      document.getElementById("saveArticleBtn").textContent = "Save Article";
+      document.getElementById("cancelEditBtn").style.display = "none";
+
+      document.getElementById("articleCategory").value = "";
       document.getElementById("articleTitle").value = "";
       document.getElementById("articleQuestion").value = "";
       document.getElementById("articleAnswer").value = "";
@@ -242,6 +386,26 @@
       document.getElementById("articleAudience").value = "";
       document.getElementById("articleLanguage").value = "en";
       document.getElementById("articleStatus").value = "published";
+    }
+
+    async function deleteArticle(id) {
+      const confirmed = confirm("Are you sure you want to delete this article?");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/kb/articles/${id}`, {
+        method: "DELETE"
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Delete failed: " + JSON.stringify(result));
+        return;
+      }
+
+      if (editingArticleId === id) {
+        clearForm();
+      }
 
       await loadArticles();
     }
