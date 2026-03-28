@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL Provider Network Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      background: #f7f7f7;
+    }
+
+    #left {
+      width: 40%;
+      border-right: 1px solid #ddd;
+      background: #fff;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    #right {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    input, textarea, select, button {
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 10px;
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .topbar a {
+      text-decoration: none;
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: #000;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .actions button {
+      width: auto;
+      flex: 1;
+    }
+
+    .edit-mode {
+      background: #fff8dc;
+    }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <div class="topbar">
+      <a href="/inbox">Inbox</a>
+      <a href="/kb">KB</a>
+      <a href="/logout">Logout</a>
+    </div>
+
+    <h2>Provider Network Manager</h2>
+
+    <div class="card" id="providerFormCard">
+      <h3 id="formTitle">Create Provider</h3>
+
+      <select id="provider_type">
+        <option value="">Select provider type</option>
+        <option value="Freelancer">Freelancer</option>
+        <option value="Agency">Agency</option>
+        <option value="Institution">Institution</option>
+        <option value="Teacher Provider">Teacher Provider</option>
+        <option value="Interpreter">Interpreter</option>
+        <option value="Voice-over Provider">Voice-over Provider</option>
+        <option value="Dubbing Provider">Dubbing Provider</option>
+        <option value="Language Partner">Language Partner</option>
+      </select>
+
+      <input id="full_name" placeholder="Full name" />
+      <input id="organization_name" placeholder="Organization name" />
+      <input id="contact_person" placeholder="Contact person" />
+      <input id="email" placeholder="Email" />
+      <input id="phone" placeholder="Phone" />
+      <input id="whatsapp" placeholder="WhatsApp" />
+      <input id="country" placeholder="Country" />
+      <input id="city" placeholder="City" />
+      <input id="native_language" placeholder="Native language" />
+      <input id="working_languages" placeholder="Working languages (comma separated)" />
+      <input id="language_pairs" placeholder="Language pairs (e.g. EN>FR, FR>EN)" />
+      <input id="services" placeholder="Services (translation, interpreting, dubbing...)" />
+      <input id="specializations" placeholder="Specializations" />
+      <input id="years_experience" placeholder="Years of experience" />
+
+      <select id="availability_status">
+        <option value="available">available</option>
+        <option value="busy">busy</option>
+        <option value="unknown">unknown</option>
+      </select>
+
+      <select id="source_channel">
+        <option value="manual">manual</option>
+        <option value="email">email</option>
+        <option value="whatsapp">whatsapp</option>
+        <option value="website">website</option>
+        <option value="partner">partner</option>
+      </select>
+
+      <select id="status">
+        <option value="active">active</option>
+        <option value="pending">pending</option>
+        <option value="archived">archived</option>
+      </select>
+
+      <textarea id="notes" placeholder="Notes"></textarea>
+
+      <button id="saveBtn" onclick="createOrUpdateProvider()">Save Provider</button>
+      <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
+    </div>
+  </div>
+
+  <div id="right">
+    <h2>Providers</h2>
+    <input id="searchBox" placeholder="Search by name, organization, services, language pairs..." oninput="renderProviders()" />
+    <div id="providers"></div>
+  </div>
+
+  <script>
+    let providers = [];
+    let editingProviderId = null;
+
+    async function loadProviders() {
+      const res = await fetch("/api/providers");
+      const data = await res.json();
+      providers = Array.isArray(data) ? data : [];
+      renderProviders();
+    }
+
+    function renderProviders() {
+      const search = document.getElementById("searchBox").value.toLowerCase().trim();
+      const container = document.getElementById("providers");
+      container.innerHTML = "";
+
+      const filtered = providers.filter(provider => {
+        const haystack = [
+          provider.provider_type || "",
+          provider.full_name || "",
+          provider.organization_name || "",
+          provider.contact_person || "",
+          provider.email || "",
+          provider.phone || "",
+          provider.whatsapp || "",
+          provider.country || "",
+          provider.city || "",
+          provider.native_language || "",
+          provider.working_languages || "",
+          provider.language_pairs || "",
+          provider.services || "",
+          provider.specializations || "",
+          provider.notes || ""
+        ].join(" ").toLowerCase();
+
+        return !search || haystack.includes(search);
+      });
+
+      filtered.forEach(provider => {
+        const div = document.createElement("div");
+        div.className = "card";
+
+        div.innerHTML = `
+          <div class="title">${provider.full_name || provider.organization_name || "Unnamed Provider"}</div>
+          <div class="small">Type: ${provider.provider_type || ""} | Status: ${provider.status || ""} | Availability: ${provider.availability_status || ""}</div>
+          <div class="small">Organization: ${provider.organization_name || ""}</div>
+          <div class="small">Contact: ${provider.contact_person || ""}</div>
+          <div class="small">Email: ${provider.email || ""} | Phone: ${provider.phone || ""} | WhatsApp: ${provider.whatsapp || ""}</div>
+          <div class="small">Country: ${provider.country || ""} | City: ${provider.city || ""}</div>
+          <div class="small">Native language: ${provider.native_language || ""}</div>
+          <div class="small">Working languages: ${provider.working_languages || ""}</div>
+          <div class="small">Language pairs: ${provider.language_pairs || ""}</div>
+          <div class="small">Services: ${provider.services || ""}</div>
+          <div class="small">Specializations: ${provider.specializations || ""}</div>
+          <div class="small">Experience: ${provider.years_experience || ""}</div>
+          <div class="small">Source: ${provider.source_channel || ""}</div>
+          <div style="margin-top:8px; white-space:pre-wrap;">${provider.notes || ""}</div>
+          <div class="actions">
+            <button onclick="editProvider(${provider.id})">Edit</button>
+            <button onclick="deleteProvider(${provider.id})">Delete</button>
+          </div>
+        `;
+
+        container.appendChild(div);
+      });
+    }
+
+    async function createOrUpdateProvider() {
+      const payload = {
+        provider_type: document.getElementById("provider_type").value,
+        full_name: document.getElementById("full_name").value.trim(),
+        organization_name: document.getElementById("organization_name").value.trim(),
+        contact_person: document.getElementById("contact_person").value.trim(),
+        email: document.getElementById("email").value.trim(),
+        phone: document.getElementById("phone").value.trim(),
+        whatsapp: document.getElementById("whatsapp").value.trim(),
+        country: document.getElementById("country").value.trim(),
+        city: document.getElementById("city").value.trim(),
+        native_language: document.getElementById("native_language").value.trim(),
+        working_languages: document.getElementById("working_languages").value.trim(),
+        language_pairs: document.getElementById("language_pairs").value.trim(),
+        services: document.getElementById("services").value.trim(),
+        specializations: document.getElementById("specializations").value.trim(),
+        years_experience: document.getElementById("years_experience").value.trim(),
+        availability_status: document.getElementById("availability_status").value,
+        source_channel: document.getElementById("source_channel").value,
+        status: document.getElementById("status").value,
+        notes: document.getElementById("notes").value.trim()
+      };
+
+      let res;
+
+      if (editingProviderId) {
+        res = await fetch(`/api/providers/${editingProviderId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } else {
+        res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Save failed: " + JSON.stringify(result));
+        return;
+      }
+
+      clearForm();
+      await loadProviders();
+    }
+
+    function editProvider(id) {
+      const provider = providers.find(p => p.id === id);
+      if (!provider) return;
+
+      editingProviderId = id;
+      document.getElementById("formTitle").textContent = "Edit Provider";
+      document.getElementById("providerFormCard").classList.add("edit-mode");
+      document.getElementById("saveBtn").textContent = "Update Provider";
+      document.getElementById("cancelEditBtn").style.display = "block";
+
+      document.getElementById("provider_type").value = provider.provider_type || "";
+      document.getElementById("full_name").value = provider.full_name || "";
+      document.getElementById("organization_name").value = provider.organization_name || "";
+      document.getElementById("contact_person").value = provider.contact_person || "";
+      document.getElementById("email").value = provider.email || "";
+      document.getElementById("phone").value = provider.phone || "";
+      document.getElementById("whatsapp").value = provider.whatsapp || "";
+      document.getElementById("country").value = provider.country || "";
+      document.getElementById("city").value = provider.city || "";
+      document.getElementById("native_language").value = provider.native_language || "";
+      document.getElementById("working_languages").value = provider.working_languages || "";
+      document.getElementById("language_pairs").value = provider.language_pairs || "";
+      document.getElementById("services").value = provider.services || "";
+      document.getElementById("specializations").value = provider.specializations || "";
+      document.getElementById("years_experience").value = provider.years_experience || "";
+      document.getElementById("availability_status").value = provider.availability_status || "available";
+      document.getElementById("source_channel").value = provider.source_channel || "manual";
+      document.getElementById("status").value = provider.status || "active";
+      document.getElementById("notes").value = provider.notes || "";
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function cancelEdit() {
+      clearForm();
+    }
+
+    function clearForm() {
+      editingProviderId = null;
+      document.getElementById("formTitle").textContent = "Create Provider";
+      document.getElementById("providerFormCard").classList.remove("edit-mode");
+      document.getElementById("saveBtn").textContent = "Save Provider";
+      document.getElementById("cancelEditBtn").style.display = "none";
+
+      document.getElementById("provider_type").value = "";
+      document.getElementById("full_name").value = "";
+      document.getElementById("organization_name").value = "";
+      document.getElementById("contact_person").value = "";
+      document.getElementById("email").value = "";
+      document.getElementById("phone").value = "";
+      document.getElementById("whatsapp").value = "";
+      document.getElementById("country").value = "";
+      document.getElementById("city").value = "";
+      document.getElementById("native_language").value = "";
+      document.getElementById("working_languages").value = "";
+      document.getElementById("language_pairs").value = "";
+      document.getElementById("services").value = "";
+      document.getElementById("specializations").value = "";
+      document.getElementById("years_experience").value = "";
+      document.getElementById("availability_status").value = "available";
+      document.getElementById("source_channel").value = "manual";
+      document.getElementById("status").value = "active";
+      document.getElementById("notes").value = "";
+    }
+
+    async function deleteProvider(id) {
+      const confirmed = confirm("Are you sure you want to delete this provider?");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/providers/${id}`, {
+        method: "DELETE"
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Delete failed: " + JSON.stringify(result));
+        return;
+      }
+
+      if (editingProviderId === id) {
+        clearForm();
+      }
+
+      await loadProviders();
+    }
+
+    loadProviders();
+  </script>
+</body>
+</html>
