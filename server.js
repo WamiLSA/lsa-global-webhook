@@ -204,6 +204,7 @@ async function searchKnowledgeBase(userMessage) {
   const dedupe = items => Array.from(new Set(items.filter(Boolean)));
 
   let englishQuery = rawMessage;
+  const queryVariants = [rawMessage];
   try {
     const translation = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -223,14 +224,44 @@ async function searchKnowledgeBase(userMessage) {
     const translated = translation.choices?.[0]?.message?.content?.trim();
     if (translated) {
       englishQuery = translated;
+      queryVariants.push(translated);
     }
   } catch (translationError) {
     console.error("KB query translation error:", translationError?.message || translationError);
   }
 
+  try {
+    const multilingualExpansion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Expand the user query for multilingual retrieval. " +
+            "Return JSON only with shape {\"queries\":[...]} containing short search queries in English, French, Spanish, Italian, and German."
+        },
+        { role: "user", content: rawMessage }
+      ],
+      max_tokens: 180
+    });
+
+    const parsed = JSON.parse(multilingualExpansion.choices?.[0]?.message?.content || "{}");
+    const expansions = Array.isArray(parsed?.queries) ? parsed.queries : [];
+    for (const expansion of expansions) {
+      if (typeof expansion === "string" && expansion.trim()) {
+        queryVariants.push(expansion.trim());
+      }
+    }
+  } catch (expansionError) {
+    console.error("KB query expansion error:", expansionError?.message || expansionError);
+  }
+
   const originalTerms = normalizeForTerms(rawMessage).filter(term => !stopWords.has(term));
   const englishTerms = normalizeForTerms(englishQuery).filter(term => !stopWords.has(term));
-  const terms = dedupe([...englishTerms, ...originalTerms]).slice(0, 12);
+  const expandedTerms = queryVariants.flatMap(value => normalizeForTerms(value));
+  const terms = dedupe([...expandedTerms, ...englishTerms, ...originalTerms].filter(term => !stopWords.has(term))).slice(0, 16);
 
   let query = supabase
     .from("kb_articles")
@@ -293,11 +324,13 @@ async function searchKnowledgeBase(userMessage) {
       if (answer.includes(term)) score += 4;
     }
 
-    const englishPhrase = englishQuery.toLowerCase();
-    if (englishPhrase.length > 4) {
-      if (title.includes(englishPhrase)) score += 10;
-      if (question.includes(englishPhrase)) score += 8;
-      if (answer.includes(englishPhrase)) score += 5;
+    const uniqueVariants = dedupe(queryVariants.map(q => (q || "").toLowerCase().trim()));
+    for (const variant of uniqueVariants) {
+      if (!variant || variant.length < 5) continue;
+      if (title.includes(variant)) score += 9;
+      if (question.includes(variant)) score += 7;
+      if (keywords.includes(variant)) score += 6;
+      if (answer.includes(variant)) score += 4;
     }
 
     return score;
@@ -308,6 +341,41 @@ async function searchKnowledgeBase(userMessage) {
     .sort((a, b) => b.relevance_score - a.relevance_score)
     .slice(0, 8)
     .map(({ relevance_score, ...article }) => article);
+}
+
+function detectMessageLanguage(text) {
+  const value = (text || "").toLowerCase();
+  if (!value.trim()) return "en";
+
+  if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation)\b/.test(value)) {
+    return "fr";
+  }
+  if (/[¿¡ñáéíóú]/.test(value) || /\b(hola|gracias|curso|precio|horario|duración)\b/.test(value)) {
+    return "es";
+  }
+  if (/[äöüß]/.test(value) || /\b(hallo|danke|kurs|preis|zeitplan|dauer)\b/.test(value)) {
+    return "de";
+  }
+  if (/\b(ciao|grazie|corso|prezzo|orario|durata)\b/.test(value)) {
+    return "it";
+  }
+
+  return "en";
+}
+
+function getLocalizedAck(language) {
+  switch (language) {
+    case "fr":
+      return "Merci. Nous examinons votre demande.";
+    case "es":
+      return "Gracias. Estamos revisando su solicitud.";
+    case "de":
+      return "Danke. Wir prüfen Ihre Anfrage.";
+    case "it":
+      return "Grazie. Stiamo esaminando la sua richiesta.";
+    default:
+      return "Thank you. We are reviewing your request.";
+  }
 }
 
 function isVagueCustomerMessage(text) {
@@ -367,6 +435,9 @@ Core behavior:
 8) Use knowledge base content as the primary source of truth.
 9) Never invent prices, legal guarantees, turnaround promises, or policies.
 10) If KB is insufficient, say briefly that a human advisor will assist.
+11) Reply in the same language as the customer message.
+12) Never send users outside LSA GLOBAL, even when information is missing.
+13) If the customer asks a broad question, ask one clarifying question only.
 
 Style:
 - Professional and human-like.
@@ -462,62 +533,24 @@ app.post("/webhook", async (req, res) => {
     }
 else {
   const kbMatches = await searchKnowledgeBase(text);
+  const detectedLanguage = detectMessageLanguage(text);
 
   try {
-    const aiResponse = await openai.responses.create({
-      model: "gpt-5-mini",
-      instructions: `
-You are the LSA GLOBAL AI assistant.
-
-Core rules:
-1. Answer only the specific question asked.
-2. Do not dump too much information at once.
-3. If the user asks only about fees, answer only fees.
-4. If the user asks only about schedule, answer only schedule.
-5. If the user asks only about duration, answer only duration.
-6. If the question is vague, ask a short clarifying question instead of giving a long answer.
-7. Use LSA GLOBAL knowledge base first.
-8. Never say the KB has no answer unless the KB matches are clearly empty.
-9. Never recommend competitors, other schools, or outside institutions.
-10. Keep the prospect inside LSA GLOBAL.
-11. If the request involves discounts, negotiation, exceptional approval, or anything sensitive, escalate to a human advisor.
-12. Be concise, precise, and human-like.
-13. If the user writes in French, answer in French. If in Spanish, answer in Spanish. If in German, answer in German. If in Italian, answer in Italian. Match the user's language.
-14. If the KB contains relevant information, use it directly and accurately.
-15. If the user asks generally about LSA GLOBAL, ask what exactly they want to know: courses, fees, schedule, duration, certification, translation, interpreting, admissions, or partnership.
-
-Output style:
-- short, direct, useful
-- no long brochure-style answers
-- no competitor references
-- no unnecessary web-style commentary
-`,
-      input: `
-Customer message:
-${text}
-
-Detected user language:
-${languageInfo?.detected_language || "unknown"}
-
-Knowledge base matches:
-${kbContext}
-
-Important:
-- If the user asked a narrow question, answer narrowly.
-- If the question is vague, ask one clarifying question.
-- If a KB match clearly answers the question, use it.
-- Reply in the same language as the customer.
-`
+    reply = await generateAIAnswerMessage({
+      customerMessage: text,
+      kbMatches
     });
+    if (!reply || !reply.trim()) {
+      reply = getLocalizedAck(detectedLanguage);
+    }
   } catch (err) {
     console.error("AI fallback error:", err.message || err);
-    reply =
-      "Thank you. We have received your message. A human advisor will assist you shortly.";
+    reply = getLocalizedAck(detectedLanguage);
   }
 }
     if (reply) {
   if (reply.length > 180) {
-    const ack = "Thank you. We are reviewing your request.";
+    const ack = getLocalizedAck(detectMessageLanguage(text));
 
     await sendWhatsAppText(from, ack, 1500);
 
