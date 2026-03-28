@@ -226,6 +226,87 @@ async function searchKnowledgeBase(userMessage) {
 
   return data || [];
 }
+
+function isVagueCustomerMessage(text) {
+  const normalized = (text || "").toLowerCase().trim();
+  if (!normalized) return true;
+
+  const vaguePhrases = [
+    "info",
+    "information",
+    "details",
+    "tell me about",
+    "i want to know",
+    "about lsa",
+    "about alessa",
+    "about your company",
+    "services",
+    "help me",
+    "can you help"
+  ];
+
+  return vaguePhrases.some((phrase) => normalized.includes(phrase));
+}
+
+async function generateAIAnswerMessage({ customerMessage, kbMatches }) {
+  const kbContext = kbMatches.length
+    ? kbMatches
+        .map((item, index) => {
+          return `
+[KB ${index + 1}]
+Category: ${item.kb_categories?.name || "None"}
+Title: ${item.title || ""}
+Question: ${item.question || ""}
+Keywords: ${item.keywords || ""}
+Audience: ${item.audience || ""}
+Language: ${item.language || "en"}
+Answer: ${item.answer || ""}
+`;
+        })
+        .join("\n")
+    : "NO_MATCH";
+
+  const vagueHint = isVagueCustomerMessage(customerMessage) ? "YES" : "NO";
+
+  const aiResponse = await openai.responses.create({
+    model: "gpt-5-mini",
+    instructions: `
+You are the LSA GLOBAL WhatsApp assistant.
+
+Core behavior:
+1) Answer only the exact question the customer asked. Keep replies short and focused.
+2) Do not dump multiple unrelated details. One question -> one direct answer.
+3) If customer asks for exam date, provide only the exam date answer from KB.
+4) If customer asks for fee, provide only fee answer from KB.
+5) If customer asks for discount, negotiation, exception, special offer, or unclear pricing request, do NOT decide discounts. Ask for contact details and say a human advisor will follow up.
+6) If question is vague, ask a clarifying question instead of giving a broad company overview.
+7) Never recommend competitors or external alternatives. Keep the user inside LSA GLOBAL context only.
+8) Use knowledge base content as the primary source of truth.
+9) Never invent prices, legal guarantees, turnaround promises, or policies.
+10) If KB is insufficient, say briefly that a human advisor will assist.
+
+Style:
+- Professional and human-like.
+- Maximum 2 short paragraphs.
+- Prefer 1-3 sentences for simple questions.
+`,
+    input: `
+Customer message:
+${customerMessage}
+
+Message flagged as vague:
+${vagueHint}
+
+Knowledge base matches:
+${kbContext}
+`
+  });
+
+  return (
+    aiResponse.output_text ||
+    "Thank you. We have received your message. A human advisor will assist you shortly."
+  );
+}
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
@@ -299,36 +380,34 @@ app.post("/webhook", async (req, res) => {
 else {
   const kbMatches = await searchKnowledgeBase(text);
 
-  const languageInfo = null;
-
-  const kbContext = kbMatches.length
-    ? kbMatches.map((item, index) => {
-        return `
-[KB ${index + 1}]
-Category: ${item.kb_categories?.name || "None"}
-Title: ${item.title || ""}
-Question: ${item.question || ""}
-Keywords: ${item.keywords || ""}
-Audience: ${item.audience || ""}
-Language: ${item.language || "en"}
-Answer: ${item.answer || ""}
-`;
-      }).join("\n")
-    : "NO_MATCH";
-
   try {
     const aiResponse = await openai.responses.create({
       model: "gpt-5-mini",
       instructions: `
 You are the LSA GLOBAL AI assistant.
 
-Rules:
-1. Use LSA GLOBAL knowledge base first.
-2. Never invent prices, legal guarantees, turnaround promises, or policies.
-3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
-4. Keep answers businesslike, clear, and concise.
-5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
-6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
+Core rules:
+1. Answer only the specific question asked.
+2. Do not dump too much information at once.
+3. If the user asks only about fees, answer only fees.
+4. If the user asks only about schedule, answer only schedule.
+5. If the user asks only about duration, answer only duration.
+6. If the question is vague, ask a short clarifying question instead of giving a long answer.
+7. Use LSA GLOBAL knowledge base first.
+8. Never say the KB has no answer unless the KB matches are clearly empty.
+9. Never recommend competitors, other schools, or outside institutions.
+10. Keep the prospect inside LSA GLOBAL.
+11. If the request involves discounts, negotiation, exceptional approval, or anything sensitive, escalate to a human advisor.
+12. Be concise, precise, and human-like.
+13. If the user writes in French, answer in French. If in Spanish, answer in Spanish. If in German, answer in German. If in Italian, answer in Italian. Match the user's language.
+14. If the KB contains relevant information, use it directly and accurately.
+15. If the user asks generally about LSA GLOBAL, ask what exactly they want to know: courses, fees, schedule, duration, certification, translation, interpreting, admissions, or partnership.
+
+Output style:
+- short, direct, useful
+- no long brochure-style answers
+- no competitor references
+- no unnecessary web-style commentary
 `,
       input: `
 Customer message:
@@ -347,10 +426,6 @@ Important:
 - Reply in the same language as the customer.
 `
     });
-
-    reply =
-      aiResponse.output_text ||
-      "Thank you. Our team will review your message and reply shortly.";
   } catch (err) {
     console.error("AI fallback error:", err.message || err);
     reply =
