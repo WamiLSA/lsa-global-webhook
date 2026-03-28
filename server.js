@@ -220,7 +220,7 @@ const GREETING_PHRASES = {
   de: ["hallo", "guten tag", "guten morgen", "guten abend"]
 };
 
-const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|urgent complaint|legal issue|refund|remboursement|rembolso|rimborso|reembolso)\b/i;
+const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
 const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
 
@@ -241,28 +241,28 @@ const LOCALIZED_WELCOME_MENUS = {
 
 const LOCALIZED_OPTION_REPLIES = {
   translation: {
-    en: "🌍 Translation Services\n\nWe provide certified and professional translations in:\nEN, FR, ES, DE, IT, AR, ZH and more.\n\n✔ Legal documents\n✔ Academic transcripts\n✔ Business and websites\n\nGet a free quote:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    fr: "🌍 Services de traduction\n\nNous proposons des traductions certifiées et professionnelles en :\nEN, FR, ES, DE, IT, AR, ZH et plus encore.\n\n✔ Documents juridiques\n✔ Relevés et diplômes académiques\n✔ Documents professionnels et sites web\n\nDemandez un devis gratuit :\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    es: "🌍 Servicios de traducción\n\nOfrecemos traducciones certificadas y profesionales en:\nEN, FR, ES, DE, IT, AR, ZH y más.\n\n✔ Documentos legales\n✔ Expedientes y documentos académicos\n✔ Documentos empresariales y sitios web\n\nSolicite un presupuesto gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    it: "🌍 Servizi di traduzione\n\nForniamo traduzioni certificate e professionali in:\nEN, FR, ES, DE, IT, AR, ZH e altre lingue.\n\n✔ Documenti legali\n✔ Trascrizioni e documenti accademici\n✔ Documenti aziendali e siti web\n\nRichiedi un preventivo gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    pt: "🌍 Serviços de tradução\n\nFornecemos traduções certificadas e profissionais em:\nEN, FR, ES, DE, IT, AR, ZH e muito mais.\n\n✔ Documentos jurídicos\n✔ Históricos e documentos acadêmicos\n✔ Documentos empresariais e sites\n\nPeça um orçamento gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    de: "🌍 Übersetzungsdienstleistungen\n\nWir bieten beglaubigte und professionelle Übersetzungen in:\nEN, FR, ES, DE, IT, AR, ZH und weiteren Sprachen an.\n\n✔ Rechtliche Dokumente\n✔ Akademische Unterlagen\n✔ Geschäftsdokumente und Websites\n\nFordern Sie ein kostenloses Angebot an:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
+    en: "🌍 Translation services.\nPlease send language pair, document type, and deadline.\nQuote request: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    fr: "🌍 Services de traduction.\nMerci d’envoyer la combinaison linguistique, le type de document et le délai.\nDevis : https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    es: "🌍 Servicios de traducción.\nEnvíe combinación de idiomas, tipo de documento y plazo.\nPresupuesto: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    it: "🌍 Servizi di traduzione.\nInvii combinazione linguistica, tipo di documento e scadenza.\nPreventivo: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    pt: "🌍 Serviços de tradução.\nEnvie par de idiomas, tipo de documento e prazo.\nOrçamento: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    de: "🌍 Übersetzungsdienste.\nBitte senden Sie Sprachpaar, Dokumenttyp und Frist.\nAngebot: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
   },
   courses: {
-    en: "🎓 Language Courses (A1–C2)\n\nWe offer online and guided language training in English, French, Spanish, German, Chinese and more.\n\nRegister here:\nhttps://lsa-global.com/register-now-2/",
-    fr: "🎓 Cours de langues (A1–C2)\n\nNous proposons des formations linguistiques encadrées et en ligne en anglais, français, espagnol, allemand, chinois et plus encore.\n\nInscription :\nhttps://lsa-global.com/register-now-2/",
-    es: "🎓 Cursos de idiomas (A1–C2)\n\nOfrecemos formación lingüística guiada y en línea en inglés, francés, español, alemán, chino y más.\n\nInscripción:\nhttps://lsa-global.com/register-now-2/",
-    it: "🎓 Corsi di lingua (A1–C2)\n\nOffriamo corsi di lingua guidati e online in inglese, francese, spagnolo, tedesco, cinese e altro.\n\nIscrizione:\nhttps://lsa-global.com/register-now-2/",
-    pt: "🎓 Cursos de idiomas (A1–C2)\n\nOferecemos formação linguística orientada e online em inglês, francês, espanhol, alemão, chinês e muito mais.\n\nInscrição:\nhttps://lsa-global.com/register-now-2/",
-    de: "🎓 Sprachkurse (A1–C2)\n\nWir bieten betreute und online Sprachkurse in Englisch, Französisch, Spanisch, Deutsch, Chinesisch und mehr an.\n\nAnmeldung:\nhttps://lsa-global.com/register-now-2/"
+    en: "🎓 Language courses A1–C2 (online/guided).\nTell me the language you want and your current level.\nRegistration: https://lsa-global.com/register-now-2/",
+    fr: "🎓 Cours de langues A1–C2 (en ligne/encadrés).\nIndiquez la langue souhaitée et votre niveau actuel.\nInscription : https://lsa-global.com/register-now-2/",
+    es: "🎓 Cursos de idiomas A1–C2 (en línea/guiados).\nIndique el idioma deseado y su nivel actual.\nInscripción: https://lsa-global.com/register-now-2/",
+    it: "🎓 Corsi di lingua A1–C2 (online/guidati).\nIndichi la lingua desiderata e il livello attuale.\nIscrizione: https://lsa-global.com/register-now-2/",
+    pt: "🎓 Cursos de idiomas A1–C2 (online/orientados).\nIndique o idioma desejado e o seu nível atual.\nInscrição: https://lsa-global.com/register-now-2/",
+    de: "🎓 Sprachkurse A1–C2 (online/betreut).\nBitte nennen Sie gewünschte Sprache und aktuelles Niveau.\nAnmeldung: https://lsa-global.com/register-now-2/"
   },
   interpreting: {
-    en: "🎧 Interpreting Services\n\nWe provide online and onsite interpreting for meetings, conferences, interviews, and more.\n\nPlease tell us:\n- language pair\n- date\n- duration",
-    fr: "🎧 Services d’interprétation\n\nNous proposons des services d’interprétation en ligne et sur site pour réunions, conférences, entretiens et plus encore.\n\nVeuillez préciser :\n- combinaison linguistique\n- date\n- durée",
-    es: "🎧 Servicios de interpretación\n\nOfrecemos servicios de interpretación en línea y presencial para reuniones, conferencias, entrevistas y más.\n\nIndíquenos:\n- combinación lingüística\n- fecha\n- duración",
-    it: "🎧 Servizi di interpretariato\n\nForniamo servizi di interpretariato online e in presenza per riunioni, conferenze, colloqui e altro.\n\nIndichi:\n- combinazione linguistica\n- data\n- durata",
-    pt: "🎧 Serviços de interpretação\n\nOferecemos interpretação online e presencial para reuniões, conferências, entrevistas e muito mais.\n\nInforme:\n- par de idiomas\n- data\n- duração",
-    de: "🎧 Dolmetschdienste\n\nWir bieten Online- und Vor-Ort-Dolmetschdienste für Besprechungen, Konferenzen, Interviews und mehr an.\n\nBitte teilen Sie uns mit:\n- Sprachkombination\n- Datum\n- Dauer"
+    en: "🎧 Interpreting services (online/onsite).\nPlease share language pair, date, and duration.",
+    fr: "🎧 Services d’interprétation (en ligne/sur site).\nMerci d’indiquer la combinaison linguistique, la date et la durée.",
+    es: "🎧 Servicios de interpretación (en línea/presencial).\nIndique combinación lingüística, fecha y duración.",
+    it: "🎧 Servizi di interpretariato (online/in presenza).\nIndichi combinazione linguistica, data e durata.",
+    pt: "🎧 Serviços de interpretação (online/presencial).\nInforme par de idiomas, data e duração.",
+    de: "🎧 Dolmetschdienste (online/vor Ort).\nBitte teilen Sie Sprachkombination, Datum und Dauer mit."
   },
   advisor: {
     en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
@@ -731,17 +731,17 @@ function getLocalizedAck(language) {
 function getLocalizedClarifyingQuestion(language) {
   switch (language) {
     case "fr":
-      return "Bien sûr. Que souhaitez-vous savoir exactement sur LSA GLOBAL (tarif, durée, horaires, inscription, ou autre) ?";
+      return "Que souhaitez-vous préciser : tarif, durée, horaires, niveau, format ou inscription ?";
     case "es":
-      return "Claro. ¿Qué desea saber exactamente sobre LSA GLOBAL (precio, duración, horario, inscripción u otro punto)?";
+      return "¿Qué desea precisar: precio, duración, horario, nivel, modalidad o inscripción?";
     case "de":
-      return "Gern. Was genau möchten Sie über LSA GLOBAL wissen (Preis, Dauer, Zeitplan, Anmeldung oder etwas anderes)?";
+      return "Was möchten Sie genau wissen: Preis, Dauer, Zeitplan, Niveau, Format oder Anmeldung?";
     case "it":
-      return "Certo. Cosa desidera sapere esattamente su LSA GLOBAL (prezzo, durata, orario, iscrizione o altro)?";
+      return "Cosa desidera precisare: prezzo, durata, orario, livello, formato o iscrizione?";
     case "pt":
-      return "Claro. O que deseja saber exatamente sobre a LSA GLOBAL (preço, duração, horário, inscrição ou outro ponto)?";
+      return "O que deseja especificar: preço, duração, horário, nível, formato ou inscrição?";
     default:
-      return "Sure. What exactly would you like to know about LSA GLOBAL (fee, duration, schedule, registration, or something else)?";
+      return "What would you like to specify: fee, duration, schedule, level, format, or registration?";
   }
 }
 
@@ -851,6 +851,20 @@ function isVagueCustomerMessage(text) {
 
   if (vaguePhrases.some((phrase) => normalized.includes(phrase))) return true;
   return wordCount <= 3;
+}
+
+function isBroadServiceQuestion(text) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return false;
+
+  const broadPatterns = [
+    /\b(course|courses|cours|curso|corsi|service|services|translation|traduction|traduccion|traduzione|interpreting|interpretation|interpreta)\b/,
+    /\b(tell me about|more info|information|details|about)\b/
+  ];
+
+  const hasBroadSignal = broadPatterns.some((pattern) => pattern.test(normalized));
+  const hasSpecificSignal = Boolean(detectNarrowIntent(text) || detectSpecificIntent(text));
+  return hasBroadSignal && !hasSpecificSignal;
 }
 
 function enforceReplyStyle(text, language = "en") {
