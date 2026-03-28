@@ -199,6 +199,58 @@ const GREETING_PHRASES = {
 };
 
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|urgent complaint|legal issue|refund|remboursement|rembolso|rimborso|reembolso)\b/i;
+const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
+const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
+
+const LOCALIZED_WELCOME_MENUS = {
+  en:
+    "Hello 👋 Welcome to LSA GLOBAL.\n\nWe offer:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor\n\nPlease reply with 1, 2, 3 or 4.",
+  fr:
+    "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nNous proposons :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller\n\nVeuillez répondre par 1, 2, 3 ou 4.",
+  es:
+    "Hola 👋 Bienvenido(a) a LSA GLOBAL.\n\nOfrecemos:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor\n\nPor favor, responda con 1, 2, 3 o 4.",
+  it:
+    "Ciao 👋 Benvenuto/a su LSA GLOBAL.\n\nOffriamo:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parla con un consulente\n\nPer favore, rispondi con 1, 2, 3 o 4.",
+  pt:
+    "Olá 👋 Bem-vindo(a) à LSA GLOBAL.\n\nOferecemos:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de idiomas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor\n\nPor favor, responda com 1, 2, 3 ou 4.",
+  de:
+    "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nWir bieten:\n1️⃣ Übersetzungsdienstleistungen\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen\n\nBitte antworten Sie mit 1, 2, 3 oder 4."
+};
+
+const LOCALIZED_OPTION_REPLIES = {
+  translation: {
+    en: "🌍 Translation Services\n\nWe provide certified and professional translations in:\nEN, FR, ES, DE, IT, AR, ZH and more.\n\n✔ Legal documents\n✔ Academic transcripts\n✔ Business and websites\n\nGet a free quote:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    fr: "🌍 Services de traduction\n\nNous proposons des traductions certifiées et professionnelles en :\nEN, FR, ES, DE, IT, AR, ZH et plus encore.\n\n✔ Documents juridiques\n✔ Relevés et diplômes académiques\n✔ Documents professionnels et sites web\n\nDemandez un devis gratuit :\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    es: "🌍 Servicios de traducción\n\nOfrecemos traducciones certificadas y profesionales en:\nEN, FR, ES, DE, IT, AR, ZH y más.\n\n✔ Documentos legales\n✔ Expedientes y documentos académicos\n✔ Documentos empresariales y sitios web\n\nSolicite un presupuesto gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    it: "🌍 Servizi di traduzione\n\nForniamo traduzioni certificate e professionali in:\nEN, FR, ES, DE, IT, AR, ZH e altre lingue.\n\n✔ Documenti legali\n✔ Trascrizioni e documenti accademici\n✔ Documenti aziendali e siti web\n\nRichiedi un preventivo gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    pt: "🌍 Serviços de tradução\n\nFornecemos traduções certificadas e profissionais em:\nEN, FR, ES, DE, IT, AR, ZH e muito mais.\n\n✔ Documentos jurídicos\n✔ Históricos e documentos acadêmicos\n✔ Documentos empresariais e sites\n\nPeça um orçamento gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    de: "🌍 Übersetzungsdienstleistungen\n\nWir bieten beglaubigte und professionelle Übersetzungen in:\nEN, FR, ES, DE, IT, AR, ZH und weiteren Sprachen an.\n\n✔ Rechtliche Dokumente\n✔ Akademische Unterlagen\n✔ Geschäftsdokumente und Websites\n\nFordern Sie ein kostenloses Angebot an:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
+  },
+  courses: {
+    en: "🎓 Language Courses (A1–C2)\n\nWe offer online and guided language training in English, French, Spanish, German, Chinese and more.\n\nRegister here:\nhttps://lsa-global.com/register-now-2/",
+    fr: "🎓 Cours de langues (A1–C2)\n\nNous proposons des formations linguistiques encadrées et en ligne en anglais, français, espagnol, allemand, chinois et plus encore.\n\nInscription :\nhttps://lsa-global.com/register-now-2/",
+    es: "🎓 Cursos de idiomas (A1–C2)\n\nOfrecemos formación lingüística guiada y en línea en inglés, francés, español, alemán, chino y más.\n\nInscripción:\nhttps://lsa-global.com/register-now-2/",
+    it: "🎓 Corsi di lingua (A1–C2)\n\nOffriamo corsi di lingua guidati e online in inglese, francese, spagnolo, tedesco, cinese e altro.\n\nIscrizione:\nhttps://lsa-global.com/register-now-2/",
+    pt: "🎓 Cursos de idiomas (A1–C2)\n\nOferecemos formação linguística orientada e online em inglês, francês, espanhol, alemão, chinês e muito mais.\n\nInscrição:\nhttps://lsa-global.com/register-now-2/",
+    de: "🎓 Sprachkurse (A1–C2)\n\nWir bieten betreute und online Sprachkurse in Englisch, Französisch, Spanisch, Deutsch, Chinesisch und mehr an.\n\nAnmeldung:\nhttps://lsa-global.com/register-now-2/"
+  },
+  interpreting: {
+    en: "🎧 Interpreting Services\n\nWe provide online and onsite interpreting for meetings, conferences, interviews, and more.\n\nPlease tell us:\n- language pair\n- date\n- duration",
+    fr: "🎧 Services d’interprétation\n\nNous proposons des services d’interprétation en ligne et sur site pour réunions, conférences, entretiens et plus encore.\n\nVeuillez préciser :\n- combinaison linguistique\n- date\n- durée",
+    es: "🎧 Servicios de interpretación\n\nOfrecemos servicios de interpretación en línea y presencial para reuniones, conferencias, entrevistas y más.\n\nIndíquenos:\n- combinación lingüística\n- fecha\n- duración",
+    it: "🎧 Servizi di interpretariato\n\nForniamo servizi di interpretariato online e in presenza per riunioni, conferenze, colloqui e altro.\n\nIndichi:\n- combinazione linguistica\n- data\n- durata",
+    pt: "🎧 Serviços de interpretação\n\nOferecemos interpretação online e presencial para reuniões, conferências, entrevistas e muito mais.\n\nInforme:\n- par de idiomas\n- data\n- duração",
+    de: "🎧 Dolmetschdienste\n\nWir bieten Online- und Vor-Ort-Dolmetschdienste für Besprechungen, Konferenzen, Interviews und mehr an.\n\nBitte teilen Sie uns mit:\n- Sprachkombination\n- Datum\n- Dauer"
+  },
+  advisor: {
+    en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
+    fr: "👨‍💼 Demande de conseiller\n\nVeuillez décrire brièvement votre besoin. Notre équipe vous contactera sous peu.",
+    es: "👨‍💼 Solicitud de asesor\n\nDescriba brevemente su necesidad. Nuestro equipo se pondrá en contacto con usted en breve.",
+    it: "👨‍💼 Richiesta di consulente\n\nDescriva brevemente la sua esigenza. Il nostro team la contatterà al più presto.",
+    pt: "👨‍💼 Solicitação de consultor\n\nDescreva brevemente a sua necessidade. Nossa equipe entrará em contato em breve.",
+    de: "👨‍💼 Berateranfrage\n\nBitte beschreiben Sie Ihr Anliegen kurz. Unser Team wird sich in Kürze bei Ihnen melden."
+  }
+};
 
 function normalizeForIntent(text) {
   return (text || "")
@@ -628,20 +680,8 @@ function detectGreetingIntent(text) {
 }
 
 function getLocalizedMainMenu(language) {
-  switch (language) {
-    case "fr":
-      return "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nNous proposons :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller\n\nVeuillez répondre par 1, 2, 3 ou 4.";
-    case "es":
-      return "Hola 👋 Bienvenido(a) a LSA GLOBAL.\n\nOfrecemos:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor\n\nPor favor, responda con 1, 2, 3 o 4.";
-    case "it":
-      return "Ciao 👋 Benvenuto/a su LSA GLOBAL.\n\nOffriamo:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parla con un consulente\n\nPer favore, rispondi con 1, 2, 3 o 4.";
-    case "pt":
-      return "Olá 👋 Bem-vindo(a) à LSA GLOBAL.\n\nOferecemos:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de idiomas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor\n\nPor favor, responda com 1, 2, 3 ou 4.";
-    case "de":
-      return "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nWir bieten:\n1️⃣ Übersetzungsdienstleistungen\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen\n\nBitte antworten Sie mit 1, 2, 3 oder 4.";
-    default:
-      return "Hello 👋 Welcome to LSA GLOBAL.\n\nWe offer:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor\n\nPlease reply with 1, 2, 3 or 4.";
-  }
+  const safeLang = SUPPORTED_MENU_LANGUAGES.includes(language) ? language : "en";
+  return LOCALIZED_WELCOME_MENUS[safeLang] || LOCALIZED_WELCOME_MENUS.en;
 }
 
 function detectMenuSelection(text) {
@@ -656,43 +696,26 @@ function detectMenuSelection(text) {
 }
 
 function getLocalizedMenuReply(language, selection) {
-  const content = {
-    translation: {
-      en: "🌍 Translation Services\n\nPlease send:\n- document type\n- source language\n- target language\n- deadline",
-      fr: "🌍 Services de traduction\n\nMerci d’envoyer :\n- type de document\n- langue source\n- langue cible\n- délai",
-      es: "🌍 Servicios de traducción\n\nPor favor envíe:\n- tipo de documento\n- idioma de origen\n- idioma de destino\n- fecha límite",
-      it: "🌍 Servizi di traduzione\n\nInvii:\n- tipo di documento\n- lingua di partenza\n- lingua di arrivo\n- scadenza",
-      pt: "🌍 Serviços de tradução\n\nEnvie:\n- tipo de documento\n- idioma de origem\n- idioma de destino\n- prazo",
-      de: "🌍 Übersetzungsdienste\n\nBitte senden Sie:\n- Dokumenttyp\n- Ausgangssprache\n- Zielsprache\n- Frist"
-    },
-    courses: {
-      en: "📚 Language Courses\n\nPlease tell us:\n- language\n- current level\n- target exam (if any)",
-      fr: "📚 Cours de langues\n\nMerci d’indiquer :\n- langue\n- niveau actuel\n- examen visé (si applicable)",
-      es: "📚 Cursos de idiomas\n\nPor favor indique:\n- idioma\n- nivel actual\n- examen objetivo (si aplica)",
-      it: "📚 Corsi di lingua\n\nPer favore indichi:\n- lingua\n- livello attuale\n- esame target (se previsto)",
-      pt: "📚 Cursos de línguas\n\nIndique:\n- idioma\n- nível atual\n- exame-alvo (se houver)",
-      de: "📚 Sprachkurse\n\nBitte teilen Sie uns mit:\n- Sprache\n- aktuelles Niveau\n- Zielprüfung (falls vorhanden)"
-    },
-    interpreting: {
-      en: "🎤 Interpreting Services\n\nPlease tell us:\n- language pair\n- date\n- duration\n- online or onsite",
-      fr: "🎤 Services d’interprétation\n\nMerci d’indiquer :\n- paire de langues\n- date\n- durée\n- en ligne ou sur site",
-      es: "🎤 Servicios de interpretación\n\nPor favor indique:\n- combinación de idiomas\n- fecha\n- duración\n- en línea o presencial",
-      it: "🎤 Servizi di interpretariato\n\nIndichi:\n- combinazione linguistica\n- data\n- durata\n- online o in presenza",
-      pt: "🎤 Serviços de interpretação\n\nIndique:\n- par de idiomas\n- data\n- duração\n- online ou presencial",
-      de: "🎤 Dolmetschdienste\n\nBitte teilen Sie mit:\n- Sprachkombination\n- Datum\n- Dauer\n- online oder vor Ort"
-    },
-    advisor: {
-      en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
-      fr: "👨‍💼 Demande de conseiller\n\nDécrivez brièvement votre besoin. Notre équipe vous contactera rapidement.",
-      es: "👨‍💼 Solicitud de asesor\n\nDescriba brevemente su necesidad. Nuestro equipo le contactará pronto.",
-      it: "👨‍💼 Richiesta consulente\n\nDescriva brevemente la sua esigenza. Il nostro team la contatterà presto.",
-      pt: "👨‍💼 Pedido de consultor\n\nDescreva brevemente a sua necessidade. A nossa equipa entrará em contacto em breve.",
-      de: "👨‍💼 Berateranfrage\n\nBitte beschreiben Sie Ihr Anliegen kurz. Unser Team meldet sich in Kürze."
-    }
-  };
+  const safeLang = SUPPORTED_MENU_LANGUAGES.includes(language) ? language : "en";
+  return LOCALIZED_OPTION_REPLIES[selection]?.[safeLang] || "";
+}
 
-  const safeLang = ["en", "fr", "es", "it", "pt", "de"].includes(language) ? language : "en";
-  return content[selection]?.[safeLang] || "";
+function resolveConversationLanguage({ waId, text, greetingLanguage }) {
+  const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
+  if (greetingLanguage && SUPPORTED_MENU_LANGUAGES.includes(greetingLanguage)) {
+    CONVERSATION_LANGUAGE_BY_CONTACT.set(waId, greetingLanguage);
+    return greetingLanguage;
+  }
+
+  const normalized = normalizeForIntent(text);
+  if (/^[1-4]$/.test(normalized) && stored) {
+    return stored;
+  }
+
+  const detected = detectMessageLanguage(text);
+  const safeDetected = SUPPORTED_MENU_LANGUAGES.includes(detected) ? detected : "en";
+  CONVERSATION_LANGUAGE_BY_CONTACT.set(waId, safeDetected);
+  return safeDetected;
 }
 
 function shouldEscalateToHuman(text) {
@@ -871,7 +894,11 @@ app.post("/webhook", async (req, res) => {
     let reply = "";
 
     const greetingIntent = detectGreetingIntent(text);
-    const detectedLanguage = greetingIntent?.language || detectMessageLanguage(text);
+    const detectedLanguage = resolveConversationLanguage({
+      waId: from,
+      text,
+      greetingLanguage: greetingIntent?.language
+    });
     const menuSelection = detectMenuSelection(text);
 
     if (greetingIntent || isGreetingMessage(text)) {
