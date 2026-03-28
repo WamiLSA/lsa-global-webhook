@@ -413,8 +413,17 @@ Output style:
 Customer message:
 ${text}
 
+Detected user language:
+${languageInfo?.detected_language || "unknown"}
+
 Knowledge base matches:
 ${kbContext}
+
+Important:
+- If the user asked a narrow question, answer narrowly.
+- If the question is vague, ask one clarifying question.
+- If a KB match clearly answers the question, use it.
+- Reply in the same language as the customer.
 `
     });
   } catch (err) {
