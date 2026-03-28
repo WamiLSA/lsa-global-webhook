@@ -146,10 +146,28 @@ const CROSS_LANGUAGE_TERM_MAP = {
   english: ["anglais", "ingles", "inglés", "inglese", "english"],
   translation: ["traduction", "traduccion", "traduzione", "ubersetzung", "translation", "translator"],
   interpreting: ["interpretation", "interpreting", "interpretariat", "interpretazione", "interpretacion"],
-  exam: ["examen", "exam", "certification", "test"],
-  schedule: ["horaire", "horario", "orario", "schedule", "timetable"],
-  price: ["prix", "precio", "prezzo", "price", "tarif", "tariffa", "fee", "fees", "cost"],
-  duration: ["durée", "duracion", "durata", "duration", "length"]
+  exam: ["examen", "exam", "certification", "test", "deadline"],
+  schedule: ["horaire", "horario", "orario", "schedule", "timetable", "time"],
+  price: ["prix", "precio", "prezzo", "price", "tarif", "tariffa", "fee", "fees", "cost", "tuition"],
+  duration: ["durée", "duracion", "durata", "duration", "length"],
+  level: ["niveau", "nivel", "livello", "level"],
+  registration: ["inscription", "registro", "iscrizione", "registration", "enrollment"]
+};
+
+const CROSS_LANGUAGE_CANONICAL_INDEX = Object.entries(CROSS_LANGUAGE_TERM_MAP).reduce((acc, [canonical, variants]) => {
+  for (const variant of [canonical, ...variants]) {
+    acc[variant] = canonical;
+  }
+  return acc;
+}, {});
+
+const SPECIFIC_INTENT_PATTERNS = {
+  fee: /\b(fee|fees|price|prix|precio|prezzo|cost|tarif|tariffa|tuition)\b/i,
+  duration: /\b(duration|durée|duracion|durata|length|long)\b/i,
+  schedule: /\b(schedule|horaire|horario|orario|timetable|time|date)\b/i,
+  exam: /\b(exam|examen|test|certification)\b/i,
+  registration: /\b(register|registration|enroll|enrollment|inscription|iscrizione|registro)\b/i,
+  course: /\b(course|courses|cours|curso|cursos|corso|corsi|class|classes|program)\b/i
 };
 
 async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
@@ -211,6 +229,7 @@ async function searchKnowledgeBase(userMessage) {
       .toLowerCase()
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, " ")
+      .replace(/[’'`]/g, " ")
       .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/)
       .map(part => part.trim())
@@ -278,10 +297,10 @@ async function searchKnowledgeBase(userMessage) {
   const expandedTerms = queryVariants.flatMap(value => normalizeForTerms(value));
   const crossLanguageTerms = [];
   for (const term of dedupe([...originalTerms, ...englishTerms, ...expandedTerms])) {
-    for (const variants of Object.values(CROSS_LANGUAGE_TERM_MAP)) {
-      if (variants.includes(term)) {
-        crossLanguageTerms.push(...variants);
-      }
+    const canonical = CROSS_LANGUAGE_CANONICAL_INDEX[term] || term;
+    const variants = CROSS_LANGUAGE_TERM_MAP[canonical];
+    if (Array.isArray(variants)) {
+      crossLanguageTerms.push(canonical, ...variants);
     }
   }
   const terms = dedupe(
@@ -341,6 +360,7 @@ async function searchKnowledgeBase(userMessage) {
     const category = (article.kb_categories?.name || "").toLowerCase();
 
     let score = 0;
+    const specificIntent = detectSpecificIntent(rawMessage);
     for (const term of terms) {
       if (!term || term.length < 2) continue;
       if (title.includes(term)) score += 14;
@@ -363,6 +383,12 @@ async function searchKnowledgeBase(userMessage) {
     const articleLanguage = (article.language || "").toLowerCase();
     if (messageLanguage && articleLanguage && messageLanguage === articleLanguage) {
       score += 2;
+    }
+
+    if (specificIntent) {
+      if (title.includes(specificIntent)) score += 8;
+      if (question.includes(specificIntent)) score += 6;
+      if (keywords.includes(specificIntent)) score += 6;
     }
 
     const phrase = normalizeForTerms(rawMessage).slice(0, 5).join(" ");
@@ -422,6 +448,30 @@ function getLocalizedAck(language) {
   }
 }
 
+function getLocalizedClarifyingQuestion(language) {
+  switch (language) {
+    case "fr":
+      return "Bien sûr. Que souhaitez-vous savoir exactement sur LSA GLOBAL (tarif, durée, horaires, inscription, ou autre) ?";
+    case "es":
+      return "Claro. ¿Qué desea saber exactamente sobre LSA GLOBAL (precio, duración, horario, inscripción u otro punto)?";
+    case "de":
+      return "Gern. Was genau möchten Sie über LSA GLOBAL wissen (Preis, Dauer, Zeitplan, Anmeldung oder etwas anderes)?";
+    case "it":
+      return "Certo. Cosa desidera sapere esattamente su LSA GLOBAL (prezzo, durata, orario, iscrizione o altro)?";
+    default:
+      return "Sure. What exactly would you like to know about LSA GLOBAL (fee, duration, schedule, registration, or something else)?";
+  }
+}
+
+function detectSpecificIntent(text) {
+  const raw = (text || "").trim();
+  if (!raw) return null;
+  for (const [intent, pattern] of Object.entries(SPECIFIC_INTENT_PATTERNS)) {
+    if (pattern.test(raw)) return intent;
+  }
+  return null;
+}
+
 function isVagueCustomerMessage(text) {
   const normalized = (text || "").toLowerCase().trim();
   if (!normalized) return true;
@@ -456,7 +506,7 @@ function enforceReplyStyle(text, language = "en") {
   const safeText = (text || "").trim();
   if (!safeText) return fallback;
 
-  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere)\b/i;
+  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere|another center|another company|external institute)\b/i;
   if (blockedMentions.test(safeText)) {
     return fallback;
   }
@@ -474,7 +524,7 @@ function enforceReplyStyle(text, language = "en") {
   return compact;
 }
 
-async function generateAIAnswerMessage({ customerMessage, kbMatches }) {
+async function generateAIAnswerMessage({ customerMessage, kbMatches, specificIntent = null }) {
   const kbContext = kbMatches.length
     ? kbMatches
         .map((item, index) => {
@@ -493,6 +543,7 @@ Answer: ${item.answer || ""}
     : "NO_MATCH";
 
   const vagueHint = isVagueCustomerMessage(customerMessage) ? "YES" : "NO";
+  const kbMode = kbMatches.length ? "KB_PRESENT" : "KB_MISSING";
   const detectedLanguage = detectMessageLanguage(customerMessage);
 
   const aiResponse = await openai.responses.create({
@@ -510,12 +561,14 @@ Core behavior:
 7) Never recommend competitors or external alternatives. Keep the user inside LSA GLOBAL context only.
 8) Use knowledge base content as the primary source of truth.
 9) Never invent prices, legal guarantees, turnaround promises, or policies.
-10) If KB is insufficient, say briefly that a human advisor will assist.
-11) Reply in the same language as the customer message.
-12) Never send users outside LSA GLOBAL, even when information is missing.
-13) If the customer asks a broad question, ask one clarifying question only.
-14) When a relevant KB answer exists in another language, use it and answer in the customer's language.
-15) Keep output under 80 words unless the customer explicitly asks for details.
+10) If KB is present, do not answer from generic model memory. Stay grounded in KB content only.
+11) If KB is insufficient, say briefly that a human advisor will assist.
+12) Reply in the same language as the customer message.
+13) Never send users outside LSA GLOBAL, even when information is missing.
+14) If the customer asks a broad question, ask one clarifying question only.
+15) When a relevant KB answer exists in another language, use it and answer in the customer's language.
+16) Keep output under 80 words unless the customer explicitly asks for details.
+17) If a specific intent is provided (fee, duration, schedule, exam, registration), answer only that intent.
 
 Style:
 - Professional and human-like.
@@ -529,6 +582,12 @@ ${customerMessage}
 
 Message flagged as vague:
 ${vagueHint}
+
+KB mode:
+${kbMode}
+
+Specific intent:
+${specificIntent || "none"}
 
 Knowledge base matches:
 ${kbContext}
@@ -614,18 +673,26 @@ app.post("/webhook", async (req, res) => {
 else {
   const kbMatches = await searchKnowledgeBase(text);
   const detectedLanguage = detectMessageLanguage(text);
+  const specificIntent = detectSpecificIntent(text);
+  const vagueMessage = isVagueCustomerMessage(text);
 
   try {
-    reply = await generateAIAnswerMessage({
-      customerMessage: text,
-      kbMatches
-    });
+    if (vagueMessage && !specificIntent) {
+      reply = getLocalizedClarifyingQuestion(detectedLanguage);
+    } else {
+      reply = await generateAIAnswerMessage({
+        customerMessage: text,
+        kbMatches,
+        specificIntent
+      });
+    }
+
     if (!reply || !reply.trim()) {
       reply = getLocalizedAck(detectedLanguage);
     }
   } catch (err) {
     console.error("AI fallback error:", err.message || err);
-    reply = getLocalizedAck(detectedLanguage);
+    reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
   }
 }
     if (reply) {
