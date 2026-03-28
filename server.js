@@ -793,6 +793,18 @@ function getLocalizedMenuReply(language, selection) {
   return LOCALIZED_OPTION_REPLIES[selection]?.[safeLang] || "";
 }
 
+function getLocalizedEscalationMessage(language) {
+  const byLang = {
+    fr: "Merci. Ce point doit être validé par un conseiller LSA GLOBAL. Partagez votre nom et numéro WhatsApp, nous revenons vite vers vous.",
+    es: "Gracias. Este punto debe validarlo un asesor de LSA GLOBAL. Comparta su nombre y WhatsApp y le contactamos pronto.",
+    it: "Grazie. Questo punto deve essere confermato da un consulente LSA GLOBAL. Condivida nome e numero WhatsApp e la contatteremo presto.",
+    pt: "Obrigado. Este ponto precisa ser validado por um consultor da LSA GLOBAL. Partilhe nome e número WhatsApp e entraremos em contacto em breve.",
+    de: "Danke. Dieser Punkt muss von einem LSA GLOBAL-Berater bestätigt werden. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit.",
+    en: "Thank you. This point needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and we will contact you shortly."
+  };
+  return byLang[language] || byLang.en;
+}
+
 function resolveConversationLanguage({ waId, text, greetingLanguage }) {
   const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
   if (greetingLanguage && SUPPORTED_MENU_LANGUAGES.includes(greetingLanguage)) {
@@ -830,7 +842,7 @@ function isVagueCustomerMessage(text) {
   if (normalized.length < 8) return true;
 
   const wordCount = normalized.split(/\s+/).length;
-  const hasSpecificSignals = /\b(price|prix|precio|prezzo|fee|fees|cost|date|exam|duration|horaire|schedule|orario|course|cours|curso|corso|translation|traduction|traduzione)\b/.test(normalized);
+  const hasSpecificSignals = /\b(price|prix|precio|prezzo|fee|fees|cost|date|exam|duration|horaire|schedule|orario|course|cours|curso|corso|translation|traduction|traduzione|level|levels|niveau|format|online|onsite|location|registration|inscription|certification)\b/.test(normalized);
   if (hasSpecificSignals) return false;
 
   const vaguePhrases = [
@@ -872,7 +884,7 @@ function enforceReplyStyle(text, language = "en") {
   const safeText = (text || "").trim();
   if (!safeText) return fallback;
 
-  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere|another center|another company|external institute)\b/i;
+  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere|another center|another company|external institute|alternative provider)\b/i;
   if (blockedMentions.test(safeText)) {
     return fallback;
   }
@@ -928,13 +940,14 @@ Core behavior:
 8) Use knowledge base content as the primary source of truth.
 9) Never invent prices, legal guarantees, turnaround promises, or policies.
 10) If KB is present, do not answer from generic model memory. Stay grounded in KB content only.
-11) If KB is insufficient, say briefly that a human advisor will assist.
+11) If KB is insufficient, say briefly that a human advisor will assist inside LSA GLOBAL.
 12) Reply in the same language as the customer message.
 13) Never send users outside LSA GLOBAL, even when information is missing.
 14) If the customer asks a broad question, ask one clarifying question only.
 15) When a relevant KB answer exists in another language, use it and answer in the customer's language.
-16) Keep output under 80 words unless the customer explicitly asks for details.
-17) If a specific intent is provided (fee, duration, schedule, exam, registration), answer only that intent.
+16) If KB clearly contains the asked detail, answer it directly and do not say information is unavailable.
+17) Keep output under 80 words unless the customer explicitly asks for details.
+18) If a specific intent is provided (fee, duration, schedule, exam, registration), answer only that intent.
 
 Style:
 - Professional and human-like.
