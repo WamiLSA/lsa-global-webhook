@@ -112,6 +112,7 @@
     <div class="card" id="captureFormCard">
       <h3 id="formTitle">Capture New Knowledge</h3>
 
+      <input type="hidden" id="capture_id" />
       <input id="title" placeholder="Optional title" />
       <input id="raw_question" placeholder="Original question (optional)" />
       <textarea id="raw_answer" placeholder="Raw answer / explanation / useful human response"></textarea>
@@ -135,30 +136,33 @@
         <option value="approved">approved</option>
         <option value="converted">converted</option>
       </select>
-      
-      <textarea id="notes" placeholder="Notes"></textarea>
-      <div class="card" id="aiSuggestionCard" style="display:none;">
-  <h3>AI Suggestion Preview</h3>
-  <div class="small"><strong>Title:</strong> <span id="preview_title"></span></div>
-  <div class="small"><strong>Improved Question:</strong> <span id="preview_question"></span></div>
-  <div class="small"><strong>Keywords:</strong> <span id="preview_keywords"></span></div>
-  <div class="small"><strong>Audience:</strong> <span id="preview_audience"></span></div>
-  <div class="small"><strong>Suggested Category:</strong> <span id="preview_category"></span></div>
-  <div class="small"><strong>New Category Suggestion:</strong> <span id="preview_new_category"></span></div>
-  <div class="answer" id="preview_answer"></div>
- <div style="margin-top:12px;">
-  <input id="convert_keywords" placeholder="Keywords for KB article" />
-  <input id="convert_category_name" placeholder="Category to use for KB article" />
-  <label style="display:flex; gap:8px; align-items:center; width:auto; margin-bottom:10px;">
-    <input type="checkbox" id="convert_create_new_category" style="width:auto; margin:0;" />
-    Create new category if it does not exist
-  </label>
-  <button onclick="checkDuplicates()">Check Duplicates</button>
-  <button onclick="convertToKB()">Convert to KB Article</button>
-</div>
 
-<div id="duplicateResults"></div>
-</div>
+      <textarea id="notes" placeholder="Notes"></textarea>
+
+      <div class="card" id="aiSuggestionCard" style="display:none;">
+        <h3>AI Suggestion Preview</h3>
+        <div class="small"><strong>Title:</strong> <span id="preview_title"></span></div>
+        <div class="small"><strong>Improved Question:</strong> <span id="preview_question"></span></div>
+        <div class="small"><strong>Keywords:</strong> <span id="preview_keywords"></span></div>
+        <div class="small"><strong>Audience:</strong> <span id="preview_audience"></span></div>
+        <div class="small"><strong>Suggested Category:</strong> <span id="preview_category"></span></div>
+        <div class="small"><strong>New Category Suggestion:</strong> <span id="preview_new_category"></span></div>
+        <div class="answer" id="preview_answer"></div>
+
+        <div style="margin-top:12px;">
+          <input id="convert_keywords" placeholder="Keywords for KB article" />
+          <input id="convert_category_name" placeholder="Category to use for KB article" />
+          <label style="display:flex; gap:8px; align-items:center; width:auto; margin-bottom:10px;">
+            <input type="checkbox" id="convert_create_new_category" style="width:auto; margin:0;" />
+            Create new category if it does not exist
+          </label>
+          <button onclick="checkDuplicates()">Check Duplicates</button>
+          <button onclick="convertToKB()">Convert to KB Article</button>
+        </div>
+
+        <div id="duplicateResults"></div>
+      </div>
+
       <button onclick="generateStructuredKnowledge()">Generate Structured Knowledge</button>
       <button id="saveBtn" onclick="createOrUpdateCapture()">Save Capture</button>
       <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
@@ -267,11 +271,149 @@
       await loadCaptures();
     }
 
+    async function generateStructuredKnowledge() {
+      const raw_question = document.getElementById("raw_question").value.trim();
+      const raw_answer = document.getElementById("raw_answer").value.trim();
+
+      const res = await fetch("/api/kb-capture/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          raw_question,
+          raw_answer
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Generation failed: " + JSON.stringify(result));
+        return;
+      }
+
+      const data = result.result || {};
+
+      document.getElementById("title").value = data.title || "";
+      document.getElementById("raw_question").value = data.improved_question || raw_question;
+      document.getElementById("raw_answer").value = data.improved_answer || raw_answer;
+      document.getElementById("suggested_category").value = data.suggested_category || "";
+      document.getElementById("audience").value = data.audience || "";
+      document.getElementById("notes").value =
+        (document.getElementById("notes").value ? document.getElementById("notes").value + "\n\n" : "") +
+        "Keywords: " + (data.keywords || "") +
+        (data.new_category_suggestion ? "\nNew category suggestion: " + data.new_category_suggestion : "");
+
+      document.getElementById("preview_title").textContent = data.title || "";
+      document.getElementById("preview_question").textContent = data.improved_question || "";
+      document.getElementById("preview_keywords").textContent = data.keywords || "";
+      document.getElementById("preview_audience").textContent = data.audience || "";
+      document.getElementById("preview_category").textContent = data.suggested_category || "";
+      document.getElementById("preview_new_category").textContent = data.new_category_suggestion || "";
+      document.getElementById("preview_answer").textContent = data.improved_answer || "";
+
+      document.getElementById("convert_keywords").value = data.keywords || "";
+      document.getElementById("convert_category_name").value = data.suggested_category || data.new_category_suggestion || "";
+
+      document.getElementById("aiSuggestionCard").style.display = "block";
+    }
+
+    async function checkDuplicates() {
+      const title = document.getElementById("title").value.trim();
+      const raw_question = document.getElementById("raw_question").value.trim();
+      const raw_answer = document.getElementById("raw_answer").value.trim();
+
+      const res = await fetch("/api/kb-capture/check-duplicates", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          title,
+          raw_question,
+          raw_answer
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Duplicate check failed: " + JSON.stringify(result));
+        return;
+      }
+
+      const container = document.getElementById("duplicateResults");
+      container.innerHTML = "<h3>Possible Duplicate Matches</h3>";
+
+      if (!result.matches || result.matches.length === 0) {
+        container.innerHTML += `<div class="card">No likely duplicates found.</div>`;
+        return;
+      }
+
+      result.matches.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "card";
+        div.innerHTML = `
+          <div class="title">${item.title || ""}</div>
+          <div class="small">
+            Category: ${item.kb_categories?.name || "None"} |
+            Audience: ${item.audience || ""} |
+            Language: ${item.language || ""}
+          </div>
+          <div class="small">Question: ${item.question || ""}</div>
+          <div class="answer">${item.answer || ""}</div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    async function convertToKB() {
+      const capture_id = document.getElementById("capture_id").value || null;
+      const title = document.getElementById("title").value.trim();
+      const question = document.getElementById("raw_question").value.trim();
+      const answer = document.getElementById("raw_answer").value.trim();
+      const keywords = document.getElementById("convert_keywords").value.trim();
+      const audience = document.getElementById("audience").value.trim();
+      const category_name = document.getElementById("convert_category_name").value.trim();
+      const create_new_category = document.getElementById("convert_create_new_category").checked;
+
+      const res = await fetch("/api/kb-capture/convert-to-kb", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          capture_id,
+          title,
+          question,
+          answer,
+          keywords,
+          audience,
+          language: "en",
+          status: "published",
+          category_name,
+          create_new_category
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Convert to KB failed: " + JSON.stringify(result));
+        return;
+      }
+
+      alert("Converted to KB article successfully.");
+      await loadCaptures();
+    }
+
     function editCapture(id) {
       const item = captures.find(c => c.id === id);
       if (!item) return;
 
       editingId = id;
+      document.getElementById("capture_id").value = id;
       document.getElementById("formTitle").textContent = "Edit Capture";
       document.getElementById("captureFormCard").classList.add("edit-mode");
       document.getElementById("saveBtn").textContent = "Update Capture";
@@ -293,6 +435,10 @@
     }
 
     function clearForm() {
+      document.getElementById("capture_id").value = "";
+      document.getElementById("aiSuggestionCard").style.display = "none";
+      document.getElementById("duplicateResults").innerHTML = "";
+
       editingId = null;
       document.getElementById("formTitle").textContent = "Capture New Knowledge";
       document.getElementById("captureFormCard").classList.remove("edit-mode");
@@ -308,6 +454,9 @@
       document.getElementById("source_reference").value = "";
       document.getElementById("status").value = "pending";
       document.getElementById("notes").value = "";
+      document.getElementById("convert_keywords").value = "";
+      document.getElementById("convert_category_name").value = "";
+      document.getElementById("convert_create_new_category").checked = false;
     }
 
     async function deleteCapture(id) {
@@ -331,50 +480,7 @@
 
       await loadCaptures();
     }
- async function generateStructuredKnowledge() {
-  const raw_question = document.getElementById("raw_question").value.trim();
-  const raw_answer = document.getElementById("raw_answer").value.trim();
 
-  const res = await fetch("/api/kb-capture/generate", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      raw_question,
-      raw_answer
-    })
-  });
-
-  const result = await res.json();
-
-  if (!res.ok) {
-    alert("Generation failed: " + JSON.stringify(result));
-    return;
-  }
-
-  const data = result.result || {};
-
-  document.getElementById("title").value = data.title || "";
-  document.getElementById("raw_question").value = data.improved_question || raw_question;
-  document.getElementById("raw_answer").value = data.improved_answer || raw_answer;
-  document.getElementById("suggested_category").value = data.suggested_category || "";
-  document.getElementById("audience").value = data.audience || "";
-  document.getElementById("notes").value =
-    (document.getElementById("notes").value ? document.getElementById("notes").value + "\n\n" : "") +
-    "Keywords: " + (data.keywords || "") +
-    (data.new_category_suggestion ? "\nNew category suggestion: " + data.new_category_suggestion : "");
-
-  document.getElementById("preview_title").textContent = data.title || "";
-  document.getElementById("preview_question").textContent = data.improved_question || "";
-  document.getElementById("preview_keywords").textContent = data.keywords || "";
-  document.getElementById("preview_audience").textContent = data.audience || "";
-  document.getElementById("preview_category").textContent = data.suggested_category || "";
-  document.getElementById("preview_new_category").textContent = data.new_category_suggestion || "";
-  document.getElementById("preview_answer").textContent = data.improved_answer || "";
-
-  document.getElementById("aiSuggestionCard").style.display = "block";
-}
     loadCaptures();
   </script>
 </body>
