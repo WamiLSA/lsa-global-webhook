@@ -170,6 +170,112 @@ const SPECIFIC_INTENT_PATTERNS = {
   course: /\b(course|courses|cours|curso|cursos|corso|corsi|class|classes|program)\b/i
 };
 
+const NARROW_INTENT_KEYWORDS = {
+  fees: ["fee", "fees", "price", "prices", "pricing", "cost", "costs", "tariff", "tariffs", "prix", "tarifs", "coût", "cout", "frais"],
+  duration: ["duration", "durée", "duree", "length", "how long"],
+  schedule: ["schedule", "schedules", "horaires", "timetable", "hours", "time"],
+  levels: ["level", "levels", "niveau", "niveaux", "a1", "a2", "b1", "b2", "c1", "c2"],
+  location: ["location", "lieu", "centre", "campus", "city", "douala", "london", "newark"],
+  format: ["format", "online", "onsite", "in-person", "presentiel", "présentiel", "distance"],
+  registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply"],
+  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification"]
+};
+
+function normalizeForIntent(text) {
+  return (text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[’'`]/g, " ")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectNarrowIntent(message) {
+  const normalized = normalizeForIntent(message);
+  if (!normalized) return null;
+
+  const hits = [];
+  for (const [intent, keywords] of Object.entries(NARROW_INTENT_KEYWORDS)) {
+    for (const keyword of keywords) {
+      const normalizedKeyword = normalizeForIntent(keyword).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      if (!normalizedKeyword) continue;
+      const regex = new RegExp(`\\b${normalizedKeyword}\\b`, "i");
+      if (regex.test(normalized)) {
+        hits.push(intent);
+        break;
+      }
+    }
+  }
+
+  return hits.length === 1 ? hits[0] : null;
+}
+
+function extractRelevantKbSection(answerText, intent) {
+  if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
+
+  const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
+  const normalizedAnswer = normalizeForIntent(answerText);
+  const hasIntentSignal = keywords.some((keyword) => keyword && normalizedAnswer.includes(keyword));
+  if (!hasIntentSignal) return null;
+
+  const paragraphs = answerText
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  const fallbackParagraphs = answerText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const candidates = paragraphs.length ? paragraphs : fallbackParagraphs;
+  const scored = candidates
+    .map((section, index) => {
+      const normalizedSection = normalizeForIntent(section);
+      let score = 0;
+      for (const keyword of keywords) {
+        if (!keyword) continue;
+        const regex = new RegExp(`\\b${keyword.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "g");
+        const matches = normalizedSection.match(regex);
+        if (matches?.length) {
+          score += matches.length;
+        }
+      }
+      return { section, score, index };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index))
+    .slice(0, 3)
+    .map((item) => item.section);
+
+  if (!scored.length) return null;
+  return scored.join("\n");
+}
+
+async function localizeNarrowAnswer({ text, language }) {
+  if (!text?.trim()) return "";
+
+  if (!language || language === "en") {
+    return enforceReplyStyle(text, "en");
+  }
+
+  try {
+    const localized = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions:
+        "Translate the provided answer into the target language while preserving exact facts, figures, and formatting. " +
+        "Do not add extra explanations or questions. Keep it concise.",
+      input: `Target language: ${language}\n\nText:\n${text}`
+    });
+    return enforceReplyStyle(localized.output_text || text, language);
+  } catch (error) {
+    console.error("Narrow answer localization error:", error?.message || error);
+    return enforceReplyStyle(text, language);
+  }
+}
+
 async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
   const { error } = await supabase.from("conversations").insert([
     {
@@ -673,17 +779,33 @@ app.post("/webhook", async (req, res) => {
 else {
   const kbMatches = await searchKnowledgeBase(text);
   const detectedLanguage = detectMessageLanguage(text);
+  const narrowIntent = detectNarrowIntent(text);
   const specificIntent = detectSpecificIntent(text);
   const vagueMessage = isVagueCustomerMessage(text);
 
   try {
-    if (vagueMessage && !specificIntent) {
+    if (narrowIntent && kbMatches.length) {
+      let extractedSection = null;
+      for (const article of kbMatches) {
+        extractedSection = extractRelevantKbSection(article.answer || "", narrowIntent);
+        if (extractedSection) break;
+      }
+
+      if (extractedSection) {
+        reply = await localizeNarrowAnswer({
+          text: extractedSection,
+          language: detectedLanguage
+        });
+      } else {
+        reply = getLocalizedClarifyingQuestion(detectedLanguage);
+      }
+    } else if (vagueMessage && !specificIntent) {
       reply = getLocalizedClarifyingQuestion(detectedLanguage);
     } else {
       reply = await generateAIAnswerMessage({
         customerMessage: text,
         kbMatches,
-        specificIntent
+        specificIntent: specificIntent || narrowIntent
       });
     }
 
