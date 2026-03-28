@@ -751,6 +751,15 @@ Write the best answer for LSA GLOBAL.
     });
   }
 });
+create table if not exists kb_quick_capture (
+  id bigint generated always as identity primary key,
+  title text,
+  raw_text text not null,
+  source_type text default 'manual',
+  status text default 'pending',
+  notes text,
+  created_at timestamptz default now()
+);
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
