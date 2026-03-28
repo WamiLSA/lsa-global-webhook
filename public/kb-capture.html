@@ -191,19 +191,23 @@
       const container = document.getElementById("captures");
       container.innerHTML = "";
 
-      const filtered = captures.filter(item => {
-        const haystack = [
-          item.title || "",
-          item.raw_question || "",
-          item.raw_answer || "",
-          item.suggested_category || "",
-          item.audience || "",
-          item.source_channel || "",
-          item.notes || ""
-        ].join(" ").toLowerCase();
+     const filtered = captures.filter(item => {
+  if ((item.status || "").toLowerCase() === "converted") {
+    return false;
+  }
 
-        return !search || haystack.includes(search);
-      });
+  const haystack = [
+    item.title || "",
+    item.raw_question || "",
+    item.raw_answer || "",
+    item.suggested_category || "",
+    item.audience || "",
+    item.source_channel || "",
+    item.notes || ""
+  ].join(" ").toLowerCase();
+
+  return !search || haystack.includes(search);
+});
 
       filtered.forEach(item => {
         const div = document.createElement("div");
