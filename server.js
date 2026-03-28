@@ -1221,7 +1221,7 @@ app.post("/api/kb-capture/check-duplicates", async (req, res) => {
       .filter(Boolean)
       .slice(0, 8);
 
-    let query = supabase
+    const { data, error } = await supabase
       .from("kb_articles")
       .select(`
         id,
@@ -1232,22 +1232,40 @@ app.post("/api/kb-capture/check-duplicates", async (req, res) => {
         audience,
         language,
         status,
+        category_id,
         kb_categories (
           id,
           name
         )
       `)
-      .limit(10);
+      .limit(50);
 
-    if (searchText.length > 0) {
-      const orParts = [];
-      for (const term of searchText) {
-        orParts.push(`title.ilike.%${term}%`);
-        orParts.push(`question.ilike.%${term}%`);
-        orParts.push(`answer.ilike.%${term}%`);
-        orParts.push(`keywords.ilike.%${term}%`);
-      }
-      query = query.or(orParts.join(","));
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const matches = (data || []).filter(item => {
+      const haystack = [
+        item.title || "",
+        item.question || "",
+        item.answer || "",
+        item.keywords || "",
+        item.audience || "",
+        item.language || "",
+        item.kb_categories?.name || ""
+      ].join(" ").toLowerCase();
+
+      return searchText.some(term => haystack.includes(term));
+    });
+
+    return res.json({
+      ok: true,
+      matches: matches.slice(0, 10)
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
     }
 
     const { data, error } = await query;
