@@ -751,15 +751,75 @@ Write the best answer for LSA GLOBAL.
     });
   }
 });
-create table if not exists kb_quick_capture (
-  id bigint generated always as identity primary key,
-  title text,
-  raw_text text not null,
-  source_type text default 'manual',
-  status text default 'pending',
-  notes text,
-  created_at timestamptz default now()
-);
+// ===== KB QUICK CAPTURE API: LIST =====
+app.get("/api/kb/quick-capture", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("kb_quick_capture")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== KB QUICK CAPTURE API: CREATE =====
+app.post("/api/kb/quick-capture", async (req, res) => {
+  try {
+    const { title, raw_text, source_type, status, notes } = req.body;
+
+    if (!raw_text || !raw_text.trim()) {
+      return res.status(400).json({ error: "raw_text is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_quick_capture")
+      .insert([
+        {
+          title: title || null,
+          raw_text,
+          source_type: source_type || "manual",
+          status: status || "pending",
+          notes: notes || null
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== KB QUICK CAPTURE API: DELETE =====
+app.delete("/api/kb/quick-capture/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const { error } = await supabase
+      .from("kb_quick_capture")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
