@@ -1125,6 +1125,91 @@ app.delete("/api/kb-capture/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+app.post("/api/kb-capture/generate", async (req, res) => {
+  try {
+    const { raw_question, raw_answer } = req.body;
+
+    if ((!raw_question || !raw_question.trim()) && (!raw_answer || !raw_answer.trim())) {
+      return res.status(400).json({ error: "raw_question or raw_answer is required" });
+    }
+
+    const { data: categoriesData, error: categoriesError } = await supabase
+      .from("kb_categories")
+      .select("name")
+      .order("name", { ascending: true });
+
+    if (categoriesError) {
+      return res.status(500).json({ error: categoriesError });
+    }
+
+    const categoryNames = (categoriesData || []).map(c => c.name);
+
+    const prompt = `
+You are helping structure knowledge for LSA GLOBAL.
+
+Existing categories:
+${categoryNames.join(", ")}
+
+Your job:
+Based on the raw question and/or raw answer, generate a structured knowledge suggestion.
+
+Rules:
+1. Improve and clarify the question.
+2. Generate a professional title.
+3. Write a polished answer between 100 and 150 words.
+4. Suggest keywords as a comma-separated string.
+5. Suggest one audience from: client, student, partner, staff, provider.
+6. Suggest the best existing category if one fits.
+7. If none of the existing categories fits well, suggest a new category name.
+8. Keep the answer factual, professional, and suitable for LSA GLOBAL.
+9. Do not invent policies, prices, or guarantees that were not implied by the source text.
+10. Return valid JSON only.
+
+Return JSON with exactly these keys:
+title
+improved_question
+improved_answer
+keywords
+audience
+suggested_category
+new_category_suggestion
+`;
+
+    const input = `
+Raw question:
+${raw_question || ""}
+
+Raw answer:
+${raw_answer || ""}
+`;
+
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions: prompt,
+      input
+    });
+
+    const text = response.output_text || "{}";
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      return res.status(500).json({
+        error: "AI returned invalid JSON",
+        raw_output: text
+      });
+    }
+
+    return res.json({
+      ok: true,
+      result: parsed
+    });
+  } catch (error) {
+    console.error("KB capture generate error:", error.response?.data || error.message || error);
+    return res.status(500).json({ error: "Knowledge generation failed" });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
