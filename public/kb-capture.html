@@ -135,9 +135,19 @@
         <option value="approved">approved</option>
         <option value="converted">converted</option>
       </select>
-
+      
       <textarea id="notes" placeholder="Notes"></textarea>
-
+      <div class="card" id="aiSuggestionCard" style="display:none;">
+  <h3>AI Suggestion Preview</h3>
+  <div class="small"><strong>Title:</strong> <span id="preview_title"></span></div>
+  <div class="small"><strong>Improved Question:</strong> <span id="preview_question"></span></div>
+  <div class="small"><strong>Keywords:</strong> <span id="preview_keywords"></span></div>
+  <div class="small"><strong>Audience:</strong> <span id="preview_audience"></span></div>
+  <div class="small"><strong>Suggested Category:</strong> <span id="preview_category"></span></div>
+  <div class="small"><strong>New Category Suggestion:</strong> <span id="preview_new_category"></span></div>
+  <div class="answer" id="preview_answer"></div>
+</div>
+      <button onclick="generateStructuredKnowledge()">Generate Structured Knowledge</button>
       <button id="saveBtn" onclick="createOrUpdateCapture()">Save Capture</button>
       <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
     </div>
@@ -309,7 +319,50 @@
 
       await loadCaptures();
     }
+ async function generateStructuredKnowledge() {
+  const raw_question = document.getElementById("raw_question").value.trim();
+  const raw_answer = document.getElementById("raw_answer").value.trim();
 
+  const res = await fetch("/api/kb-capture/generate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      raw_question,
+      raw_answer
+    })
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    alert("Generation failed: " + JSON.stringify(result));
+    return;
+  }
+
+  const data = result.result || {};
+
+  document.getElementById("title").value = data.title || "";
+  document.getElementById("raw_question").value = data.improved_question || raw_question;
+  document.getElementById("raw_answer").value = data.improved_answer || raw_answer;
+  document.getElementById("suggested_category").value = data.suggested_category || "";
+  document.getElementById("audience").value = data.audience || "";
+  document.getElementById("notes").value =
+    (document.getElementById("notes").value ? document.getElementById("notes").value + "\n\n" : "") +
+    "Keywords: " + (data.keywords || "") +
+    (data.new_category_suggestion ? "\nNew category suggestion: " + data.new_category_suggestion : "");
+
+  document.getElementById("preview_title").textContent = data.title || "";
+  document.getElementById("preview_question").textContent = data.improved_question || "";
+  document.getElementById("preview_keywords").textContent = data.keywords || "";
+  document.getElementById("preview_audience").textContent = data.audience || "";
+  document.getElementById("preview_category").textContent = data.suggested_category || "";
+  document.getElementById("preview_new_category").textContent = data.new_category_suggestion || "";
+  document.getElementById("preview_answer").textContent = data.improved_answer || "";
+
+  document.getElementById("aiSuggestionCard").style.display = "block";
+}
     loadCaptures();
   </script>
 </body>
