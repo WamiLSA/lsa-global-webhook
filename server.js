@@ -1210,6 +1210,159 @@ ${raw_answer || ""}
     return res.status(500).json({ error: "Knowledge generation failed" });
   }
 });
+app.post("/api/kb-capture/check-duplicates", async (req, res) => {
+  try {
+    const { title, raw_question, raw_answer } = req.body;
+
+    const searchText = [title || "", raw_question || "", raw_answer || ""]
+      .join(" ")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 8);
+
+    let query = supabase
+      .from("kb_articles")
+      .select(`
+        id,
+        title,
+        question,
+        answer,
+        keywords,
+        audience,
+        language,
+        status,
+        kb_categories (
+          id,
+          name
+        )
+      `)
+      .limit(10);
+
+    if (searchText.length > 0) {
+      const orParts = [];
+      for (const term of searchText) {
+        orParts.push(`title.ilike.%${term}%`);
+        orParts.push(`question.ilike.%${term}%`);
+        orParts.push(`answer.ilike.%${term}%`);
+        orParts.push(`keywords.ilike.%${term}%`);
+      }
+      query = query.or(orParts.join(","));
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, matches: data || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/kb-capture/convert-to-kb", async (req, res) => {
+  try {
+    const {
+      capture_id,
+      title,
+      question,
+      answer,
+      keywords,
+      audience,
+      language,
+      status,
+      category_name,
+      create_new_category
+    } = req.body;
+
+    if (!title || !answer) {
+      return res.status(400).json({ error: "title and answer are required" });
+    }
+
+    let category_id = null;
+
+    if (category_name && category_name.trim()) {
+      const trimmedCategory = category_name.trim();
+
+      const { data: existingCategory, error: categoryLookupError } = await supabase
+        .from("kb_categories")
+        .select("id, name")
+        .eq("name", trimmedCategory)
+        .maybeSingle();
+
+      if (categoryLookupError) {
+        return res.status(500).json({ error: categoryLookupError });
+      }
+
+      if (existingCategory) {
+        category_id = existingCategory.id;
+      } else if (create_new_category) {
+        const { data: newCategory, error: newCategoryError } = await supabase
+          .from("kb_categories")
+          .insert([
+            {
+              name: trimmedCategory,
+              description: "Created from Knowledge Capture Assistant"
+            }
+          ])
+          .select()
+          .single();
+
+        if (newCategoryError) {
+          return res.status(500).json({ error: newCategoryError });
+        }
+
+        category_id = newCategory.id;
+      }
+    }
+
+    const { data: articleData, error: articleError } = await supabase
+      .from("kb_articles")
+      .insert([
+        {
+          category_id,
+          title,
+          question: question || null,
+          answer,
+          keywords: keywords || null,
+          audience: audience || null,
+          language: language || "en",
+          status: status || "published",
+          source_type: "capture_assistant"
+        }
+      ])
+      .select()
+      .single();
+
+    if (articleError) {
+      return res.status(500).json({ error: articleError });
+    }
+
+    if (capture_id) {
+      const { error: captureUpdateError } = await supabase
+        .from("kb_capture_assistant")
+        .update({
+          status: "converted",
+          updated_at: new Date().toISOString(),
+          notes: "Converted to KB article ID " + articleData.id
+        })
+        .eq("id", capture_id);
+
+      if (captureUpdateError) {
+        return res.status(500).json({ error: captureUpdateError });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      article: articleData
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
