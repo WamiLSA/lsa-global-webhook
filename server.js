@@ -198,7 +198,7 @@ const GREETING_PHRASES = {
   de: ["hallo", "guten tag", "guten morgen", "guten abend"]
 };
 
-const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|urgent complaint|legal issue|refund|remboursement|rembolso|rimborso|reembolso)\b/i;
+const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|policy waiver|waiver|refund|refunds|complaint|complaints|sensitive complaint|legal issue|remboursement|rembolso|rimborso|reembolso|descuento|descuentos|rabais|sconto|desconto)\b/i;
 const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
 
@@ -219,28 +219,28 @@ const LOCALIZED_WELCOME_MENUS = {
 
 const LOCALIZED_OPTION_REPLIES = {
   translation: {
-    en: "🌍 Translation Services\n\nWe provide certified and professional translations in:\nEN, FR, ES, DE, IT, AR, ZH and more.\n\n✔ Legal documents\n✔ Academic transcripts\n✔ Business and websites\n\nGet a free quote:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    fr: "🌍 Services de traduction\n\nNous proposons des traductions certifiées et professionnelles en :\nEN, FR, ES, DE, IT, AR, ZH et plus encore.\n\n✔ Documents juridiques\n✔ Relevés et diplômes académiques\n✔ Documents professionnels et sites web\n\nDemandez un devis gratuit :\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    es: "🌍 Servicios de traducción\n\nOfrecemos traducciones certificadas y profesionales en:\nEN, FR, ES, DE, IT, AR, ZH y más.\n\n✔ Documentos legales\n✔ Expedientes y documentos académicos\n✔ Documentos empresariales y sitios web\n\nSolicite un presupuesto gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    it: "🌍 Servizi di traduzione\n\nForniamo traduzioni certificate e professionali in:\nEN, FR, ES, DE, IT, AR, ZH e altre lingue.\n\n✔ Documenti legali\n✔ Trascrizioni e documenti accademici\n✔ Documenti aziendali e siti web\n\nRichiedi un preventivo gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    pt: "🌍 Serviços de tradução\n\nFornecemos traduções certificadas e profissionais em:\nEN, FR, ES, DE, IT, AR, ZH e muito mais.\n\n✔ Documentos jurídicos\n✔ Históricos e documentos acadêmicos\n✔ Documentos empresariais e sites\n\nPeça um orçamento gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    de: "🌍 Übersetzungsdienstleistungen\n\nWir bieten beglaubigte und professionelle Übersetzungen in:\nEN, FR, ES, DE, IT, AR, ZH und weiteren Sprachen an.\n\n✔ Rechtliche Dokumente\n✔ Akademische Unterlagen\n✔ Geschäftsdokumente und Websites\n\nFordern Sie ein kostenloses Angebot an:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
+    en: "🌍 Translation services.\nCertified translations for legal, academic, and business documents.\n\nFree quote:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    fr: "🌍 Services de traduction.\nTraductions certifiées pour documents juridiques, académiques et professionnels.\n\nDevis gratuit :\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    es: "🌍 Servicios de traducción.\nTraducciones certificadas para documentos legales, académicos y empresariales.\n\nPresupuesto gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    it: "🌍 Servizi di traduzione.\nTraduzioni certificate per documenti legali, accademici e aziendali.\n\nPreventivo gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    pt: "🌍 Serviços de tradução.\nTraduções certificadas para documentos jurídicos, acadêmicos e empresariais.\n\nOrçamento gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    de: "🌍 Übersetzungsdienste.\nBeglaubigte Übersetzungen für rechtliche, akademische und geschäftliche Dokumente.\n\nKostenloses Angebot:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
   },
   courses: {
-    en: "🎓 Language Courses (A1–C2)\n\nWe offer online and guided language training in English, French, Spanish, German, Chinese and more.\n\nRegister here:\nhttps://lsa-global.com/register-now-2/",
-    fr: "🎓 Cours de langues (A1–C2)\n\nNous proposons des formations linguistiques encadrées et en ligne en anglais, français, espagnol, allemand, chinois et plus encore.\n\nInscription :\nhttps://lsa-global.com/register-now-2/",
-    es: "🎓 Cursos de idiomas (A1–C2)\n\nOfrecemos formación lingüística guiada y en línea en inglés, francés, español, alemán, chino y más.\n\nInscripción:\nhttps://lsa-global.com/register-now-2/",
-    it: "🎓 Corsi di lingua (A1–C2)\n\nOffriamo corsi di lingua guidati e online in inglese, francese, spagnolo, tedesco, cinese e altro.\n\nIscrizione:\nhttps://lsa-global.com/register-now-2/",
-    pt: "🎓 Cursos de idiomas (A1–C2)\n\nOferecemos formação linguística orientada e online em inglês, francês, espanhol, alemão, chinês e muito mais.\n\nInscrição:\nhttps://lsa-global.com/register-now-2/",
-    de: "🎓 Sprachkurse (A1–C2)\n\nWir bieten betreute und online Sprachkurse in Englisch, Französisch, Spanisch, Deutsch, Chinesisch und mehr an.\n\nAnmeldung:\nhttps://lsa-global.com/register-now-2/"
+    en: "🎓 Language courses (A1–C2), online and guided.\n\nRegister here:\nhttps://lsa-global.com/register-now-2/",
+    fr: "🎓 Cours de langues (A1–C2), en ligne et encadrés.\n\nInscription :\nhttps://lsa-global.com/register-now-2/",
+    es: "🎓 Cursos de idiomas (A1–C2), en línea y guiados.\n\nInscripción:\nhttps://lsa-global.com/register-now-2/",
+    it: "🎓 Corsi di lingua (A1–C2), online e guidati.\n\nIscrizione:\nhttps://lsa-global.com/register-now-2/",
+    pt: "🎓 Cursos de idiomas (A1–C2), online e orientados.\n\nInscrição:\nhttps://lsa-global.com/register-now-2/",
+    de: "🎓 Sprachkurse (A1–C2), online und betreut.\n\nAnmeldung:\nhttps://lsa-global.com/register-now-2/"
   },
   interpreting: {
-    en: "🎧 Interpreting Services\n\nWe provide online and onsite interpreting for meetings, conferences, interviews, and more.\n\nPlease tell us:\n- language pair\n- date\n- duration",
-    fr: "🎧 Services d’interprétation\n\nNous proposons des services d’interprétation en ligne et sur site pour réunions, conférences, entretiens et plus encore.\n\nVeuillez préciser :\n- combinaison linguistique\n- date\n- durée",
-    es: "🎧 Servicios de interpretación\n\nOfrecemos servicios de interpretación en línea y presencial para reuniones, conferencias, entrevistas y más.\n\nIndíquenos:\n- combinación lingüística\n- fecha\n- duración",
-    it: "🎧 Servizi di interpretariato\n\nForniamo servizi di interpretariato online e in presenza per riunioni, conferenze, colloqui e altro.\n\nIndichi:\n- combinazione linguistica\n- data\n- durata",
-    pt: "🎧 Serviços de interpretação\n\nOferecemos interpretação online e presencial para reuniões, conferências, entrevistas e muito mais.\n\nInforme:\n- par de idiomas\n- data\n- duração",
-    de: "🎧 Dolmetschdienste\n\nWir bieten Online- und Vor-Ort-Dolmetschdienste für Besprechungen, Konferenzen, Interviews und mehr an.\n\nBitte teilen Sie uns mit:\n- Sprachkombination\n- Datum\n- Dauer"
+    en: "🎧 Interpreting services, online or onsite.\nPlease share: language pair, date, and duration.",
+    fr: "🎧 Services d’interprétation, en ligne ou sur site.\nMerci d’indiquer : combinaison linguistique, date et durée.",
+    es: "🎧 Servicios de interpretación, en línea o presencial.\nIndique: combinación de idiomas, fecha y duración.",
+    it: "🎧 Servizi di interpretariato, online o in presenza.\nIndichi: combinazione linguistica, data e durata.",
+    pt: "🎧 Serviços de interpretação, online ou presencial.\nInforme: par de idiomas, data e duração.",
+    de: "🎧 Dolmetschdienste, online oder vor Ort.\nBitte teilen Sie mit: Sprachkombination, Datum und Dauer."
   },
   advisor: {
     en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
@@ -638,17 +638,17 @@ function getLocalizedAck(language) {
 function getLocalizedClarifyingQuestion(language) {
   switch (language) {
     case "fr":
-      return "Bien sûr. Que souhaitez-vous savoir exactement sur LSA GLOBAL (tarif, durée, horaires, inscription, ou autre) ?";
+      return "Bien sûr — quel point précis vous intéresse : tarif, durée, horaires ou inscription ?";
     case "es":
-      return "Claro. ¿Qué desea saber exactamente sobre LSA GLOBAL (precio, duración, horario, inscripción u otro punto)?";
+      return "Claro — ¿qué punto exacto le interesa: precio, duración, horario o inscripción?";
     case "de":
-      return "Gern. Was genau möchten Sie über LSA GLOBAL wissen (Preis, Dauer, Zeitplan, Anmeldung oder etwas anderes)?";
+      return "Gern — welcher genaue Punkt interessiert Sie: Preis, Dauer, Zeitplan oder Anmeldung?";
     case "it":
-      return "Certo. Cosa desidera sapere esattamente su LSA GLOBAL (prezzo, durata, orario, iscrizione o altro)?";
+      return "Certo — quale punto preciso le interessa: prezzo, durata, orari o iscrizione?";
     case "pt":
-      return "Claro. O que deseja saber exatamente sobre a LSA GLOBAL (preço, duração, horário, inscrição ou outro ponto)?";
+      return "Claro — qual ponto exato deseja: preço, duração, horários ou inscrição?";
     default:
-      return "Sure. What exactly would you like to know about LSA GLOBAL (fee, duration, schedule, registration, or something else)?";
+      return "Sure — which exact point do you need: fee, duration, schedule, or registration?";
   }
 }
 
@@ -700,6 +700,18 @@ function getLocalizedMenuReply(language, selection) {
   return LOCALIZED_OPTION_REPLIES[selection]?.[safeLang] || "";
 }
 
+function getLocalizedEscalationMessage(language) {
+  const byLang = {
+    fr: "Merci. Ce point doit être validé par un conseiller LSA GLOBAL. Partagez votre nom et numéro WhatsApp, nous revenons vite vers vous.",
+    es: "Gracias. Este punto debe validarlo un asesor de LSA GLOBAL. Comparta su nombre y WhatsApp y le contactamos pronto.",
+    it: "Grazie. Questo punto deve essere confermato da un consulente LSA GLOBAL. Condivida nome e numero WhatsApp e la contatteremo presto.",
+    pt: "Obrigado. Este ponto precisa ser validado por um consultor da LSA GLOBAL. Partilhe nome e número WhatsApp e entraremos em contacto em breve.",
+    de: "Danke. Dieser Punkt muss von einem LSA GLOBAL-Berater bestätigt werden. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit.",
+    en: "Thank you. This point needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and we will contact you shortly."
+  };
+  return byLang[language] || byLang.en;
+}
+
 function resolveConversationLanguage({ waId, text, greetingLanguage }) {
   const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
   if (greetingLanguage && SUPPORTED_MENU_LANGUAGES.includes(greetingLanguage)) {
@@ -737,7 +749,7 @@ function isVagueCustomerMessage(text) {
   if (normalized.length < 8) return true;
 
   const wordCount = normalized.split(/\s+/).length;
-  const hasSpecificSignals = /\b(price|prix|precio|prezzo|fee|fees|cost|date|exam|duration|horaire|schedule|orario|course|cours|curso|corso|translation|traduction|traduzione)\b/.test(normalized);
+  const hasSpecificSignals = /\b(price|prix|precio|prezzo|fee|fees|cost|date|exam|duration|horaire|schedule|orario|course|cours|curso|corso|translation|traduction|traduzione|level|levels|niveau|format|online|onsite|location|registration|inscription|certification)\b/.test(normalized);
   if (hasSpecificSignals) return false;
 
   const vaguePhrases = [
@@ -765,7 +777,7 @@ function enforceReplyStyle(text, language = "en") {
   const safeText = (text || "").trim();
   if (!safeText) return fallback;
 
-  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere|another center|another company|external institute)\b/i;
+  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere|another center|another company|external institute|alternative provider)\b/i;
   if (blockedMentions.test(safeText)) {
     return fallback;
   }
@@ -821,13 +833,14 @@ Core behavior:
 8) Use knowledge base content as the primary source of truth.
 9) Never invent prices, legal guarantees, turnaround promises, or policies.
 10) If KB is present, do not answer from generic model memory. Stay grounded in KB content only.
-11) If KB is insufficient, say briefly that a human advisor will assist.
+11) If KB is insufficient, say briefly that a human advisor will assist inside LSA GLOBAL.
 12) Reply in the same language as the customer message.
 13) Never send users outside LSA GLOBAL, even when information is missing.
 14) If the customer asks a broad question, ask one clarifying question only.
 15) When a relevant KB answer exists in another language, use it and answer in the customer's language.
-16) Keep output under 80 words unless the customer explicitly asks for details.
-17) If a specific intent is provided (fee, duration, schedule, exam, registration), answer only that intent.
+16) If KB clearly contains the asked detail, answer it directly and do not say information is unavailable.
+17) Keep output under 80 words unless the customer explicitly asks for details.
+18) If a specific intent is provided (fee, duration, schedule, exam, registration), answer only that intent.
 
 Style:
 - Professional and human-like.
@@ -913,14 +926,7 @@ app.post("/webhook", async (req, res) => {
 
       try {
         if (shouldEscalateToHuman(text)) {
-          reply = {
-            fr: "Merci. Cette demande nécessite un conseiller LSA GLOBAL. Merci de partager votre nom et numéro WhatsApp, notre équipe vous contacte rapidement.",
-            es: "Gracias. Esta solicitud requiere un asesor de LSA GLOBAL. Comparta su nombre y número de WhatsApp y nuestro equipo le contactará pronto.",
-            it: "Grazie. Questa richiesta richiede un consulente LSA GLOBAL. Condivida nome e numero WhatsApp e il nostro team la contatterà presto.",
-            pt: "Obrigado. Este pedido requer um consultor da LSA GLOBAL. Partilhe o seu nome e número WhatsApp e a nossa equipa entrará em contacto em breve.",
-            de: "Danke. Diese Anfrage benötigt einen LSA GLOBAL-Berater. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, unser Team meldet sich zeitnah.",
-            en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
-          }[detectedLanguage] || getLocalizedAck(detectedLanguage);
+          reply = getLocalizedEscalationMessage(detectedLanguage);
         } else if ((narrowIntent || specificIntent) && kbMatches.length) {
           let extractedSection = null;
           const targetIntent = narrowIntent || specificIntent;
@@ -949,6 +955,8 @@ app.post("/webhook", async (req, res) => {
             text: kbMatches[0].answer || "",
             language: detectedLanguage
           });
+        } else if (kbMatches.length && vagueMessage) {
+          reply = getLocalizedClarifyingQuestion(detectedLanguage);
         } else {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
