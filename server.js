@@ -182,11 +182,55 @@ async function sendWhatsAppText(to, body, delayMs = null) {
   return response.data;
 }
 async function searchKnowledgeBase(userMessage) {
-  const terms = userMessage
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 8);
+  const rawMessage = (userMessage || "").trim();
+  if (!rawMessage) return [];
+
+  const normalizeForTerms = value =>
+    (value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, " ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .map(part => part.trim())
+      .filter(Boolean);
+
+  const stopWords = new Set([
+    "a", "an", "and", "are", "as", "at", "be", "by", "de", "des", "du", "en", "et",
+    "for", "i", "in", "is", "je", "la", "le", "les", "los", "me", "my", "of", "on",
+    "or", "por", "que", "the", "to", "un", "une", "vos", "votre", "want", "we", "with"
+  ]);
+
+  const dedupe = items => Array.from(new Set(items.filter(Boolean)));
+
+  let englishQuery = rawMessage;
+  try {
+    const translation = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Rewrite user requests as a concise KB retrieval query in English. " +
+            "Preserve product/service names and proper nouns. Return plain text only."
+        },
+        { role: "user", content: rawMessage }
+      ],
+      max_tokens: 60
+    });
+
+    const translated = translation.choices?.[0]?.message?.content?.trim();
+    if (translated) {
+      englishQuery = translated;
+    }
+  } catch (translationError) {
+    console.error("KB query translation error:", translationError?.message || translationError);
+  }
+
+  const originalTerms = normalizeForTerms(rawMessage).filter(term => !stopWords.has(term));
+  const englishTerms = normalizeForTerms(englishQuery).filter(term => !stopWords.has(term));
+  const terms = dedupe([...englishTerms, ...originalTerms]).slice(0, 12);
 
   let query = supabase
     .from("kb_articles")
@@ -204,17 +248,22 @@ async function searchKnowledgeBase(userMessage) {
       )
     `)
     .eq("status", "published")
-    .limit(8);
+    .limit(120);
 
   if (terms.length > 0) {
+    const escapedTerms = terms.map(term => term.replace(/[%,]/g, ""));
     const orParts = [];
-    for (const term of terms) {
+    for (const term of escapedTerms) {
+      if (!term) continue;
       orParts.push(`title.ilike.%${term}%`);
       orParts.push(`question.ilike.%${term}%`);
       orParts.push(`answer.ilike.%${term}%`);
       orParts.push(`keywords.ilike.%${term}%`);
+      orParts.push(`kb_categories.name.ilike.%${term}%`);
     }
-    query = query.or(orParts.join(","));
+    if (orParts.length) {
+      query = query.or(orParts.join(","));
+    }
   }
 
   const { data, error } = await query;
@@ -224,7 +273,41 @@ async function searchKnowledgeBase(userMessage) {
     return [];
   }
 
-  return data || [];
+  const records = data || [];
+  if (!records.length) return [];
+
+  const scoreArticle = article => {
+    const title = (article.title || "").toLowerCase();
+    const question = (article.question || "").toLowerCase();
+    const answer = (article.answer || "").toLowerCase();
+    const keywords = (article.keywords || "").toLowerCase();
+    const category = (article.kb_categories?.name || "").toLowerCase();
+
+    let score = 0;
+    for (const term of terms) {
+      if (!term || term.length < 2) continue;
+      if (title.includes(term)) score += 14;
+      if (question.includes(term)) score += 10;
+      if (keywords.includes(term)) score += 8;
+      if (category.includes(term)) score += 7;
+      if (answer.includes(term)) score += 4;
+    }
+
+    const englishPhrase = englishQuery.toLowerCase();
+    if (englishPhrase.length > 4) {
+      if (title.includes(englishPhrase)) score += 10;
+      if (question.includes(englishPhrase)) score += 8;
+      if (answer.includes(englishPhrase)) score += 5;
+    }
+
+    return score;
+  };
+
+  return records
+    .map(article => ({ ...article, relevance_score: scoreArticle(article) }))
+    .sort((a, b) => b.relevance_score - a.relevance_score)
+    .slice(0, 8)
+    .map(({ relevance_score, ...article }) => article);
 }
 app.post("/webhook", async (req, res) => {
   try {
