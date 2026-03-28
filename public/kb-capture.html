@@ -146,6 +146,18 @@
   <div class="small"><strong>Suggested Category:</strong> <span id="preview_category"></span></div>
   <div class="small"><strong>New Category Suggestion:</strong> <span id="preview_new_category"></span></div>
   <div class="answer" id="preview_answer"></div>
+ <div style="margin-top:12px;">
+  <input id="convert_keywords" placeholder="Keywords for KB article" />
+  <input id="convert_category_name" placeholder="Category to use for KB article" />
+  <label style="display:flex; gap:8px; align-items:center; width:auto; margin-bottom:10px;">
+    <input type="checkbox" id="convert_create_new_category" style="width:auto; margin:0;" />
+    Create new category if it does not exist
+  </label>
+  <button onclick="checkDuplicates()">Check Duplicates</button>
+  <button onclick="convertToKB()">Convert to KB Article</button>
+</div>
+
+<div id="duplicateResults"></div>
 </div>
       <button onclick="generateStructuredKnowledge()">Generate Structured Knowledge</button>
       <button id="saveBtn" onclick="createOrUpdateCapture()">Save Capture</button>
