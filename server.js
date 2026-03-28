@@ -820,6 +820,181 @@ app.delete("/api/kb/quick-capture/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+// ===== PROVIDER NETWORK PAGE =====
+app.get("/providers", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "providers.html"));
+});
+
+// ===== PROVIDER API: LIST =====
+app.get("/api/providers", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("providers")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== PROVIDER API: CREATE =====
+app.post("/api/providers", async (req, res) => {
+  try {
+    const {
+      provider_type,
+      full_name,
+      organization_name,
+      contact_person,
+      email,
+      phone,
+      whatsapp,
+      country,
+      city,
+      native_language,
+      working_languages,
+      language_pairs,
+      services,
+      specializations,
+      years_experience,
+      availability_status,
+      source_channel,
+      notes,
+      status
+    } = req.body;
+
+    if (!provider_type) {
+      return res.status(400).json({ error: "provider_type is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("providers")
+      .insert([
+        {
+          provider_type,
+          full_name: full_name || null,
+          organization_name: organization_name || null,
+          contact_person: contact_person || null,
+          email: email || null,
+          phone: phone || null,
+          whatsapp: whatsapp || null,
+          country: country || null,
+          city: city || null,
+          native_language: native_language || null,
+          working_languages: working_languages || null,
+          language_pairs: language_pairs || null,
+          services: services || null,
+          specializations: specializations || null,
+          years_experience: years_experience || null,
+          availability_status: availability_status || "available",
+          source_channel: source_channel || "manual",
+          notes: notes || null,
+          status: status || "active"
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== PROVIDER API: UPDATE =====
+app.put("/api/providers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const {
+      provider_type,
+      full_name,
+      organization_name,
+      contact_person,
+      email,
+      phone,
+      whatsapp,
+      country,
+      city,
+      native_language,
+      working_languages,
+      language_pairs,
+      services,
+      specializations,
+      years_experience,
+      availability_status,
+      source_channel,
+      notes,
+      status
+    } = req.body;
+
+    if (!provider_type) {
+      return res.status(400).json({ error: "provider_type is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("providers")
+      .update({
+        provider_type,
+        full_name: full_name || null,
+        organization_name: organization_name || null,
+        contact_person: contact_person || null,
+        email: email || null,
+        phone: phone || null,
+        whatsapp: whatsapp || null,
+        country: country || null,
+        city: city || null,
+        native_language: native_language || null,
+        working_languages: working_languages || null,
+        language_pairs: language_pairs || null,
+        services: services || null,
+        specializations: specializations || null,
+        years_experience: years_experience || null,
+        availability_status: availability_status || "available",
+        source_channel: source_channel || "manual",
+        notes: notes || null,
+        status: status || "active",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== PROVIDER API: DELETE =====
+app.delete("/api/providers/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const { error } = await supabase
+      .from("providers")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
