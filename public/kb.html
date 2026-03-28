@@ -219,6 +219,10 @@ app.delete("/api/kb/quick-capture/:id", async (req, res) => {
   </div>
 
   <div id="right">
+    <h2>Quick Capture Entries</h2>
+<div id="quickCaptureList"></div>
+
+<hr style="margin: 20px 0;">
     <h2>Knowledge Articles</h2>
 
     <input id="searchBox" placeholder="Search title, question, answer, keywords..." oninput="renderArticles()" />
