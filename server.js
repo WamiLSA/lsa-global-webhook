@@ -1,166 +1,104 @@
-const OpenAI = require("openai");
 const express = require("express");
 const axios = require("axios");
 const path = require("path");
 const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
+const OpenAI = require("openai");
 
 const app = express();
-
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, "public")));
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "change_this_secret",
+    secret: process.env.SESSION_SECRET || "lsa_global_session_secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
+      secure: false,
       httpOnly: true,
-      sameSite: "lax",
-      secure: false
+      maxAge: 24 * 60 * 60 * 1000
     }
   })
 );
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// ===== ENV =====
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-const INBOX_USERNAME = process.env.INBOX_USERNAME;
-const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_ANON_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const INBOX_USERNAME = process.env.INBOX_USERNAME || "admin";
+const INBOX_PASSWORD = process.env.INBOX_PASSWORD || "admin123";
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error("Missing SUPABASE_URL or SUPABASE_SECRET_KEY / SUPABASE_ANON_KEY");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+
+// ===== AUTH =====
 function requireAuth(req, res, next) {
-  if (req.session && req.session.authenticated) {
+  if (req.session && req.session.loggedIn) {
     return next();
   }
   return res.redirect("/login");
 }
 
-app.get("/login", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8" />
-      <title>LSA GLOBAL Inbox Login</title>
-      <style>
-        body {
-          font-family: Arial, sans-serif;
-          background: #f5f5f5;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          height: 100vh;
-          margin: 0;
-        }
-        .box {
-          width: 360px;
-          background: white;
-          padding: 24px;
-          border-radius: 12px;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        }
-        h2 {
-          margin-top: 0;
-        }
-        input {
-          width: 100%;
-          padding: 10px;
-          margin-bottom: 12px;
-          box-sizing: border-box;
-        }
-        button {
-          width: 100%;
-          padding: 10px;
-        }
-        .err {
-          color: red;
-          margin-bottom: 12px;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="box">
-        <h2>LSA GLOBAL Inbox</h2>
-        ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
-        <form method="POST" action="/login">
-          <input type="text" name="username" placeholder="Username" required />
-          <input type="password" name="password" placeholder="Password" required />
-          <button type="submit">Login</button>
-        </form>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-app.post("/login", (req, res) => {
-  const { username, password } = req.body;
-
-  if (username === INBOX_USERNAME && password === INBOX_PASSWORD) {
-    req.session.authenticated = true;
-    return res.redirect("/inbox");
-  }
-
-  return res.redirect("/login?error=1");
-});
-
-app.get("/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.redirect("/login");
-  });
-});
-
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-  return res.sendStatus(403);
-});
-
-function normalizeTextMessage(message) {
-  if (!message) return "";
-  return message.text?.body?.trim() || "";
-}
-
-async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
-  const { error } = await supabase.from("conversations").insert([
-    {
-      wa_id,
-      contact_name,
-      direction,
-      body,
-      message_type
-    }
-  ]);
-
-  if (error) {
-    console.error("Supabase insert error:", error);
-  }
-}
-
+// ===== HELPERS =====
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function estimateDelayMs(text) {
   const length = (text || "").length;
-
   if (length < 80) return 2000;
   if (length < 250) return 4000;
   if (length < 600) return 6000;
   return 8000;
 }
 
+function normalizeTextMessage(message) {
+  if (!message) return "";
+  return message.text?.body?.trim() || "";
+}
+
+async function saveMessage({
+  wa_id,
+  contact_name = null,
+  direction,
+  body,
+  message_type = "text"
+}) {
+  try {
+    const { error } = await supabase.from("conversations").insert([
+      {
+        wa_id,
+        contact_name,
+        direction,
+        body,
+        message_type
+      }
+    ]);
+
+    if (error) {
+      console.error("saveMessage error:", error);
+    }
+  } catch (err) {
+    console.error("saveMessage crash:", err.message);
+  }
+}
+
 async function sendWhatsAppText(to, body, delayMs = null) {
+  if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
+    throw new Error("WHATSAPP_TOKEN or PHONE_NUMBER_ID missing");
+  }
+
   const wait = delayMs ?? estimateDelayMs(body);
   await sleep(wait);
 
@@ -181,17 +119,19 @@ async function sendWhatsAppText(to, body, delayMs = null) {
 
   return response.data;
 }
+
 async function searchKnowledgeBase(userMessage) {
-  const terms = userMessage
+  const terms = (userMessage || "")
     .toLowerCase()
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 8);
 
-  let query = supabase
+  const { data, error } = await supabase
     .from("kb_articles")
     .select(`
       id,
+      category_id,
       title,
       question,
       answer,
@@ -200,108 +140,52 @@ async function searchKnowledgeBase(userMessage) {
       language,
       status,
       kb_categories (
+        id,
         name
       )
     `)
     .eq("status", "published")
-    .limit(8);
-
-  if (terms.length > 0) {
-    const orParts = [];
-    for (const term of terms) {
-      orParts.push(`title.ilike.%${term}%`);
-      orParts.push(`question.ilike.%${term}%`);
-      orParts.push(`answer.ilike.%${term}%`);
-      orParts.push(`keywords.ilike.%${term}%`);
-    }
-    query = query.or(orParts.join(","));
-  }
-
-  const { data, error } = await query;
+    .limit(50);
 
   if (error) {
     console.error("KB search error:", error);
     return [];
   }
 
-  return data || [];
+  const items = data || [];
+
+  if (terms.length === 0) return items.slice(0, 8);
+
+  const matches = items.filter(item => {
+    const haystack = [
+      item.title || "",
+      item.question || "",
+      item.answer || "",
+      item.keywords || "",
+      item.audience || "",
+      item.language || "",
+      item.kb_categories?.name || ""
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return terms.some(term => haystack.includes(term));
+  });
+
+  return matches.slice(0, 8);
 }
-app.post("/webhook", async (req, res) => {
-  try {
-    const body = req.body;
 
-    if (body.object !== "whatsapp_business_account") {
-      return res.sendStatus(404);
-    }
+async function generateAIAnswer(message) {
+  if (!openai) {
+    return "Thank you. We have received your message. A human advisor will assist you shortly.";
+  }
 
-    const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const message = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
-
-    if (!message) {
-      return res.sendStatus(200);
-    }
-
-    const from = message.from;
-    const contactName = contact?.profile?.name || null;
-    const text = normalizeTextMessage(message);
-
-    console.log("Message received from:", from, "| text:", text);
-
-    await saveMessage({
-      wa_id: from,
-      contact_name: contactName,
-      direction: "in",
-      body: text,
-      message_type: message.type || "text"
-    });
-
-    let reply = "";
-
-    if (text.toLowerCase() === "hi" || text.toLowerCase() === "hello") {
-      reply =
-        "Hello 👋 Welcome to LSA GLOBAL.\n\n" +
-        "Please choose a service:\n" +
-        "1️⃣ Translation services\n" +
-        "2️⃣ Language courses\n" +
-        "3️⃣ Interpreting services\n" +
-        "4️⃣ Speak to an advisor";
-    } else if (text === "1") {
-      reply =
-        "🌍 Translation Services\n\n" +
-        "Please send:\n" +
-        "- document type\n" +
-        "- source language\n" +
-        "- target language\n" +
-        "- deadline";
-    } else if (text === "2") {
-      reply =
-        "📚 Language Courses\n\n" +
-        "Please tell us:\n" +
-        "- language\n" +
-        "- current level\n" +
-        "- target exam (if any)";
-    } else if (text === "3") {
-      reply =
-        "🎤 Interpreting Services\n\n" +
-        "Please tell us:\n" +
-        "- language pair\n" +
-        "- date\n" +
-        "- duration\n" +
-        "- online or onsite";
-    } else if (text === "4") {
-      reply =
-        "👨‍💼 Advisor Request\n\n" +
-        "Please describe your need briefly. Our team will contact you shortly.";
-    }
-else {
-  const kbMatches = await searchKnowledgeBase(text);
+  const kbMatches = await searchKnowledgeBase(message);
 
   const kbContext = kbMatches.length
-    ? kbMatches.map((item, index) => {
-        return `
+    ? kbMatches
+        .map((item, index) => {
+          return `
 [KB ${index + 1}]
 Category: ${item.kb_categories?.name || "None"}
 Title: ${item.title || ""}
@@ -311,13 +195,13 @@ Audience: ${item.audience || ""}
 Language: ${item.language || "en"}
 Answer: ${item.answer || ""}
 `;
-      }).join("\n")
+        })
+        .join("\n")
     : "NO_MATCH";
 
-  try {
-    const aiResponse = await openai.responses.create({
-      model: "gpt-5-mini",
-      instructions: `
+  const response = await openai.responses.create({
+    model: "gpt-5-mini",
+    instructions: `
 You are the LSA GLOBAL AI assistant.
 
 Rules:
@@ -326,102 +210,102 @@ Rules:
 3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
 4. Keep answers businesslike, clear, and concise.
 5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
-6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
+6. If the message looks like a quote request, partnership request, student inquiry, support issue, or provider request, mention that a human advisor can assist.
 `,
-      input: `
+    input: `
 Customer message:
-${text}
+${message}
 
 Knowledge base matches:
 ${kbContext}
 `
-    });
+  });
 
-    reply =
-      aiResponse.output_text ||
-      "Thank you. Our team will review your message and reply shortly.";
-  } catch (err) {
-    console.error("AI fallback error:", err.message || err);
-    reply =
-      "Thank you. We have received your message. A human advisor will assist you shortly.";
-  }
-}
-    if (reply) {
-  if (reply.length > 180) {
-    const ack = "Thank you. We are reviewing your request.";
-
-    await sendWhatsAppText(from, ack, 1500);
-
-    await saveMessage({
-      wa_id: from,
-      contact_name: contactName,
-      direction: "out",
-      body: ack,
-      message_type: "text"
-    });
-
-    await sendWhatsAppText(from, reply, 5000);
-
-    await saveMessage({
-      wa_id: from,
-      contact_name: contactName,
-      direction: "out",
-      body: reply,
-      message_type: "text"
-    });
-  } else {
-    await sendWhatsAppText(from, reply, 2500);
-
-    await saveMessage({
-      wa_id: from,
-      contact_name: contactName,
-      direction: "out",
-      body: reply,
-      message_type: "text"
-    });
-  }
+  return (
+    response.output_text ||
+    "Thank you. Our team will review your message and reply shortly."
+  );
 }
 
-    return res.sendStatus(200);
-  } catch (error) {
-    console.error("Webhook error:", error.response?.data || error.message || error);
-    return res.sendStatus(500);
-  }
+// ===== AUTH PAGES =====
+app.get("/login", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  if (username === INBOX_USERNAME && password === INBOX_PASSWORD) {
+    req.session.loggedIn = true;
+    return res.redirect("/inbox");
+  }
+
+  return res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>LSA GLOBAL Inbox Login</title></head>
+    <body style="font-family:Arial,sans-serif;background:#f7f7f7;padding:40px;">
+      <div style="max-width:420px;margin:auto;background:white;padding:24px;border:1px solid #ddd;border-radius:12px;">
+        <h1>LSA GLOBAL Inbox</h1>
+        <p style="color:#b91c1c;">Invalid username or password.</p>
+        <form method="POST" action="/login">
+          <input name="username" placeholder="Username" style="width:100%;padding:12px;margin-bottom:12px;box-sizing:border-box;" />
+          <input name="password" type="password" placeholder="Password" style="width:100%;padding:12px;margin-bottom:12px;box-sizing:border-box;" />
+          <button type="submit" style="width:100%;padding:12px;">Login</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `);
+});
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.redirect("/login");
+  });
+});
+
+// ===== MAIN PAGES =====
 app.get("/", (req, res) => {
-  return res.redirect("/inbox");
+  if (req.session && req.session.loggedIn) {
+    return res.redirect("/inbox");
+  }
+  return res.redirect("/login");
 });
 
 app.get("/inbox", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.use("/api", requireAuth);
+app.get("/kb", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "kb.html"));
+});
 
-app.get("/api/conversations", async (req, res) => {
+app.get("/kb-capture", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "kb-capture.html"));
+});
+
+app.get("/providers", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "providers.html"));
+});
+
+// ===== INBOX API =====
+app.get("/api/conversations", requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction, label")
-      .order("created_at", { ascending: false });
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(500);
 
     if (error) {
       return res.status(500).json({ error });
     }
 
     const map = new Map();
-
-    for (const row of data) {
+    for (const row of data || []) {
       if (!map.has(row.wa_id)) {
-        map.set(row.wa_id, {
-          wa_id: row.wa_id,
-          contact_name: row.contact_name,
-          last_message: row.body,
-          last_direction: row.direction,
-          last_time: row.created_at,
-          label: row.label || ""
-        });
+        map.set(row.wa_id, row);
       }
     }
 
@@ -431,10 +315,9 @@ app.get("/api/conversations", async (req, res) => {
   }
 });
 
-app.get("/api/conversations/:wa_id", async (req, res) => {
+app.get("/api/conversations/:wa_id", requireAuth, async (req, res) => {
   try {
-    const wa_id = req.params.wa_id;
-
+    const { wa_id } = req.params;
     const { data, error } = await supabase
       .from("conversations")
       .select("*")
@@ -445,64 +328,195 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
       return res.status(500).json({ error });
     }
 
-    return res.json(data);
+    return res.json(data || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-app.post("/api/send", async (req, res) => {
+app.post("/api/conversations/:wa_id/reply", requireAuth, async (req, res) => {
   try {
-    const { wa_id, body } = req.body;
+    const { wa_id } = req.params;
+    const { body, contact_name } = req.body;
 
-    if (!wa_id || !body) {
-      return res.status(400).json({ error: "wa_id and body are required" });
+    if (!body || !body.trim()) {
+      return res.status(400).json({ error: "body is required" });
     }
 
-    const sendResult = await sendWhatsAppText(wa_id, body);
+    await sendWhatsAppText(wa_id, body.trim(), 1500);
 
     await saveMessage({
       wa_id,
+      contact_name: contact_name || null,
       direction: "out",
-      body,
+      body: body.trim(),
       message_type: "text"
     });
 
-    return res.json({ ok: true, sendResult });
-  } catch (error) {
-    console.error("Manual send error:", error.response?.data || error.message || error);
-    return res.status(500).json({ error: error.response?.data || error.message });
-  }
-});
-
-app.post("/api/label", async (req, res) => {
-  try {
-    const { wa_id, label } = req.body;
-
-    if (!wa_id) {
-      return res.status(400).json({ error: "wa_id is required" });
-    }
-
-    const { error } = await supabase
-      .from("conversations")
-      .update({ label: label || null })
-      .eq("wa_id", wa_id);
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
     return res.json({ ok: true });
   } catch (err) {
+    console.error("manual reply error:", err.response?.data || err.message || err);
     return res.status(500).json({ error: err.message });
   }
 });
-// ===== KNOWLEDGE BASE PAGE =====
-app.get("/kb", requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "kb.html"));
+
+// ===== WHATSAPP VERIFY =====
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
 });
 
-// ===== KB API: CATEGORIES =====
+// ===== WHATSAPP RECEIVE =====
+app.post("/webhook", async (req, res) => {
+  try {
+    const body = req.body;
+
+    if (body.object) {
+      const entry = body.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const value = changes?.value;
+      const messages = value?.messages;
+      const contacts = value?.contacts;
+
+      if (messages && messages[0]) {
+        const message = messages[0];
+        const from = message.from;
+        const contactName = contacts?.[0]?.profile?.name || null;
+        const text = normalizeTextMessage(message);
+
+        console.log("Message received:", text);
+
+        await saveMessage({
+          wa_id: from,
+          contact_name: contactName,
+          direction: "in",
+          body: text,
+          message_type: "text"
+        });
+
+        let reply = "";
+        const lowered = text.toLowerCase();
+
+        if (lowered === "hi" || lowered === "hello" || lowered === "hey") {
+          reply =
+            "Hello 👋 Welcome to LSA GLOBAL.\n\n" +
+            "We offer:\n\n" +
+            "1️⃣ Translation services\n" +
+            "2️⃣ Language courses\n" +
+            "3️⃣ Interpreting services\n" +
+            "4️⃣ Speak to an advisor\n\n" +
+            "Please reply with 1, 2, 3 or 4.";
+        } else if (text === "1" || lowered.includes("translation")) {
+          reply =
+            "🌍 Translation Services\n\n" +
+            "We provide certified and professional translations in:\n" +
+            "EN, FR, ES, DE, IT, AR, ZH and more.\n\n" +
+            "✔ Legal documents\n" +
+            "✔ Academic transcripts\n" +
+            "✔ Business & websites\n\n" +
+            "Get a free quote:\n" +
+            "https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/";
+        } else if (text === "2" || lowered.includes("course") || lowered.includes("learn")) {
+          reply =
+            "🎓 Language Courses (A1-C2)\n\n" +
+            "We offer online and guided language training in English, French, Spanish, German, Chinese and more.\n\n" +
+            "Register here:\n" +
+            "https://lsa-global.com/register-now-2/";
+        } else if (text === "3" || lowered.includes("interpreting")) {
+          reply =
+            "🎧 Interpreting Services\n\n" +
+            "We provide online and onsite interpreting for meetings, conferences, interviews, and more.\n\n" +
+            "Please tell us:\n" +
+            "- language pair\n" +
+            "- date\n" +
+            "- duration";
+        } else if (text === "4" || lowered.includes("advisor")) {
+          reply =
+            "👨‍💼 Advisor Request\n\n" +
+            "Please describe your need briefly. Our team will contact you shortly.";
+        } else {
+          try {
+            reply = await generateAIAnswer(text);
+          } catch (err) {
+            console.error("AI fallback error:", err.response?.data || err.message || err);
+            reply =
+              "Thank you. We have received your message. A human advisor will assist you shortly.";
+          }
+        }
+
+        if (reply) {
+          if (reply.length > 180) {
+            const ack = "Thank you. We are reviewing your request.";
+
+            await sendWhatsAppText(from, ack, 1500);
+            await saveMessage({
+              wa_id: from,
+              contact_name: contactName,
+              direction: "out",
+              body: ack,
+              message_type: "text"
+            });
+
+            await sendWhatsAppText(from, reply, 5000);
+            await saveMessage({
+              wa_id: from,
+              contact_name: contactName,
+              direction: "out",
+              body: reply,
+              message_type: "text"
+            });
+          } else {
+            await sendWhatsAppText(from, reply, 2500);
+            await saveMessage({
+              wa_id: from,
+              contact_name: contactName,
+              direction: "out",
+              body: reply,
+              message_type: "text"
+            });
+          }
+        }
+      }
+
+      return res.sendStatus(200);
+    }
+
+    return res.sendStatus(404);
+  } catch (error) {
+    console.error("Webhook error:", error.response?.data || error.message || error);
+    return res.sendStatus(500);
+  }
+});
+
+// ===== AI TEST ROUTE =====
+app.post("/api/ai-reply", async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: "message is required" });
+    }
+
+    const answer = await generateAIAnswer(message);
+
+    return res.json({
+      ok: true,
+      answer
+    });
+  } catch (error) {
+    console.error("AI route error:", error.response?.data || error.message || error);
+    return res.status(500).json({ error: "AI reply failed" });
+  }
+});
+
+// ===== KB CATEGORIES =====
 app.get("/api/kb/categories", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -510,11 +524,8 @@ app.get("/api/kb/categories", async (req, res) => {
       .select("*")
       .order("name", { ascending: true });
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json(data);
+    if (error) return res.status(500).json({ error });
+    return res.json(data || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -523,38 +534,44 @@ app.get("/api/kb/categories", async (req, res) => {
 app.post("/api/kb/categories", async (req, res) => {
   try {
     const { name, description } = req.body;
-
-    if (!name) {
-      return res.status(400).json({ error: "Category name is required" });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "name is required" });
     }
 
     const { data, error } = await supabase
       .from("kb_categories")
       .insert([
         {
-          name,
+          name: name.trim(),
           description: description || null
         }
       ])
       .select();
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ===== KB API: ARTICLES =====
+// ===== KB ARTICLES =====
 app.get("/api/kb/articles", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("kb_articles")
       .select(`
-        *,
+        id,
+        category_id,
+        title,
+        question,
+        answer,
+        keywords,
+        audience,
+        language,
+        status,
+        created_at,
+        updated_at,
         kb_categories (
           id,
           name
@@ -562,11 +579,8 @@ app.get("/api/kb/articles", async (req, res) => {
       `)
       .order("created_at", { ascending: false });
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json(data);
+    if (error) return res.status(500).json({ error });
+    return res.json(data || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -586,7 +600,7 @@ app.post("/api/kb/articles", async (req, res) => {
     } = req.body;
 
     if (!title || !answer) {
-      return res.status(400).json({ error: "Title and answer are required" });
+      return res.status(400).json({ error: "title and answer are required" });
     }
 
     const { data, error } = await supabase
@@ -600,22 +614,18 @@ app.post("/api/kb/articles", async (req, res) => {
           keywords: keywords || null,
           audience: audience || null,
           language: language || "en",
-          status: status || "published",
-          source_type: "manual"
+          status: status || "published"
         }
       ])
       .select();
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
-// ===== KB API: UPDATE ARTICLE =====
+
 app.put("/api/kb/articles/:id", async (req, res) => {
   try {
     const id = req.params.id;
@@ -631,7 +641,7 @@ app.put("/api/kb/articles/:id", async (req, res) => {
     } = req.body;
 
     if (!title || !answer) {
-      return res.status(400).json({ error: "Title and answer are required" });
+      return res.status(400).json({ error: "title and answer are required" });
     }
 
     const { data, error } = await supabase
@@ -650,108 +660,26 @@ app.put("/api/kb/articles/:id", async (req, res) => {
       .eq("id", id)
       .select();
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ===== KB API: DELETE ARTICLE =====
 app.delete("/api/kb/articles/:id", async (req, res) => {
   try {
     const id = req.params.id;
+    const { error } = await supabase.from("kb_articles").delete().eq("id", id);
 
-    const { error } = await supabase
-      .from("kb_articles")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
-app.post("/api/ai-reply", async (req, res) => {
-  try {
-    const { message, channel = "internal", wa_id = null } = req.body;
 
-    if (!message || !message.trim()) {
-      return res.status(400).json({ error: "message is required" });
-    }
-
-    const kbMatches = await searchKnowledgeBase(message);
-
-    const kbContext = kbMatches.length
-      ? kbMatches.map((item, index) => {
-          return `
-[KB ${index + 1}]
-Category: ${item.kb_categories?.name || "None"}
-Title: ${item.title || ""}
-Question: ${item.question || ""}
-Keywords: ${item.keywords || ""}
-Audience: ${item.audience || ""}
-Language: ${item.language || "en"}
-Answer: ${item.answer || ""}
-`;
-        }).join("\n")
-      : "NO_MATCH";
-
-    const instructions = `
-You are the LSA GLOBAL AI assistant.
-
-Rules:
-1. Use LSA GLOBAL knowledge base first.
-2. Never invent prices, legal guarantees, turnaround promises, or policies.
-3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
-4. Keep answers businesslike, clear, and concise.
-5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
-6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
-`;
-
-    const input = `
-Customer message:
-${message}
-
-Channel:
-${channel}
-
-Knowledge base matches:
-${kbContext}
-
-Write the best answer for LSA GLOBAL.
-`;
-
-    const response = await openai.responses.create({
-      model: "gpt-5-mini",
-      instructions,
-      input
-    });
-
-    const answer =
-      response.output_text ||
-      "Thank you. Our team will review your message and reply shortly.";
-
-    return res.json({
-      ok: true,
-      answer,
-      kb_matches: kbMatches.length
-    });
-  } catch (error) {
-    console.error("AI route error:", error.response?.data || error.message || error);
-    return res.status(500).json({
-      error: "AI reply failed"
-    });
-  }
-});
-// ===== KB QUICK CAPTURE API: LIST =====
+// ===== KB QUICK CAPTURE =====
 app.get("/api/kb/quick-capture", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -759,17 +687,13 @@ app.get("/api/kb/quick-capture", async (req, res) => {
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json(data);
+    if (error) return res.status(500).json({ error });
+    return res.json(data || []);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ===== KB QUICK CAPTURE API: CREATE =====
 app.post("/api/kb/quick-capture", async (req, res) => {
   try {
     const { title, raw_text, source_type, status, notes } = req.body;
@@ -791,596 +715,27 @@ app.post("/api/kb/quick-capture", async (req, res) => {
       ])
       .select();
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ===== KB QUICK CAPTURE API: DELETE =====
 app.delete("/api/kb/quick-capture/:id", async (req, res) => {
   try {
     const id = req.params.id;
-
     const { error } = await supabase
       .from("kb_quick_capture")
       .delete()
       .eq("id", id);
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
+    if (error) return res.status(500).json({ error });
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
-// ===== PROVIDER NETWORK PAGE =====
-app.get("/providers", requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "providers.html"));
-});
 
-// ===== PROVIDER API: LIST =====
-app.get("/api/providers", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("providers")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json(data);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ===== PROVIDER API: CREATE =====
-app.post("/api/providers", async (req, res) => {
-  try {
-    const {
-      provider_type,
-      full_name,
-      organization_name,
-      contact_person,
-      email,
-      phone,
-      whatsapp,
-      country,
-      city,
-      native_language,
-      working_languages,
-      language_pairs,
-      services,
-      specializations,
-      years_experience,
-      availability_status,
-      source_channel,
-      notes,
-      status
-    } = req.body;
-
-    if (!provider_type) {
-      return res.status(400).json({ error: "provider_type is required" });
-    }
-
-    const { data, error } = await supabase
-      .from("providers")
-      .insert([
-        {
-          provider_type,
-          full_name: full_name || null,
-          organization_name: organization_name || null,
-          contact_person: contact_person || null,
-          email: email || null,
-          phone: phone || null,
-          whatsapp: whatsapp || null,
-          country: country || null,
-          city: city || null,
-          native_language: native_language || null,
-          working_languages: working_languages || null,
-          language_pairs: language_pairs || null,
-          services: services || null,
-          specializations: specializations || null,
-          years_experience: years_experience || null,
-          availability_status: availability_status || "available",
-          source_channel: source_channel || "manual",
-          notes: notes || null,
-          status: status || "active"
-        }
-      ])
-      .select();
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true, data });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ===== PROVIDER API: UPDATE =====
-app.put("/api/providers/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const {
-      provider_type,
-      full_name,
-      organization_name,
-      contact_person,
-      email,
-      phone,
-      whatsapp,
-      country,
-      city,
-      native_language,
-      working_languages,
-      language_pairs,
-      services,
-      specializations,
-      years_experience,
-      availability_status,
-      source_channel,
-      notes,
-      status
-    } = req.body;
-
-    if (!provider_type) {
-      return res.status(400).json({ error: "provider_type is required" });
-    }
-
-    const { data, error } = await supabase
-      .from("providers")
-      .update({
-        provider_type,
-        full_name: full_name || null,
-        organization_name: organization_name || null,
-        contact_person: contact_person || null,
-        email: email || null,
-        phone: phone || null,
-        whatsapp: whatsapp || null,
-        country: country || null,
-        city: city || null,
-        native_language: native_language || null,
-        working_languages: working_languages || null,
-        language_pairs: language_pairs || null,
-        services: services || null,
-        specializations: specializations || null,
-        years_experience: years_experience || null,
-        availability_status: availability_status || "available",
-        source_channel: source_channel || "manual",
-        notes: notes || null,
-        status: status || "active",
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", id)
-      .select();
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true, data });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ===== PROVIDER API: DELETE =====
-app.delete("/api/providers/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const { error } = await supabase
-      .from("providers")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-app.get("/kb-capture", requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "kb-capture.html"));
-});
-
-app.get("/api/kb-capture", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("kb_capture_assistant")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json(data);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/kb-capture", async (req, res) => {
-  try {
-    const {
-      title,
-      raw_question,
-      raw_answer,
-      suggested_category,
-      audience,
-      source_channel,
-      source_reference,
-      status,
-      notes
-    } = req.body;
-
-    if (!raw_answer || !raw_answer.trim()) {
-      return res.status(400).json({ error: "raw_answer is required" });
-    }
-
-    const { data, error } = await supabase
-      .from("kb_capture_assistant")
-      .insert([
-        {
-          title: title || null,
-          raw_question: raw_question || null,
-          raw_answer,
-          suggested_category: suggested_category || null,
-          audience: audience || null,
-          source_channel: source_channel || "manual",
-          source_reference: source_reference || null,
-          status: status || "pending",
-          notes: notes || null
-        }
-      ])
-      .select();
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true, data });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.put("/api/kb-capture/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const {
-      title,
-      raw_question,
-      raw_answer,
-      suggested_category,
-      audience,
-      source_channel,
-      source_reference,
-      status,
-      notes
-    } = req.body;
-
-    if (!raw_answer || !raw_answer.trim()) {
-      return res.status(400).json({ error: "raw_answer is required" });
-    }
-
-    const { data, error } = await supabase
-      .from("kb_capture_assistant")
-      .update({
-        title: title || null,
-        raw_question: raw_question || null,
-        raw_answer,
-        suggested_category: suggested_category || null,
-        audience: audience || null,
-        source_channel: source_channel || "manual",
-        source_reference: source_reference || null,
-        status: status || "pending",
-        notes: notes || null,
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", id)
-      .select();
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true, data });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete("/api/kb-capture/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const { error } = await supabase
-      .from("kb_capture_assistant")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-app.post("/api/kb-capture/generate", async (req, res) => {
-  try {
-    const { raw_question, raw_answer } = req.body;
-
-    if ((!raw_question || !raw_question.trim()) && (!raw_answer || !raw_answer.trim())) {
-      return res.status(400).json({ error: "raw_question or raw_answer is required" });
-    }
-
-    const { data: categoriesData, error: categoriesError } = await supabase
-      .from("kb_categories")
-      .select("name")
-      .order("name", { ascending: true });
-
-    if (categoriesError) {
-      return res.status(500).json({ error: categoriesError });
-    }
-
-    const categoryNames = (categoriesData || []).map(c => c.name);
-
-    const prompt = `
-You are helping structure knowledge for LSA GLOBAL.
-
-Existing categories:
-${categoryNames.join(", ")}
-
-Your job:
-Based on the raw question and/or raw answer, generate a structured knowledge suggestion.
-
-Rules:
-1. Improve and clarify the question.
-2. Generate a professional title.
-3. Write a polished answer between 100 and 150 words.
-4. Suggest keywords as a comma-separated string.
-5. Suggest one audience from: client, student, partner, staff, provider.
-6. Suggest the best existing category if one fits.
-7. If none of the existing categories fits well, suggest a new category name.
-8. Keep the answer factual, professional, and suitable for LSA GLOBAL.
-9. Do not invent policies, prices, or guarantees that were not implied by the source text.
-10. Return valid JSON only.
-
-Return JSON with exactly these keys:
-title
-improved_question
-improved_answer
-keywords
-audience
-suggested_category
-new_category_suggestion
-`;
-
-    const input = `
-Raw question:
-${raw_question || ""}
-
-Raw answer:
-${raw_answer || ""}
-`;
-
-    const response = await openai.responses.create({
-      model: "gpt-5-mini",
-      instructions: prompt,
-      input
-    });
-
-    const text = response.output_text || "{}";
-
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch (e) {
-      return res.status(500).json({
-        error: "AI returned invalid JSON",
-        raw_output: text
-      });
-    }
-
-    return res.json({
-      ok: true,
-      result: parsed
-    });
-  } catch (error) {
-    console.error("KB capture generate error:", error.response?.data || error.message || error);
-    return res.status(500).json({ error: "Knowledge generation failed" });
-  }
-});
-app.post("/api/kb-capture/check-duplicates", async (req, res) => {
-  try {
-    const { title, raw_question, raw_answer } = req.body;
-
-    const searchText = [title || "", raw_question || "", raw_answer || ""]
-      .join(" ")
-      .toLowerCase()
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 8);
-
-    const { data, error } = await supabase
-      .from("kb_articles")
-      .select(`
-        id,
-        title,
-        question,
-        answer,
-        keywords,
-        audience,
-        language,
-        status,
-        category_id,
-        kb_categories (
-          id,
-          name
-        )
-      `)
-      .limit(50);
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    const matches = (data || []).filter(item => {
-      const haystack = [
-        item.title || "",
-        item.question || "",
-        item.answer || "",
-        item.keywords || "",
-        item.audience || "",
-        item.language || "",
-        item.kb_categories?.name || ""
-      ].join(" ").toLowerCase();
-
-      return searchText.some(term => haystack.includes(term));
-    });
-
-    return res.json({
-      ok: true,
-      matches: matches.slice(0, 10)
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      return res.status(500).json({ error });
-    }
-
-    return res.json({ ok: true, matches: data || [] });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/kb-capture/convert-to-kb", async (req, res) => {
-  try {
-    const {
-      capture_id,
-      title,
-      question,
-      answer,
-      keywords,
-      audience,
-      language,
-      status,
-      category_name,
-      create_new_category
-    } = req.body;
-
-    if (!title || !answer) {
-      return res.status(400).json({ error: "title and answer are required" });
-    }
-
-    let category_id = null;
-
-    if (category_name && category_name.trim()) {
-      const trimmedCategory = category_name.trim();
-
-      const { data: existingCategory, error: categoryLookupError } = await supabase
-        .from("kb_categories")
-        .select("id, name")
-        .eq("name", trimmedCategory)
-        .maybeSingle();
-
-      if (categoryLookupError) {
-        return res.status(500).json({ error: categoryLookupError });
-      }
-
-      if (existingCategory) {
-        category_id = existingCategory.id;
-      } else if (create_new_category) {
-        const { data: newCategory, error: newCategoryError } = await supabase
-          .from("kb_categories")
-          .insert([
-            {
-              name: trimmedCategory,
-              description: "Created from Knowledge Capture Assistant"
-            }
-          ])
-          .select()
-          .single();
-
-        if (newCategoryError) {
-          return res.status(500).json({ error: newCategoryError });
-        }
-
-        category_id = newCategory.id;
-      }
-    }
-
-    const { data: articleData, error: articleError } = await supabase
-      .from("kb_articles")
-      .insert([
-        {
-          category_id,
-          title,
-          question: question || null,
-          answer,
-          keywords: keywords || null,
-          audience: audience || null,
-          language: language || "en",
-          status: status || "published",
-          source_type: "capture_assistant"
-        }
-      ])
-      .select()
-      .single();
-
-    if (articleError) {
-      return res.status(500).json({ error: articleError });
-    }
-
-    if (capture_id) {
-      const { error: captureUpdateError } = await supabase
-        .from("kb_capture_assistant")
-        .update({
-          status: "converted",
-          updated_at: new Date().toISOString(),
-          notes: "Converted to KB article ID " + articleData.id
-        })
-        .eq("id", capture_id);
-
-      if (captureUpdateError) {
-        return res.status(500).json({ error: captureUpdateError });
-      }
-    }
-
-    return res.json({
-      ok: true,
-      article: articleData
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-app.listen(process.env.PORT || 10000, () => {
-  console.log("Server running");
-});
+// ===== PROVIDERS =====
+app.get("/api/providers", async (req, res) =>
