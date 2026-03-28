@@ -221,10 +221,11 @@
           <div class="small">Reference: ${item.source_reference || ""}</div>
           <div class="answer">${item.raw_answer || ""}</div>
           <div class="small">${item.notes || ""}</div>
-          <div class="actions">
-            <button onclick="editCapture(${item.id})">Edit</button>
-            <button onclick="deleteCapture(${item.id})">Delete</button>
-          </div>
+         <div class="actions">
+  <button onclick="editCapture(${item.id})">Edit</button>
+  <button onclick="quickConvertToKB(${item.id})">Send to KB</button>
+  <button onclick="deleteCapture(${item.id})">Delete</button>
+</div>
         `;
 
         container.appendChild(div);
@@ -480,7 +481,48 @@
 
       await loadCaptures();
     }
+   async function quickConvertToKB(id) {
+  const item = captures.find(c => c.id === id);
+  if (!item) {
+    alert("Capture not found.");
+    return;
+  }
 
+  const confirmed = confirm("Send this captured knowledge to the official Knowledge Base?");
+  if (!confirmed) return;
+
+  const category_name = item.suggested_category || "";
+  const create_new_category = !!category_name;
+
+  const res = await fetch("/api/kb-capture/convert-to-kb", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      capture_id: item.id,
+      title: item.title || "Untitled Knowledge",
+      question: item.raw_question || "",
+      answer: item.raw_answer || "",
+      keywords: "",
+      audience: item.audience || "",
+      language: "en",
+      status: "published",
+      category_name,
+      create_new_category
+    })
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    alert("Quick convert failed: " + JSON.stringify(result));
+    return;
+  }
+
+  alert("Sent to official Knowledge Base successfully.");
+  await loadCaptures();
+}
     loadCaptures();
   </script>
 </body>
