@@ -172,14 +172,36 @@ const SPECIFIC_INTENT_PATTERNS = {
 };
 
 const NARROW_INTENT_KEYWORDS = {
-  fees: ["fee", "fees", "price", "prices", "pricing", "cost", "costs", "tariff", "tariffs", "prix", "tarifs", "coût", "cout", "frais"],
-  duration: ["duration", "durée", "duree", "length", "how long"],
-  schedule: ["schedule", "schedules", "horaires", "timetable", "hours", "time"],
-  levels: ["level", "levels", "niveau", "niveaux", "a1", "a2", "b1", "b2", "c1", "c2"],
-  location: ["location", "lieu", "centre", "campus", "city", "douala", "london", "newark"],
-  format: ["format", "online", "onsite", "in-person", "presentiel", "présentiel", "distance"],
-  registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply"],
-  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification"]
+  fees: [
+    "fee", "fees", "price", "prices", "pricing", "cost", "costs", "tariff", "tariffs", "tuition",
+    "prix", "tarifs", "coût", "cout", "frais",
+    "precio", "precios", "costo", "coste",
+    "prezzo", "prezzi", "costo",
+    "preço", "precos", "valor",
+    "preis", "gebuhr", "gebühr", "kosten"
+  ],
+  duration: [
+    "duration", "durée", "duree", "length", "how long",
+    "duracion", "duración", "durata", "duração", "dauer"
+  ],
+  schedule: [
+    "schedule", "schedules", "horaires", "timetable", "hours", "time",
+    "horario", "horarios", "orario", "orari", "stundenplan", "zeitplan"
+  ],
+  levels: [
+    "level", "levels", "niveau", "niveaux", "nivel", "niveles", "livello", "livelli", "stufe", "stufen",
+    "a1", "a2", "b1", "b2", "c1", "c2"
+  ],
+  location: ["location", "lieu", "centre", "campus", "city", "ville", "localisation", "ubicacion", "ubicación", "luogo", "sede", "ort", "standort"],
+  format: ["format", "online", "onsite", "in-person", "in person", "presentiel", "présentiel", "distance", "presencial", "presenziale", "vor ort"],
+  registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply", "inscripcion", "inscripción", "iscrizione", "anmeldung", "registrazione"],
+  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification", "certificat", "certificado", "certificato", "zertifikat", "nachweis"]
+};
+
+const NARROW_INTENT_ALIASES = {
+  fee: "fees",
+  exam: "certification",
+  course: null
 };
 
 const MENU_KEYWORDS = {
@@ -286,13 +308,18 @@ function detectNarrowIntent(message) {
   return hits[0].intent;
 }
 
+function resolveNarrowIntent(intent) {
+  if (!intent) return null;
+  if (NARROW_INTENT_KEYWORDS[intent]) return intent;
+  return NARROW_INTENT_ALIASES[intent] || null;
+}
+
 function extractRelevantKbSection(answerText, intent) {
   if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
 
   const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
   const normalizedAnswer = normalizeForIntent(answerText);
   const hasIntentSignal = keywords.some((keyword) => keyword && normalizedAnswer.includes(keyword));
-  if (!hasIntentSignal) return null;
 
   const paragraphs = answerText
     .split(/\n{2,}/)
@@ -324,8 +351,74 @@ function extractRelevantKbSection(answerText, intent) {
     .slice(0, 3)
     .map((item) => item.section);
 
-  if (!scored.length) return null;
-  return scored.join("\n");
+  if (scored.length) return scored.join("\n");
+
+  if (!hasIntentSignal) return null;
+
+  const fallbackLines = answerText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const heuristicSignals = {
+    fees: /\b(\$|€|£|fcfa|usd|eur|xaf|cad|price|prix|tarif|fee|cost)\b/i,
+    duration: /\b(week|weeks|month|months|hour|hours|jour|jours|semaine|semaines|mois|heures)\b/i,
+    schedule: /\b(mon|tue|wed|thu|fri|sat|sun|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}[:h]\d{0,2})\b/i,
+    levels: /\b(a1|a2|b1|b2|c1|c2|beginner|intermediate|advanced|debutant|débutant|niveau|nivel|livello)\b/i,
+    location: /\b(address|city|centre|campus|location|lieu|ville|douala|paris|london)\b/i,
+    format: /\b(online|in person|in-person|onsite|hybrid|présentiel|presentiel|distance)\b/i,
+    registration: /\b(register|registration|inscription|deadline|apply|admission)\b/i,
+    certification: /\b(certificate|certification|attestation|proof|exam|examen)\b/i
+  };
+
+  const signal = heuristicSignals[intent];
+  if (!signal) return null;
+  const matchedLine = fallbackLines.find((line) => signal.test(line));
+  return matchedLine || null;
+}
+
+async function extractNarrowAnswerFromKb({ kbMatches, intent }) {
+  const safeIntent = resolveNarrowIntent(intent);
+  if (!safeIntent || !kbMatches?.length) return null;
+
+  for (const article of kbMatches) {
+    const section = extractRelevantKbSection(article.answer || "", safeIntent);
+    if (section) return section;
+  }
+
+  const compactKb = kbMatches
+    .slice(0, 3)
+    .map((article, index) => `[Article ${index + 1}] ${article.title || "Untitled"}\n${article.answer || ""}`)
+    .join("\n\n");
+
+  try {
+    const extraction = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions:
+        "Extract ONLY the text that answers the requested field from the KB content. " +
+        "Do not add explanations, introductions, or questions. " +
+        "If the field does not exist, reply exactly: NOT_FOUND.",
+      input: `Field: ${safeIntent}\n\nKB content:\n${compactKb}`
+    });
+    const extracted = (extraction.output_text || "").trim();
+    if (!extracted || /^NOT_FOUND$/i.test(extracted)) return null;
+    return extracted;
+  } catch (error) {
+    console.error("Narrow KB extraction error:", error?.message || error);
+    return null;
+  }
+}
+
+const customerState = new Map();
+
+function getCustomerState(waId) {
+  if (!waId) return { clarifyingAsked: false };
+  return customerState.get(waId) || { clarifyingAsked: false };
+}
+
+function setCustomerState(waId, state) {
+  if (!waId) return;
+  customerState.set(waId, { clarifyingAsked: Boolean(state?.clarifyingAsked) });
 }
 
 async function localizeNarrowAnswer({ text, language }) {
@@ -923,8 +1016,10 @@ app.post("/webhook", async (req, res) => {
       const kbMatches = await searchKnowledgeBase(text);
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
+      const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
       const vagueMessage = isVagueCustomerMessage(text);
-      const broadQuestion = isBroadServiceQuestion(text);
+      const userState = getCustomerState(from);
+      const broadMessage = vagueMessage && !resolvedIntent;
 
       try {
         if (shouldEscalateToHuman(text)) {
@@ -936,40 +1031,48 @@ app.post("/webhook", async (req, res) => {
             de: "Danke. Diese Anfrage benötigt einen LSA GLOBAL-Berater. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, unser Team meldet sich zeitnah.",
             en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
           }[detectedLanguage] || getLocalizedAck(detectedLanguage);
-        } else if ((narrowIntent || specificIntent) && kbMatches.length) {
-          let extractedSection = null;
-          const targetIntent = narrowIntent || specificIntent;
-          for (const article of kbMatches) {
-            extractedSection = extractRelevantKbSection(article.answer || "", targetIntent);
-            if (extractedSection) break;
-          }
-
+        } else if (resolvedIntent && kbMatches.length) {
+          const extractedSection = await extractNarrowAnswerFromKb({
+            kbMatches,
+            intent: resolvedIntent
+          });
           if (extractedSection) {
             reply = await localizeNarrowAnswer({
               text: extractedSection,
               language: detectedLanguage
             });
-          } else if (!vagueMessage && kbMatches[0]?.answer) {
-            reply = await localizeNarrowAnswer({
-              text: kbMatches[0].answer,
-              language: detectedLanguage
-            });
           } else {
-            reply = getLocalizedClarifyingQuestion(detectedLanguage);
+            reply = {
+              fr: "Je n’ai pas trouvé ce point précis dans la base de connaissances. Souhaitez-vous être mis en relation avec un conseiller LSA GLOBAL ?",
+              es: "No encontré ese punto específico en la base de conocimientos. ¿Desea que le pongamos en contacto con un asesor de LSA GLOBAL?",
+              it: "Non ho trovato questo punto specifico nella base di conoscenza. Vuole che la mettiamo in contatto con un consulente LSA GLOBAL?",
+              pt: "Não encontrei esse ponto específico na base de conhecimento. Deseja que o coloquemos em contacto com um consultor da LSA GLOBAL?",
+              de: "Ich habe diesen konkreten Punkt in der Wissensdatenbank nicht gefunden. Möchten Sie mit einem LSA GLOBAL-Berater verbunden werden?",
+              en: "I could not find that specific point in the knowledge base. Would you like to be connected with an LSA GLOBAL advisor?"
+            }[detectedLanguage] || getLocalizedAck(detectedLanguage);
           }
-        } else if (broadQuestion || (vagueMessage && !specificIntent && !narrowIntent)) {
+          setCustomerState(from, { clarifyingAsked: false });
+        } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
-        } else if (kbMatches.length) {
+          setCustomerState(from, { clarifyingAsked: true });
+        } else if (broadMessage && !kbMatches.length) {
+          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          setCustomerState(from, { clarifyingAsked: true });
+        } else if (kbMatches.length && !vagueMessage) {
           reply = await localizeNarrowAnswer({
             text: kbMatches[0].answer || "",
             language: detectedLanguage
           });
+          setCustomerState(from, { clarifyingAsked: false });
         } else {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
             kbMatches,
-            specificIntent: specificIntent || narrowIntent
+            specificIntent: resolvedIntent
           });
+          if (!broadMessage) {
+            setCustomerState(from, { clarifyingAsked: false });
+          }
         }
 
         if (!reply || !reply.trim()) {
