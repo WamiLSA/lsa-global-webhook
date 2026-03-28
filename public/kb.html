@@ -115,7 +115,31 @@
     </div>
 
     <h2>KB Manager</h2>
+<div class="card">
+  <h3>Quick Capture / Random Knowledge</h3>
 
+  <input id="quickTitle" placeholder="Optional title" />
+
+  <textarea id="quickRawText" placeholder="Paste any raw knowledge here: policies, service explanations, random notes, old archive text, staff guidance, FAQs, copied website text, anything useful..."></textarea>
+
+  <input id="quickNotes" placeholder="Optional notes" />
+
+  <select id="quickSourceType">
+    <option value="manual">manual</option>
+    <option value="email">email</option>
+    <option value="website">website</option>
+    <option value="archive">archive</option>
+    <option value="staff">staff</option>
+  </select>
+
+  <select id="quickStatus">
+    <option value="pending">pending</option>
+    <option value="reviewed">reviewed</option>
+    <option value="processed">processed</option>
+  </select>
+
+  <button onclick="createQuickCapture()">Save Quick Capture</button>
+</div>
     <div class="card">
       <h3>Create Category</h3>
       <input id="catName" placeholder="Category name" />
@@ -151,6 +175,10 @@
   </div>
 
   <div id="right">
+    <h2>Quick Capture Entries</h2>
+<div id="quickCaptureList"></div>
+
+<hr style="margin: 20px 0;">
     <h2>Quick Capture Entries</h2>
 <div id="quickCaptureList"></div>
 
@@ -494,6 +522,88 @@ async function deleteQuickCapture(id) {
   }
 
   await loadQuickCapture();
+  async function loadQuickCapture() {
+  const res = await fetch("/api/kb/quick-capture");
+  const data = await res.json();
+
+  const container = document.getElementById("quickCaptureList");
+  container.innerHTML = "";
+
+  data.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "card";
+
+    div.innerHTML = `
+      <div class="title">${item.title || "Untitled Quick Capture"}</div>
+      <div class="small">
+        Source: ${item.source_type || "manual"} |
+        Status: ${item.status || "pending"}
+      </div>
+      <div class="small">${item.notes || ""}</div>
+      <div class="answer">${item.raw_text || ""}</div>
+      <div class="actions">
+        <button onclick="deleteQuickCapture(${item.id})">Delete</button>
+      </div>
+    `;
+
+    container.appendChild(div);
+  });
+}
+
+async function createQuickCapture() {
+  const title = document.getElementById("quickTitle").value.trim();
+  const raw_text = document.getElementById("quickRawText").value.trim();
+  const notes = document.getElementById("quickNotes").value.trim();
+  const source_type = document.getElementById("quickSourceType").value;
+  const status = document.getElementById("quickStatus").value;
+
+  const res = await fetch("/api/kb/quick-capture", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      title,
+      raw_text,
+      notes,
+      source_type,
+      status
+    })
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    alert("Quick capture failed: " + JSON.stringify(result));
+    return;
+  }
+
+  document.getElementById("quickTitle").value = "";
+  document.getElementById("quickRawText").value = "";
+  document.getElementById("quickNotes").value = "";
+  document.getElementById("quickSourceType").value = "manual";
+  document.getElementById("quickStatus").value = "pending";
+
+  await loadQuickCapture();
+}
+
+async function deleteQuickCapture(id) {
+  const confirmed = confirm("Delete this quick capture entry?");
+  if (!confirmed) return;
+
+  const res = await fetch(`/api/kb/quick-capture/${id}`, {
+    method: "DELETE"
+  });
+
+  const result = await res.json();
+
+  if (!res.ok) {
+    alert("Delete failed: " + JSON.stringify(result));
+    return;
+  }
+
+  await loadQuickCapture();
+}
 loadCategories();
 loadArticles();
 loadQuickCapture();
