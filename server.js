@@ -131,6 +131,27 @@ function normalizeTextMessage(message) {
   return message.text?.body?.trim() || "";
 }
 
+const KB_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "de", "des", "du", "en", "et",
+  "for", "i", "in", "is", "je", "la", "le", "les", "los", "me", "my", "of", "on",
+  "or", "por", "que", "the", "to", "un", "une", "vos", "votre", "want", "we", "with",
+  "please", "pls", "bonjour", "hello", "hi", "salut", "hola", "ciao", "hallo"
+]);
+
+const CROSS_LANGUAGE_TERM_MAP = {
+  course: ["courses", "cours", "curso", "cursos", "corso", "corsi", "kurs", "kurse", "class", "classes"],
+  italian: ["italien", "italiana", "italiano", "italian"],
+  french: ["francais", "français", "francese", "frances", "french"],
+  spanish: ["espagnol", "español", "spagnolo", "spanish"],
+  english: ["anglais", "ingles", "inglés", "inglese", "english"],
+  translation: ["traduction", "traduccion", "traduzione", "ubersetzung", "translation", "translator"],
+  interpreting: ["interpretation", "interpreting", "interpretariat", "interpretazione", "interpretacion"],
+  exam: ["examen", "exam", "certification", "test"],
+  schedule: ["horaire", "horario", "orario", "schedule", "timetable"],
+  price: ["prix", "precio", "prezzo", "price", "tarif", "tariffa", "fee", "fees", "cost"],
+  duration: ["durée", "duracion", "durata", "duration", "length"]
+};
+
 async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
   const { error } = await supabase.from("conversations").insert([
     {
@@ -190,16 +211,10 @@ async function searchKnowledgeBase(userMessage) {
       .toLowerCase()
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, " ")
-      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/)
       .map(part => part.trim())
       .filter(Boolean);
-
-  const stopWords = new Set([
-    "a", "an", "and", "are", "as", "at", "be", "by", "de", "des", "du", "en", "et",
-    "for", "i", "in", "is", "je", "la", "le", "les", "los", "me", "my", "of", "on",
-    "or", "por", "que", "the", "to", "un", "une", "vos", "votre", "want", "we", "with"
-  ]);
 
   const dedupe = items => Array.from(new Set(items.filter(Boolean)));
 
@@ -258,10 +273,21 @@ async function searchKnowledgeBase(userMessage) {
     console.error("KB query expansion error:", expansionError?.message || expansionError);
   }
 
-  const originalTerms = normalizeForTerms(rawMessage).filter(term => !stopWords.has(term));
-  const englishTerms = normalizeForTerms(englishQuery).filter(term => !stopWords.has(term));
+  const originalTerms = normalizeForTerms(rawMessage).filter(term => !KB_STOP_WORDS.has(term));
+  const englishTerms = normalizeForTerms(englishQuery).filter(term => !KB_STOP_WORDS.has(term));
   const expandedTerms = queryVariants.flatMap(value => normalizeForTerms(value));
-  const terms = dedupe([...expandedTerms, ...englishTerms, ...originalTerms].filter(term => !stopWords.has(term))).slice(0, 16);
+  const crossLanguageTerms = [];
+  for (const term of dedupe([...originalTerms, ...englishTerms, ...expandedTerms])) {
+    for (const variants of Object.values(CROSS_LANGUAGE_TERM_MAP)) {
+      if (variants.includes(term)) {
+        crossLanguageTerms.push(...variants);
+      }
+    }
+  }
+  const terms = dedupe(
+    [...expandedTerms, ...englishTerms, ...originalTerms, ...crossLanguageTerms]
+      .filter(term => !KB_STOP_WORDS.has(term))
+  ).slice(0, 24);
 
   let query = supabase
     .from("kb_articles")
@@ -333,13 +359,31 @@ async function searchKnowledgeBase(userMessage) {
       if (answer.includes(variant)) score += 4;
     }
 
+    const messageLanguage = detectMessageLanguage(rawMessage);
+    const articleLanguage = (article.language || "").toLowerCase();
+    if (messageLanguage && articleLanguage && messageLanguage === articleLanguage) {
+      score += 2;
+    }
+
+    const phrase = normalizeForTerms(rawMessage).slice(0, 5).join(" ");
+    if (phrase.length > 8) {
+      if (question.includes(phrase)) score += 8;
+      if (title.includes(phrase)) score += 8;
+    }
+
     return score;
   };
 
-  return records
+  const ranked = records
     .map(article => ({ ...article, relevance_score: scoreArticle(article) }))
-    .sort((a, b) => b.relevance_score - a.relevance_score)
-    .slice(0, 8)
+    .sort((a, b) => b.relevance_score - a.relevance_score);
+
+  const bestScore = ranked[0]?.relevance_score || 0;
+  const minScore = bestScore >= 18 ? 10 : 12;
+
+  return ranked
+    .filter(article => article.relevance_score >= minScore)
+    .slice(0, 6)
     .map(({ relevance_score, ...article }) => article);
 }
 
@@ -381,6 +425,11 @@ function getLocalizedAck(language) {
 function isVagueCustomerMessage(text) {
   const normalized = (text || "").toLowerCase().trim();
   if (!normalized) return true;
+  if (normalized.length < 8) return true;
+
+  const wordCount = normalized.split(/\s+/).length;
+  const hasSpecificSignals = /\b(price|prix|precio|prezzo|fee|fees|cost|date|exam|duration|horaire|schedule|orario|course|cours|curso|corso|translation|traduction|traduzione)\b/.test(normalized);
+  if (hasSpecificSignals) return false;
 
   const vaguePhrases = [
     "info",
@@ -393,10 +442,36 @@ function isVagueCustomerMessage(text) {
     "about your company",
     "services",
     "help me",
-    "can you help"
+    "can you help",
+    "need help",
+    "tell me more"
   ];
 
-  return vaguePhrases.some((phrase) => normalized.includes(phrase));
+  if (vaguePhrases.some((phrase) => normalized.includes(phrase))) return true;
+  return wordCount <= 3;
+}
+
+function enforceReplyStyle(text, language = "en") {
+  const fallback = getLocalizedAck(language);
+  const safeText = (text || "").trim();
+  if (!safeText) return fallback;
+
+  const blockedMentions = /\b(other school|other provider|another institute|competitor|outside lsa|go elsewhere)\b/i;
+  if (blockedMentions.test(safeText)) {
+    return fallback;
+  }
+
+  const lines = safeText
+    .split(/\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  let compact = lines.join("\n");
+  if (compact.length > 520) {
+    compact = `${compact.slice(0, 517).trimEnd()}...`;
+  }
+  return compact;
 }
 
 async function generateAIAnswerMessage({ customerMessage, kbMatches }) {
@@ -418,6 +493,7 @@ Answer: ${item.answer || ""}
     : "NO_MATCH";
 
   const vagueHint = isVagueCustomerMessage(customerMessage) ? "YES" : "NO";
+  const detectedLanguage = detectMessageLanguage(customerMessage);
 
   const aiResponse = await openai.responses.create({
     model: "gpt-5-mini",
@@ -438,11 +514,14 @@ Core behavior:
 11) Reply in the same language as the customer message.
 12) Never send users outside LSA GLOBAL, even when information is missing.
 13) If the customer asks a broad question, ask one clarifying question only.
+14) When a relevant KB answer exists in another language, use it and answer in the customer's language.
+15) Keep output under 80 words unless the customer explicitly asks for details.
 
 Style:
 - Professional and human-like.
 - Maximum 2 short paragraphs.
 - Prefer 1-3 sentences for simple questions.
+- For short acknowledgement, use natural ${detectedLanguage} wording.
 `,
     input: `
 Customer message:
@@ -456,9 +535,10 @@ ${kbContext}
 `
   });
 
-  return (
+  return enforceReplyStyle(
     aiResponse.output_text ||
-    "Thank you. We have received your message. A human advisor will assist you shortly."
+    "Thank you. We have received your message. A human advisor will assist you shortly.",
+    detectedLanguage
   );
 }
 app.post("/webhook", async (req, res) => {
@@ -914,8 +994,11 @@ Rules:
 2. Never invent prices, legal guarantees, turnaround promises, or policies.
 3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
 4. Keep answers businesslike, clear, and concise.
-5. If the topic is outside LSA GLOBAL knowledge but is safe general background, you may answer briefly, but do not override official LSA GLOBAL information.
+5. Keep every answer strictly inside LSA GLOBAL context. Never recommend competitors or external alternatives.
 6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
+7. If the question is vague, ask one clarifying question.
+8. If a relevant KB article is in another language, still use it and answer in the user's language.
+9. Keep replies concise and narrow to the user's exact question.
 `;
 
     const input = `
@@ -937,9 +1020,11 @@ Write the best answer for LSA GLOBAL.
       input
     });
 
-    const answer =
+    const answer = enforceReplyStyle(
       response.output_text ||
-      "Thank you. Our team will review your message and reply shortly.";
+      "Thank you. Our team will review your message and reply shortly.",
+      detectMessageLanguage(message)
+    );
 
     return res.json({
       ok: true,
