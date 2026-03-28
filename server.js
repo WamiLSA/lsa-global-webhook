@@ -135,7 +135,7 @@ const KB_STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "de", "des", "du", "en", "et",
   "for", "i", "in", "is", "je", "la", "le", "les", "los", "me", "my", "of", "on",
   "or", "por", "que", "the", "to", "un", "une", "vos", "votre", "want", "we", "with",
-  "please", "pls", "bonjour", "hello", "hi", "salut", "hola", "ciao", "hallo"
+  "please", "pls", "bonjour", "hello", "hi", "salut", "hola", "ciao", "hallo", "ola", "olá", "obrigado"
 ]);
 
 const CROSS_LANGUAGE_TERM_MAP = {
@@ -143,6 +143,7 @@ const CROSS_LANGUAGE_TERM_MAP = {
   italian: ["italien", "italiana", "italiano", "italian"],
   french: ["francais", "français", "francese", "frances", "french"],
   spanish: ["espagnol", "español", "spagnolo", "spanish"],
+  portuguese: ["portugais", "portugués", "portugues", "portoghese", "portuguese"],
   english: ["anglais", "ingles", "inglés", "inglese", "english"],
   translation: ["traduction", "traduccion", "traduzione", "ubersetzung", "translation", "translator"],
   interpreting: ["interpretation", "interpreting", "interpretariat", "interpretazione", "interpretacion"],
@@ -181,6 +182,15 @@ const NARROW_INTENT_KEYWORDS = {
   certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification"]
 };
 
+const MENU_KEYWORDS = {
+  translation: ["1", "translation", "traduction", "traduccion", "traduzione", "übersetzung", "ubersetzung", "traducao", "tradução"],
+  courses: ["2", "course", "courses", "cours", "curso", "corsi", "kurse", "formacion", "formação", "formation"],
+  interpreting: ["3", "interpreting", "interpretation", "interpretariat", "interpretazione", "interpretacion", "interpretação"],
+  advisor: ["4", "advisor", "adviser", "human", "agent", "conseiller", "asesor", "berater", "consulente"]
+};
+
+const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|urgent complaint|legal issue|refund|remboursement|rembolso|rimborso|reembolso)\b/i;
+
 function normalizeForIntent(text) {
   return (text || "")
     .toLowerCase()
@@ -198,18 +208,21 @@ function detectNarrowIntent(message) {
 
   const hits = [];
   for (const [intent, keywords] of Object.entries(NARROW_INTENT_KEYWORDS)) {
+    let score = 0;
     for (const keyword of keywords) {
       const normalizedKeyword = normalizeForIntent(keyword).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
       if (!normalizedKeyword) continue;
       const regex = new RegExp(`\\b${normalizedKeyword}\\b`, "i");
       if (regex.test(normalized)) {
-        hits.push(intent);
-        break;
+        score += normalizedKeyword.includes(" ") ? 2 : 1;
       }
     }
+    if (score > 0) hits.push({ intent, score });
   }
 
-  return hits.length === 1 ? hits[0] : null;
+  if (!hits.length) return null;
+  hits.sort((a, b) => b.score - a.score);
+  return hits[0].intent;
 }
 
 function extractRelevantKbSection(answerText, intent) {
@@ -380,7 +393,7 @@ async function searchKnowledgeBase(userMessage) {
           role: "system",
           content:
             "Expand the user query for multilingual retrieval. " +
-            "Return JSON only with shape {\"queries\":[...]} containing short search queries in English, French, Spanish, Italian, and German."
+            "Return JSON only with shape {\"queries\":[...]} containing short search queries in English, French, Spanish, Italian, Portuguese, and German."
         },
         { role: "user", content: rawMessage }
       ],
@@ -523,10 +536,10 @@ function detectMessageLanguage(text) {
   const value = (text || "").toLowerCase();
   if (!value.trim()) return "en";
 
-  if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation)\b/.test(value)) {
+  if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation|horaire)\b/.test(value)) {
     return "fr";
   }
-  if (/[¿¡ñáéíóú]/.test(value) || /\b(hola|gracias|curso|precio|horario|duración)\b/.test(value)) {
+  if (/[¿¡ñáéíóú]/.test(value) || /\b(hola|gracias|curso|precio|horario|duración|inscripción)\b/.test(value)) {
     return "es";
   }
   if (/[äöüß]/.test(value) || /\b(hallo|danke|kurs|preis|zeitplan|dauer)\b/.test(value)) {
@@ -534,6 +547,9 @@ function detectMessageLanguage(text) {
   }
   if (/\b(ciao|grazie|corso|prezzo|orario|durata)\b/.test(value)) {
     return "it";
+  }
+  if (/[ãõçáâàéêíóôú]/.test(value) || /\b(ola|olá|obrigado|obrigada|curso|preco|preço|horario|horário|duração|inscricao|inscrição)\b/.test(value)) {
+    return "pt";
   }
 
   return "en";
@@ -549,6 +565,8 @@ function getLocalizedAck(language) {
       return "Danke. Wir prüfen Ihre Anfrage.";
     case "it":
       return "Grazie. Stiamo esaminando la sua richiesta.";
+    case "pt":
+      return "Obrigado. Estamos a analisar o seu pedido.";
     default:
       return "Thank you. We are reviewing your request.";
   }
@@ -564,9 +582,88 @@ function getLocalizedClarifyingQuestion(language) {
       return "Gern. Was genau möchten Sie über LSA GLOBAL wissen (Preis, Dauer, Zeitplan, Anmeldung oder etwas anderes)?";
     case "it":
       return "Certo. Cosa desidera sapere esattamente su LSA GLOBAL (prezzo, durata, orario, iscrizione o altro)?";
+    case "pt":
+      return "Claro. O que deseja saber exatamente sobre a LSA GLOBAL (preço, duração, horário, inscrição ou outro ponto)?";
     default:
       return "Sure. What exactly would you like to know about LSA GLOBAL (fee, duration, schedule, registration, or something else)?";
   }
+}
+
+function isGreetingMessage(text) {
+  const normalized = normalizeForIntent(text);
+  return /\b(hi|hello|hey|bonjour|salut|hola|hallo|ciao|olá|ola|guten tag|buenos dias|buongiorno)\b/i.test(normalized);
+}
+
+function getLocalizedMainMenu(language) {
+  switch (language) {
+    case "fr":
+      return "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nVeuillez choisir un service :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller";
+    case "es":
+      return "Hola 👋 Bienvenido a LSA GLOBAL.\n\nPor favor, elija un servicio:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor";
+    case "it":
+      return "Ciao 👋 Benvenuto in LSA GLOBAL.\n\nScegli un servizio:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parlare con un consulente";
+    case "pt":
+      return "Olá 👋 Bem-vindo à LSA GLOBAL.\n\nEscolha um serviço:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de línguas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor";
+    case "de":
+      return "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nBitte wählen Sie einen Service:\n1️⃣ Übersetzungsdienste\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen";
+    default:
+      return "Hello 👋 Welcome to LSA GLOBAL.\n\nPlease choose a service:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor";
+  }
+}
+
+function detectMenuSelection(text) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return null;
+  for (const [selection, terms] of Object.entries(MENU_KEYWORDS)) {
+    if (terms.some((term) => normalizeForIntent(term) === normalized || new RegExp(`\\b${normalizeForIntent(term)}\\b`, "i").test(normalized))) {
+      return selection;
+    }
+  }
+  return null;
+}
+
+function getLocalizedMenuReply(language, selection) {
+  const content = {
+    translation: {
+      en: "🌍 Translation Services\n\nPlease send:\n- document type\n- source language\n- target language\n- deadline",
+      fr: "🌍 Services de traduction\n\nMerci d’envoyer :\n- type de document\n- langue source\n- langue cible\n- délai",
+      es: "🌍 Servicios de traducción\n\nPor favor envíe:\n- tipo de documento\n- idioma de origen\n- idioma de destino\n- fecha límite",
+      it: "🌍 Servizi di traduzione\n\nInvii:\n- tipo di documento\n- lingua di partenza\n- lingua di arrivo\n- scadenza",
+      pt: "🌍 Serviços de tradução\n\nEnvie:\n- tipo de documento\n- idioma de origem\n- idioma de destino\n- prazo",
+      de: "🌍 Übersetzungsdienste\n\nBitte senden Sie:\n- Dokumenttyp\n- Ausgangssprache\n- Zielsprache\n- Frist"
+    },
+    courses: {
+      en: "📚 Language Courses\n\nPlease tell us:\n- language\n- current level\n- target exam (if any)",
+      fr: "📚 Cours de langues\n\nMerci d’indiquer :\n- langue\n- niveau actuel\n- examen visé (si applicable)",
+      es: "📚 Cursos de idiomas\n\nPor favor indique:\n- idioma\n- nivel actual\n- examen objetivo (si aplica)",
+      it: "📚 Corsi di lingua\n\nPer favore indichi:\n- lingua\n- livello attuale\n- esame target (se previsto)",
+      pt: "📚 Cursos de línguas\n\nIndique:\n- idioma\n- nível atual\n- exame-alvo (se houver)",
+      de: "📚 Sprachkurse\n\nBitte teilen Sie uns mit:\n- Sprache\n- aktuelles Niveau\n- Zielprüfung (falls vorhanden)"
+    },
+    interpreting: {
+      en: "🎤 Interpreting Services\n\nPlease tell us:\n- language pair\n- date\n- duration\n- online or onsite",
+      fr: "🎤 Services d’interprétation\n\nMerci d’indiquer :\n- paire de langues\n- date\n- durée\n- en ligne ou sur site",
+      es: "🎤 Servicios de interpretación\n\nPor favor indique:\n- combinación de idiomas\n- fecha\n- duración\n- en línea o presencial",
+      it: "🎤 Servizi di interpretariato\n\nIndichi:\n- combinazione linguistica\n- data\n- durata\n- online o in presenza",
+      pt: "🎤 Serviços de interpretação\n\nIndique:\n- par de idiomas\n- data\n- duração\n- online ou presencial",
+      de: "🎤 Dolmetschdienste\n\nBitte teilen Sie mit:\n- Sprachkombination\n- Datum\n- Dauer\n- online oder vor Ort"
+    },
+    advisor: {
+      en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
+      fr: "👨‍💼 Demande de conseiller\n\nDécrivez brièvement votre besoin. Notre équipe vous contactera rapidement.",
+      es: "👨‍💼 Solicitud de asesor\n\nDescriba brevemente su necesidad. Nuestro equipo le contactará pronto.",
+      it: "👨‍💼 Richiesta consulente\n\nDescriva brevemente la sua esigenza. Il nostro team la contatterà presto.",
+      pt: "👨‍💼 Pedido de consultor\n\nDescreva brevemente a sua necessidade. A nossa equipa entrará em contacto em breve.",
+      de: "👨‍💼 Berateranfrage\n\nBitte beschreiben Sie Ihr Anliegen kurz. Unser Team meldet sich in Kürze."
+    }
+  };
+
+  const safeLang = ["en", "fr", "es", "it", "pt", "de"].includes(language) ? language : "en";
+  return content[selection]?.[safeLang] || "";
+}
+
+function shouldEscalateToHuman(text) {
+  return SENSITIVE_ESCALATION_PATTERNS.test(text || "");
 }
 
 function detectSpecificIntent(text) {
@@ -740,83 +837,73 @@ app.post("/webhook", async (req, res) => {
 
     let reply = "";
 
-    if (text.toLowerCase() === "hi" || text.toLowerCase() === "hello") {
-      reply =
-        "Hello 👋 Welcome to LSA GLOBAL.\n\n" +
-        "Please choose a service:\n" +
-        "1️⃣ Translation services\n" +
-        "2️⃣ Language courses\n" +
-        "3️⃣ Interpreting services\n" +
-        "4️⃣ Speak to an advisor";
-    } else if (text === "1") {
-      reply =
-        "🌍 Translation Services\n\n" +
-        "Please send:\n" +
-        "- document type\n" +
-        "- source language\n" +
-        "- target language\n" +
-        "- deadline";
-    } else if (text === "2") {
-      reply =
-        "📚 Language Courses\n\n" +
-        "Please tell us:\n" +
-        "- language\n" +
-        "- current level\n" +
-        "- target exam (if any)";
-    } else if (text === "3") {
-      reply =
-        "🎤 Interpreting Services\n\n" +
-        "Please tell us:\n" +
-        "- language pair\n" +
-        "- date\n" +
-        "- duration\n" +
-        "- online or onsite";
-    } else if (text === "4") {
-      reply =
-        "👨‍💼 Advisor Request\n\n" +
-        "Please describe your need briefly. Our team will contact you shortly.";
-    }
-else {
-  const kbMatches = await searchKnowledgeBase(text);
-  const detectedLanguage = detectMessageLanguage(text);
-  const narrowIntent = detectNarrowIntent(text);
-  const specificIntent = detectSpecificIntent(text);
-  const vagueMessage = isVagueCustomerMessage(text);
+    const detectedLanguage = detectMessageLanguage(text);
+    const menuSelection = detectMenuSelection(text);
 
-  try {
-    if (narrowIntent && kbMatches.length) {
-      let extractedSection = null;
-      for (const article of kbMatches) {
-        extractedSection = extractRelevantKbSection(article.answer || "", narrowIntent);
-        if (extractedSection) break;
-      }
-
-      if (extractedSection) {
-        reply = await localizeNarrowAnswer({
-          text: extractedSection,
-          language: detectedLanguage
-        });
-      } else {
-        reply = getLocalizedClarifyingQuestion(detectedLanguage);
-      }
-    } else if (vagueMessage && !specificIntent) {
-      reply = getLocalizedClarifyingQuestion(detectedLanguage);
+    if (isGreetingMessage(text)) {
+      reply = getLocalizedMainMenu(detectedLanguage);
+    } else if (menuSelection) {
+      reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
     } else {
-      reply = await generateAIAnswerMessage({
-        customerMessage: text,
-        kbMatches,
-        specificIntent: specificIntent || narrowIntent
-      });
-    }
+      const kbMatches = await searchKnowledgeBase(text);
+      const narrowIntent = detectNarrowIntent(text);
+      const specificIntent = detectSpecificIntent(text);
+      const vagueMessage = isVagueCustomerMessage(text);
 
-    if (!reply || !reply.trim()) {
-      reply = getLocalizedAck(detectedLanguage);
+      try {
+        if (shouldEscalateToHuman(text)) {
+          reply = {
+            fr: "Merci. Cette demande nécessite un conseiller LSA GLOBAL. Merci de partager votre nom et numéro WhatsApp, notre équipe vous contacte rapidement.",
+            es: "Gracias. Esta solicitud requiere un asesor de LSA GLOBAL. Comparta su nombre y número de WhatsApp y nuestro equipo le contactará pronto.",
+            it: "Grazie. Questa richiesta richiede un consulente LSA GLOBAL. Condivida nome e numero WhatsApp e il nostro team la contatterà presto.",
+            pt: "Obrigado. Este pedido requer um consultor da LSA GLOBAL. Partilhe o seu nome e número WhatsApp e a nossa equipa entrará em contacto em breve.",
+            de: "Danke. Diese Anfrage benötigt einen LSA GLOBAL-Berater. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, unser Team meldet sich zeitnah.",
+            en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
+          }[detectedLanguage] || getLocalizedAck(detectedLanguage);
+        } else if ((narrowIntent || specificIntent) && kbMatches.length) {
+          let extractedSection = null;
+          const targetIntent = narrowIntent || specificIntent;
+          for (const article of kbMatches) {
+            extractedSection = extractRelevantKbSection(article.answer || "", targetIntent);
+            if (extractedSection) break;
+          }
+
+          if (extractedSection) {
+            reply = await localizeNarrowAnswer({
+              text: extractedSection,
+              language: detectedLanguage
+            });
+          } else if (!vagueMessage && kbMatches[0]?.answer) {
+            reply = await localizeNarrowAnswer({
+              text: kbMatches[0].answer,
+              language: detectedLanguage
+            });
+          } else {
+            reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          }
+        } else if (vagueMessage && !specificIntent && !kbMatches.length) {
+          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+        } else if (kbMatches.length && !vagueMessage) {
+          reply = await localizeNarrowAnswer({
+            text: kbMatches[0].answer || "",
+            language: detectedLanguage
+          });
+        } else {
+          reply = await generateAIAnswerMessage({
+            customerMessage: text,
+            kbMatches,
+            specificIntent: specificIntent || narrowIntent
+          });
+        }
+
+        if (!reply || !reply.trim()) {
+          reply = getLocalizedAck(detectedLanguage);
+        }
+      } catch (err) {
+        console.error("AI fallback error:", err.message || err);
+        reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
+      }
     }
-  } catch (err) {
-    console.error("AI fallback error:", err.message || err);
-    reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
-  }
-}
     if (reply) {
   if (reply.length > 180) {
     const ack = getLocalizedAck(detectMessageLanguage(text));
