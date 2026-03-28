@@ -172,14 +172,36 @@ const SPECIFIC_INTENT_PATTERNS = {
 };
 
 const NARROW_INTENT_KEYWORDS = {
-  fees: ["fee", "fees", "price", "prices", "pricing", "cost", "costs", "tariff", "tariffs", "prix", "tarifs", "coût", "cout", "frais"],
-  duration: ["duration", "durée", "duree", "length", "how long"],
-  schedule: ["schedule", "schedules", "horaires", "timetable", "hours", "time"],
-  levels: ["level", "levels", "niveau", "niveaux", "a1", "a2", "b1", "b2", "c1", "c2"],
-  location: ["location", "lieu", "centre", "campus", "city", "douala", "london", "newark"],
-  format: ["format", "online", "onsite", "in-person", "presentiel", "présentiel", "distance"],
-  registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply"],
-  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification"]
+  fees: [
+    "fee", "fees", "price", "prices", "pricing", "cost", "costs", "tariff", "tariffs", "tuition",
+    "prix", "tarifs", "coût", "cout", "frais",
+    "precio", "precios", "costo", "coste",
+    "prezzo", "prezzi", "costo",
+    "preço", "precos", "valor",
+    "preis", "gebuhr", "gebühr", "kosten"
+  ],
+  duration: [
+    "duration", "durée", "duree", "length", "how long",
+    "duracion", "duración", "durata", "duração", "dauer"
+  ],
+  schedule: [
+    "schedule", "schedules", "horaires", "timetable", "hours", "time",
+    "horario", "horarios", "orario", "orari", "stundenplan", "zeitplan"
+  ],
+  levels: [
+    "level", "levels", "niveau", "niveaux", "nivel", "niveles", "livello", "livelli", "stufe", "stufen",
+    "a1", "a2", "b1", "b2", "c1", "c2"
+  ],
+  location: ["location", "lieu", "centre", "campus", "city", "ville", "localisation", "ubicacion", "ubicación", "luogo", "sede", "ort", "standort"],
+  format: ["format", "online", "onsite", "in-person", "in person", "presentiel", "présentiel", "distance", "presencial", "presenziale", "vor ort"],
+  registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply", "inscripcion", "inscripción", "iscrizione", "anmeldung", "registrazione"],
+  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification", "certificat", "certificado", "certificato", "zertifikat", "nachweis"]
+};
+
+const NARROW_INTENT_ALIASES = {
+  fee: "fees",
+  exam: "certification",
+  course: null
 };
 
 const MENU_KEYWORDS = {
@@ -198,7 +220,7 @@ const GREETING_PHRASES = {
   de: ["hallo", "guten tag", "guten morgen", "guten abend"]
 };
 
-const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|policy waiver|waiver|refund|refunds|complaint|complaints|sensitive complaint|legal issue|remboursement|rembolso|rimborso|reembolso|descuento|descuentos|rabais|sconto|desconto)\b/i;
+const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
 const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
 
@@ -219,28 +241,28 @@ const LOCALIZED_WELCOME_MENUS = {
 
 const LOCALIZED_OPTION_REPLIES = {
   translation: {
-    en: "🌍 Translation services.\nCertified translations for legal, academic, and business documents.\n\nFree quote:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    fr: "🌍 Services de traduction.\nTraductions certifiées pour documents juridiques, académiques et professionnels.\n\nDevis gratuit :\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    es: "🌍 Servicios de traducción.\nTraducciones certificadas para documentos legales, académicos y empresariales.\n\nPresupuesto gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    it: "🌍 Servizi di traduzione.\nTraduzioni certificate per documenti legali, accademici e aziendali.\n\nPreventivo gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    pt: "🌍 Serviços de tradução.\nTraduções certificadas para documentos jurídicos, acadêmicos e empresariais.\n\nOrçamento gratuito:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    de: "🌍 Übersetzungsdienste.\nBeglaubigte Übersetzungen für rechtliche, akademische und geschäftliche Dokumente.\n\nKostenloses Angebot:\nhttps://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
+    en: "🌍 Translation services.\nPlease send language pair, document type, and deadline.\nQuote request: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    fr: "🌍 Services de traduction.\nMerci d’envoyer la combinaison linguistique, le type de document et le délai.\nDevis : https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    es: "🌍 Servicios de traducción.\nEnvíe combinación de idiomas, tipo de documento y plazo.\nPresupuesto: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    it: "🌍 Servizi di traduzione.\nInvii combinazione linguistica, tipo di documento e scadenza.\nPreventivo: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    pt: "🌍 Serviços de tradução.\nEnvie par de idiomas, tipo de documento e prazo.\nOrçamento: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+    de: "🌍 Übersetzungsdienste.\nBitte senden Sie Sprachpaar, Dokumenttyp und Frist.\nAngebot: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
   },
   courses: {
-    en: "🎓 Language courses (A1–C2), online and guided.\n\nRegister here:\nhttps://lsa-global.com/register-now-2/",
-    fr: "🎓 Cours de langues (A1–C2), en ligne et encadrés.\n\nInscription :\nhttps://lsa-global.com/register-now-2/",
-    es: "🎓 Cursos de idiomas (A1–C2), en línea y guiados.\n\nInscripción:\nhttps://lsa-global.com/register-now-2/",
-    it: "🎓 Corsi di lingua (A1–C2), online e guidati.\n\nIscrizione:\nhttps://lsa-global.com/register-now-2/",
-    pt: "🎓 Cursos de idiomas (A1–C2), online e orientados.\n\nInscrição:\nhttps://lsa-global.com/register-now-2/",
-    de: "🎓 Sprachkurse (A1–C2), online und betreut.\n\nAnmeldung:\nhttps://lsa-global.com/register-now-2/"
+    en: "🎓 Language courses A1–C2 (online/guided).\nTell me the language you want and your current level.\nRegistration: https://lsa-global.com/register-now-2/",
+    fr: "🎓 Cours de langues A1–C2 (en ligne/encadrés).\nIndiquez la langue souhaitée et votre niveau actuel.\nInscription : https://lsa-global.com/register-now-2/",
+    es: "🎓 Cursos de idiomas A1–C2 (en línea/guiados).\nIndique el idioma deseado y su nivel actual.\nInscripción: https://lsa-global.com/register-now-2/",
+    it: "🎓 Corsi di lingua A1–C2 (online/guidati).\nIndichi la lingua desiderata e il livello attuale.\nIscrizione: https://lsa-global.com/register-now-2/",
+    pt: "🎓 Cursos de idiomas A1–C2 (online/orientados).\nIndique o idioma desejado e o seu nível atual.\nInscrição: https://lsa-global.com/register-now-2/",
+    de: "🎓 Sprachkurse A1–C2 (online/betreut).\nBitte nennen Sie gewünschte Sprache und aktuelles Niveau.\nAnmeldung: https://lsa-global.com/register-now-2/"
   },
   interpreting: {
-    en: "🎧 Interpreting services, online or onsite.\nPlease share: language pair, date, and duration.",
-    fr: "🎧 Services d’interprétation, en ligne ou sur site.\nMerci d’indiquer : combinaison linguistique, date et durée.",
-    es: "🎧 Servicios de interpretación, en línea o presencial.\nIndique: combinación de idiomas, fecha y duración.",
-    it: "🎧 Servizi di interpretariato, online o in presenza.\nIndichi: combinazione linguistica, data e durata.",
-    pt: "🎧 Serviços de interpretação, online ou presencial.\nInforme: par de idiomas, data e duração.",
-    de: "🎧 Dolmetschdienste, online oder vor Ort.\nBitte teilen Sie mit: Sprachkombination, Datum und Dauer."
+    en: "🎧 Interpreting services (online/onsite).\nPlease share language pair, date, and duration.",
+    fr: "🎧 Services d’interprétation (en ligne/sur site).\nMerci d’indiquer la combinaison linguistique, la date et la durée.",
+    es: "🎧 Servicios de interpretación (en línea/presencial).\nIndique combinación lingüística, fecha y duración.",
+    it: "🎧 Servizi di interpretariato (online/in presenza).\nIndichi combinazione linguistica, data e durata.",
+    pt: "🎧 Serviços de interpretação (online/presencial).\nInforme par de idiomas, data e duração.",
+    de: "🎧 Dolmetschdienste (online/vor Ort).\nBitte teilen Sie Sprachkombination, Datum und Dauer mit."
   },
   advisor: {
     en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
@@ -286,13 +308,18 @@ function detectNarrowIntent(message) {
   return hits[0].intent;
 }
 
+function resolveNarrowIntent(intent) {
+  if (!intent) return null;
+  if (NARROW_INTENT_KEYWORDS[intent]) return intent;
+  return NARROW_INTENT_ALIASES[intent] || null;
+}
+
 function extractRelevantKbSection(answerText, intent) {
   if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
 
   const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
   const normalizedAnswer = normalizeForIntent(answerText);
   const hasIntentSignal = keywords.some((keyword) => keyword && normalizedAnswer.includes(keyword));
-  if (!hasIntentSignal) return null;
 
   const paragraphs = answerText
     .split(/\n{2,}/)
@@ -324,8 +351,74 @@ function extractRelevantKbSection(answerText, intent) {
     .slice(0, 3)
     .map((item) => item.section);
 
-  if (!scored.length) return null;
-  return scored.join("\n");
+  if (scored.length) return scored.join("\n");
+
+  if (!hasIntentSignal) return null;
+
+  const fallbackLines = answerText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const heuristicSignals = {
+    fees: /\b(\$|€|£|fcfa|usd|eur|xaf|cad|price|prix|tarif|fee|cost)\b/i,
+    duration: /\b(week|weeks|month|months|hour|hours|jour|jours|semaine|semaines|mois|heures)\b/i,
+    schedule: /\b(mon|tue|wed|thu|fri|sat|sun|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}[:h]\d{0,2})\b/i,
+    levels: /\b(a1|a2|b1|b2|c1|c2|beginner|intermediate|advanced|debutant|débutant|niveau|nivel|livello)\b/i,
+    location: /\b(address|city|centre|campus|location|lieu|ville|douala|paris|london)\b/i,
+    format: /\b(online|in person|in-person|onsite|hybrid|présentiel|presentiel|distance)\b/i,
+    registration: /\b(register|registration|inscription|deadline|apply|admission)\b/i,
+    certification: /\b(certificate|certification|attestation|proof|exam|examen)\b/i
+  };
+
+  const signal = heuristicSignals[intent];
+  if (!signal) return null;
+  const matchedLine = fallbackLines.find((line) => signal.test(line));
+  return matchedLine || null;
+}
+
+async function extractNarrowAnswerFromKb({ kbMatches, intent }) {
+  const safeIntent = resolveNarrowIntent(intent);
+  if (!safeIntent || !kbMatches?.length) return null;
+
+  for (const article of kbMatches) {
+    const section = extractRelevantKbSection(article.answer || "", safeIntent);
+    if (section) return section;
+  }
+
+  const compactKb = kbMatches
+    .slice(0, 3)
+    .map((article, index) => `[Article ${index + 1}] ${article.title || "Untitled"}\n${article.answer || ""}`)
+    .join("\n\n");
+
+  try {
+    const extraction = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions:
+        "Extract ONLY the text that answers the requested field from the KB content. " +
+        "Do not add explanations, introductions, or questions. " +
+        "If the field does not exist, reply exactly: NOT_FOUND.",
+      input: `Field: ${safeIntent}\n\nKB content:\n${compactKb}`
+    });
+    const extracted = (extraction.output_text || "").trim();
+    if (!extracted || /^NOT_FOUND$/i.test(extracted)) return null;
+    return extracted;
+  } catch (error) {
+    console.error("Narrow KB extraction error:", error?.message || error);
+    return null;
+  }
+}
+
+const customerState = new Map();
+
+function getCustomerState(waId) {
+  if (!waId) return { clarifyingAsked: false };
+  return customerState.get(waId) || { clarifyingAsked: false };
+}
+
+function setCustomerState(waId, state) {
+  if (!waId) return;
+  customerState.set(waId, { clarifyingAsked: Boolean(state?.clarifyingAsked) });
 }
 
 async function localizeNarrowAnswer({ text, language }) {
@@ -638,17 +731,17 @@ function getLocalizedAck(language) {
 function getLocalizedClarifyingQuestion(language) {
   switch (language) {
     case "fr":
-      return "Bien sûr — quel point précis vous intéresse : tarif, durée, horaires ou inscription ?";
+      return "Que souhaitez-vous préciser : tarif, durée, horaires, niveau, format ou inscription ?";
     case "es":
-      return "Claro — ¿qué punto exacto le interesa: precio, duración, horario o inscripción?";
+      return "¿Qué desea precisar: precio, duración, horario, nivel, modalidad o inscripción?";
     case "de":
-      return "Gern — welcher genaue Punkt interessiert Sie: Preis, Dauer, Zeitplan oder Anmeldung?";
+      return "Was möchten Sie genau wissen: Preis, Dauer, Zeitplan, Niveau, Format oder Anmeldung?";
     case "it":
-      return "Certo — quale punto preciso le interessa: prezzo, durata, orari o iscrizione?";
+      return "Cosa desidera precisare: prezzo, durata, orario, livello, formato o iscrizione?";
     case "pt":
-      return "Claro — qual ponto exato deseja: preço, duração, horários ou inscrição?";
+      return "O que deseja especificar: preço, duração, horário, nível, formato ou inscrição?";
     default:
-      return "Sure — which exact point do you need: fee, duration, schedule, or registration?";
+      return "What would you like to specify: fee, duration, schedule, level, format, or registration?";
   }
 }
 
@@ -770,6 +863,20 @@ function isVagueCustomerMessage(text) {
 
   if (vaguePhrases.some((phrase) => normalized.includes(phrase))) return true;
   return wordCount <= 3;
+}
+
+function isBroadServiceQuestion(text) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return false;
+
+  const broadPatterns = [
+    /\b(course|courses|cours|curso|corsi|service|services|translation|traduction|traduccion|traduzione|interpreting|interpretation|interpreta)\b/,
+    /\b(tell me about|more info|information|details|about)\b/
+  ];
+
+  const hasBroadSignal = broadPatterns.some((pattern) => pattern.test(normalized));
+  const hasSpecificSignal = Boolean(detectNarrowIntent(text) || detectSpecificIntent(text));
+  return hasBroadSignal && !hasSpecificSignal;
 }
 
 function enforceReplyStyle(text, language = "en") {
@@ -922,47 +1029,63 @@ app.post("/webhook", async (req, res) => {
       const kbMatches = await searchKnowledgeBase(text);
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
+      const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
       const vagueMessage = isVagueCustomerMessage(text);
+      const userState = getCustomerState(from);
+      const broadMessage = vagueMessage && !resolvedIntent;
 
       try {
         if (shouldEscalateToHuman(text)) {
-          reply = getLocalizedEscalationMessage(detectedLanguage);
-        } else if ((narrowIntent || specificIntent) && kbMatches.length) {
-          let extractedSection = null;
-          const targetIntent = narrowIntent || specificIntent;
-          for (const article of kbMatches) {
-            extractedSection = extractRelevantKbSection(article.answer || "", targetIntent);
-            if (extractedSection) break;
-          }
-
+          reply = {
+            fr: "Merci. Cette demande nécessite un conseiller LSA GLOBAL. Merci de partager votre nom et numéro WhatsApp, notre équipe vous contacte rapidement.",
+            es: "Gracias. Esta solicitud requiere un asesor de LSA GLOBAL. Comparta su nombre y número de WhatsApp y nuestro equipo le contactará pronto.",
+            it: "Grazie. Questa richiesta richiede un consulente LSA GLOBAL. Condivida nome e numero WhatsApp e il nostro team la contatterà presto.",
+            pt: "Obrigado. Este pedido requer um consultor da LSA GLOBAL. Partilhe o seu nome e número WhatsApp e a nossa equipa entrará em contacto em breve.",
+            de: "Danke. Diese Anfrage benötigt einen LSA GLOBAL-Berater. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, unser Team meldet sich zeitnah.",
+            en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
+          }[detectedLanguage] || getLocalizedAck(detectedLanguage);
+        } else if (resolvedIntent && kbMatches.length) {
+          const extractedSection = await extractNarrowAnswerFromKb({
+            kbMatches,
+            intent: resolvedIntent
+          });
           if (extractedSection) {
             reply = await localizeNarrowAnswer({
               text: extractedSection,
               language: detectedLanguage
             });
-          } else if (!vagueMessage && kbMatches[0]?.answer) {
-            reply = await localizeNarrowAnswer({
-              text: kbMatches[0].answer,
-              language: detectedLanguage
-            });
           } else {
-            reply = getLocalizedClarifyingQuestion(detectedLanguage);
+            reply = {
+              fr: "Je n’ai pas trouvé ce point précis dans la base de connaissances. Souhaitez-vous être mis en relation avec un conseiller LSA GLOBAL ?",
+              es: "No encontré ese punto específico en la base de conocimientos. ¿Desea que le pongamos en contacto con un asesor de LSA GLOBAL?",
+              it: "Non ho trovato questo punto specifico nella base di conoscenza. Vuole che la mettiamo in contatto con un consulente LSA GLOBAL?",
+              pt: "Não encontrei esse ponto específico na base de conhecimento. Deseja que o coloquemos em contacto com um consultor da LSA GLOBAL?",
+              de: "Ich habe diesen konkreten Punkt in der Wissensdatenbank nicht gefunden. Möchten Sie mit einem LSA GLOBAL-Berater verbunden werden?",
+              en: "I could not find that specific point in the knowledge base. Would you like to be connected with an LSA GLOBAL advisor?"
+            }[detectedLanguage] || getLocalizedAck(detectedLanguage);
           }
-        } else if (vagueMessage && !specificIntent && !kbMatches.length) {
+          setCustomerState(from, { clarifyingAsked: false });
+        } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          setCustomerState(from, { clarifyingAsked: true });
+        } else if (broadMessage && !kbMatches.length) {
+          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          setCustomerState(from, { clarifyingAsked: true });
         } else if (kbMatches.length && !vagueMessage) {
           reply = await localizeNarrowAnswer({
             text: kbMatches[0].answer || "",
             language: detectedLanguage
           });
-        } else if (kbMatches.length && vagueMessage) {
-          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          setCustomerState(from, { clarifyingAsked: false });
         } else {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
             kbMatches,
-            specificIntent: specificIntent || narrowIntent
+            specificIntent: resolvedIntent
           });
+          if (!broadMessage) {
+            setCustomerState(from, { clarifyingAsked: false });
+          }
         }
 
         if (!reply || !reply.trim()) {
