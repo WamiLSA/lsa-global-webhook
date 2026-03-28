@@ -189,6 +189,15 @@ const MENU_KEYWORDS = {
   advisor: ["4", "advisor", "adviser", "human", "agent", "conseiller", "asesor", "berater", "consulente"]
 };
 
+const GREETING_PHRASES = {
+  en: ["hi", "hello", "hey", "good morning", "good evening"],
+  fr: ["bonjour", "bonsoir", "salut", "coucou"],
+  es: ["hola", "buenos dias", "buenas tardes", "buenas noches"],
+  it: ["ciao", "buongiorno", "buonasera", "salve"],
+  pt: ["ola", "bom dia", "boa tarde", "boa noite", "oi"],
+  de: ["hallo", "guten tag", "guten morgen", "guten abend"]
+};
+
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|urgent complaint|legal issue|refund|remboursement|rembolso|rimborso|reembolso)\b/i;
 
 function normalizeForIntent(text) {
@@ -535,6 +544,8 @@ async function searchKnowledgeBase(userMessage) {
 function detectMessageLanguage(text) {
   const value = (text || "").toLowerCase();
   if (!value.trim()) return "en";
+  const greetingLanguage = detectGreetingIntent(text)?.language;
+  if (greetingLanguage) return greetingLanguage;
 
   if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation|horaire)\b/.test(value)) {
     return "fr";
@@ -590,24 +601,46 @@ function getLocalizedClarifyingQuestion(language) {
 }
 
 function isGreetingMessage(text) {
+  return Boolean(detectGreetingIntent(text));
+}
+
+function detectGreetingIntent(text) {
   const normalized = normalizeForIntent(text);
-  return /\b(hi|hello|hey|bonjour|salut|hola|hallo|ciao|olá|ola|guten tag|buenos dias|buongiorno)\b/i.test(normalized);
+  if (!normalized) return null;
+
+  const words = normalized.split(" ").filter(Boolean);
+  for (const [language, phrases] of Object.entries(GREETING_PHRASES)) {
+    for (const phrase of phrases) {
+      const safePhrase = normalizeForIntent(phrase);
+      const phrasePattern = safePhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      const exactRegex = new RegExp(`^${phrasePattern}$`, "i");
+      const openerRegex = new RegExp(`^${phrasePattern}\\b`, "i");
+      if (exactRegex.test(normalized)) {
+        return { language, phrase: safePhrase };
+      }
+      if (openerRegex.test(normalized) && words.length <= 12) {
+        return { language, phrase: safePhrase };
+      }
+    }
+  }
+
+  return null;
 }
 
 function getLocalizedMainMenu(language) {
   switch (language) {
     case "fr":
-      return "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nVeuillez choisir un service :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller";
+      return "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nNous proposons :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller\n\nVeuillez répondre par 1, 2, 3 ou 4.";
     case "es":
-      return "Hola 👋 Bienvenido a LSA GLOBAL.\n\nPor favor, elija un servicio:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor";
+      return "Hola 👋 Bienvenido(a) a LSA GLOBAL.\n\nOfrecemos:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor\n\nPor favor, responda con 1, 2, 3 o 4.";
     case "it":
-      return "Ciao 👋 Benvenuto in LSA GLOBAL.\n\nScegli un servizio:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parlare con un consulente";
+      return "Ciao 👋 Benvenuto/a su LSA GLOBAL.\n\nOffriamo:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parla con un consulente\n\nPer favore, rispondi con 1, 2, 3 o 4.";
     case "pt":
-      return "Olá 👋 Bem-vindo à LSA GLOBAL.\n\nEscolha um serviço:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de línguas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor";
+      return "Olá 👋 Bem-vindo(a) à LSA GLOBAL.\n\nOferecemos:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de idiomas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor\n\nPor favor, responda com 1, 2, 3 ou 4.";
     case "de":
-      return "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nBitte wählen Sie einen Service:\n1️⃣ Übersetzungsdienste\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen";
+      return "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nWir bieten:\n1️⃣ Übersetzungsdienstleistungen\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen\n\nBitte antworten Sie mit 1, 2, 3 oder 4.";
     default:
-      return "Hello 👋 Welcome to LSA GLOBAL.\n\nPlease choose a service:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor";
+      return "Hello 👋 Welcome to LSA GLOBAL.\n\nWe offer:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor\n\nPlease reply with 1, 2, 3 or 4.";
   }
 }
 
@@ -837,10 +870,11 @@ app.post("/webhook", async (req, res) => {
 
     let reply = "";
 
-    const detectedLanguage = detectMessageLanguage(text);
+    const greetingIntent = detectGreetingIntent(text);
+    const detectedLanguage = greetingIntent?.language || detectMessageLanguage(text);
     const menuSelection = detectMenuSelection(text);
 
-    if (isGreetingMessage(text)) {
+    if (greetingIntent || isGreetingMessage(text)) {
       reply = getLocalizedMainMenu(detectedLanguage);
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
