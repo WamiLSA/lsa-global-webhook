@@ -995,6 +995,136 @@ app.delete("/api/providers/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+app.get("/kb-capture", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "kb-capture.html"));
+});
+
+app.get("/api/kb-capture", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("kb_capture_assistant")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json(data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/kb-capture", async (req, res) => {
+  try {
+    const {
+      title,
+      raw_question,
+      raw_answer,
+      suggested_category,
+      audience,
+      source_channel,
+      source_reference,
+      status,
+      notes
+    } = req.body;
+
+    if (!raw_answer || !raw_answer.trim()) {
+      return res.status(400).json({ error: "raw_answer is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_capture_assistant")
+      .insert([
+        {
+          title: title || null,
+          raw_question: raw_question || null,
+          raw_answer,
+          suggested_category: suggested_category || null,
+          audience: audience || null,
+          source_channel: source_channel || "manual",
+          source_reference: source_reference || null,
+          status: status || "pending",
+          notes: notes || null
+        }
+      ])
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/kb-capture/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const {
+      title,
+      raw_question,
+      raw_answer,
+      suggested_category,
+      audience,
+      source_channel,
+      source_reference,
+      status,
+      notes
+    } = req.body;
+
+    if (!raw_answer || !raw_answer.trim()) {
+      return res.status(400).json({ error: "raw_answer is required" });
+    }
+
+    const { data, error } = await supabase
+      .from("kb_capture_assistant")
+      .update({
+        title: title || null,
+        raw_question: raw_question || null,
+        raw_answer,
+        suggested_category: suggested_category || null,
+        audience: audience || null,
+        source_channel: source_channel || "manual",
+        source_reference: source_reference || null,
+        status: status || "pending",
+        notes: notes || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", id)
+      .select();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/kb-capture/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const { error } = await supabase
+      .from("kb_capture_assistant")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 app.listen(process.env.PORT || 10000, () => {
   console.log("Server running");
 });
