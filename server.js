@@ -8,8 +8,8 @@ const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.use(
@@ -624,6 +624,100 @@ async function sendWhatsAppText(to, body, delayMs = null) {
   );
 
   return response.data;
+}
+
+function resolveOutboundMediaType(file) {
+  const mimeType = (file?.mimeType || "").toLowerCase();
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType === "application/pdf") return "document";
+  return null;
+}
+
+function inferMimeTypeFromFileName(fileName = "") {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "";
+}
+
+async function uploadWhatsAppMediaFromBuffer(file) {
+  const formData = new FormData();
+  formData.append("messaging_product", "whatsapp");
+  formData.append("file", new Blob([file.buffer], { type: file.mimeType }), file.fileName);
+
+  const response = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${PHONE_NUMBER_ID}/media`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`
+      },
+      body: formData
+    }
+  );
+
+  const result = await response.json();
+  if (!response.ok || !result?.id) {
+    throw new Error(JSON.stringify(result));
+  }
+  return result.id;
+}
+
+async function persistOutboundAttachment(file) {
+  await fs.mkdir(MEDIA_STORAGE_DIR, { recursive: true });
+  const sanitizedBaseName = (file.fileName || "attachment")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 120);
+  const ext = extensionFromMimeType(file.mimeType, "bin");
+  const filename = `${Date.now()}_${sanitizedBaseName}.${ext}`;
+  const absolutePath = path.join(MEDIA_STORAGE_DIR, filename);
+  await fs.writeFile(absolutePath, file.buffer);
+  return `/uploads/whatsapp/${filename}`;
+}
+
+async function sendWhatsAppAttachment({ waId, file, caption = "" }) {
+  const mediaType = resolveOutboundMediaType(file);
+  if (!mediaType) {
+    throw new Error("Only image and PDF document attachments are currently supported.");
+  }
+
+  const mediaId = await uploadWhatsAppMediaFromBuffer(file);
+  const payload = {
+    messaging_product: "whatsapp",
+    to: waId,
+    type: mediaType,
+    [mediaType]: {
+      id: mediaId
+    }
+  };
+
+  if (caption && mediaType === "image") {
+    payload.image.caption = caption;
+  }
+
+  if (mediaType === "document") {
+    payload.document.filename = file.fileName || "document.pdf";
+  }
+
+  const response = await axios.post(
+    `https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  return {
+    sendResult: response.data,
+    mediaType,
+    mediaId
+  };
 }
 async function searchKnowledgeBase(userMessage) {
   const rawMessage = (userMessage || "").trim();
@@ -1383,6 +1477,71 @@ app.post("/api/send", async (req, res) => {
     return res.json({ ok: true, sendResult });
   } catch (error) {
     console.error("Manual send error:", error.response?.data || error.message || error);
+    return res.status(500).json({ error: error.response?.data || error.message });
+  }
+});
+
+app.post("/api/send-attachment", async (req, res) => {
+  try {
+    const { wa_id, body = "", attachment } = req.body;
+    const caption = String(body || "").trim();
+
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    if (!attachment) {
+      return res.status(400).json({ error: "attachment is required" });
+    }
+
+    const fileName = String(attachment.file_name || "").trim();
+    const mimeType = String(attachment.mime_type || "").trim() || inferMimeTypeFromFileName(fileName);
+    const base64Data = String(attachment.base64 || "").trim();
+
+    if (!fileName || !mimeType || !base64Data) {
+      return res.status(400).json({ error: "attachment.file_name, attachment.mime_type and attachment.base64 are required" });
+    }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    if (!buffer.length) {
+      return res.status(400).json({ error: "attachment payload is empty" });
+    }
+
+    if (buffer.length > 15 * 1024 * 1024) {
+      return res.status(400).json({ error: "attachment exceeds 15MB limit" });
+    }
+
+    const normalizedAttachment = {
+      fileName,
+      mimeType,
+      buffer
+    };
+
+    const { sendResult, mediaType, mediaId } = await sendWhatsAppAttachment({
+      waId: wa_id,
+      file: normalizedAttachment,
+      caption
+    });
+
+    const mediaUrl = await persistOutboundAttachment(normalizedAttachment);
+    const fallbackBody = caption || getAttachmentFallbackBody(mediaType);
+
+    await saveMessageWithMetadata({
+      wa_id,
+      direction: "out",
+      body: fallbackBody,
+      message_type: mediaType,
+      media_type: mediaType,
+      media_id: mediaId,
+      media_url: mediaUrl,
+      file_name: normalizedAttachment.fileName,
+      mime_type: normalizedAttachment.mimeType,
+      caption: caption || null
+    });
+
+    return res.json({ ok: true, sendResult });
+  } catch (error) {
+    console.error("Attachment send error:", error.response?.data || error.message || error);
     return res.status(500).json({ error: error.response?.data || error.message });
   }
 });
