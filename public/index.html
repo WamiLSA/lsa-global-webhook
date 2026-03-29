@@ -69,8 +69,33 @@
       resize: none;
       padding: 10px;
     }
+    .composer-tools {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 140px;
+    }
     #composer button {
-      width: 120px;
+      width: 100%;
+      height: 36px;
+    }
+    .attach-label {
+      display: inline-block;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #f8f8f8;
+      text-align: center;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #attachmentInput {
+      display: none;
+    }
+    #attachmentName {
+      font-size: 12px;
+      color: #444;
+      min-height: 16px;
     }
     #attachBtn {
       width: 48px !important;
@@ -164,10 +189,12 @@
 
     <div id="composer">
       <textarea id="replyBox" placeholder="Type your reply..."></textarea>
-      <input id="attachmentInput" type="file" accept="image/*,application/pdf" hidden />
-      <button id="attachBtn" type="button" title="Attach file" onclick="openAttachmentPicker()">📎</button>
-      <div id="selectedFile">No file</div>
-      <button onclick="sendReply()">Send</button>
+      <div class="composer-tools">
+        <label class="attach-label" for="attachmentInput">📎 Attach file</label>
+        <input id="attachmentInput" type="file" accept="image/*,application/pdf" />
+        <div id="attachmentName"></div>
+        <button onclick="sendReply()">Send</button>
+      </div>
     </div>
   </div>
 
@@ -330,6 +357,8 @@
 
     async function sendReply() {
       const box = document.getElementById("replyBox");
+      const fileInput = document.getElementById("attachmentInput");
+      const selectedFile = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
       const body = box.value.trim();
 
       if (!currentWaId) {
@@ -337,25 +366,17 @@
         return;
       }
 
-      if (!body && !pendingAttachment) return;
+      if (!body && !selectedFile) return;
 
       let res;
-      if (pendingAttachment) {
-        const base64 = await fileToBase64(pendingAttachment);
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append("wa_id", currentWaId);
+        formData.append("caption", body);
+        formData.append("attachment", selectedFile);
         res = await fetch("/api/send-attachment", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            wa_id: currentWaId,
-            body,
-            attachment: {
-              file_name: pendingAttachment.name,
-              mime_type: pendingAttachment.type,
-              base64
-            }
-          })
+          body: formData
         });
       } else {
         res = await fetch("/api/send", {
@@ -378,10 +399,16 @@
       }
 
       box.value = "";
-      clearPendingAttachment();
+      fileInput.value = "";
+      document.getElementById("attachmentName").textContent = "";
       await loadConversation(currentWaId);
       await loadThreads();
     }
+
+    document.getElementById("attachmentInput").addEventListener("change", event => {
+      const file = event.target.files && event.target.files[0] ? event.target.files[0] : null;
+      document.getElementById("attachmentName").textContent = file ? file.name : "";
+    });
 
     async function updateLabel() {
       if (!currentWaId) return;
