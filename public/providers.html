@@ -3,13 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <title>LSA GLOBAL Provider Network Manager</title>
+  <link rel="stylesheet" href="/top-nav.css" />
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 0;
-      display: flex;
-      height: 100vh;
       background: #f7f7f7;
+    }
+
+    #pageLayout {
+      display: flex;
+      height: calc(100vh - 64px);
     }
 
     #left {
@@ -63,22 +67,6 @@
       margin-bottom: 6px;
     }
 
-    .topbar {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-
-    .topbar a {
-      text-decoration: none;
-      background: #fff;
-      border: 1px solid #ddd;
-      padding: 8px 12px;
-      border-radius: 8px;
-      color: #000;
-    }
-
     .actions {
       display: flex;
       gap: 10px;
@@ -95,14 +83,10 @@
     }
   </style>
 </head>
-<body>
+<body data-page="providers">
+  <div id="topNavMount"></div>
+  <div id="pageLayout">
   <div id="left">
-    <div class="topbar">
-      <a href="/inbox">Inbox</a>
-      <a href="/kb">KB</a>
-      <a href="/logout">Logout</a>
-    </div>
-
     <h2>Provider Network Manager</h2>
 
     <div class="card" id="providerFormCard">
@@ -168,6 +152,9 @@
     <div id="providers"></div>
   </div>
 
+  </div>
+
+  <script src="/top-nav.js"></script>
   <script>
     let providers = [];
     let editingProviderId = null;

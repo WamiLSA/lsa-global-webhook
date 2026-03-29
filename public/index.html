@@ -3,12 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <title>LSA GLOBAL Inbox</title>
+  <link rel="stylesheet" href="/top-nav.css" />
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 0;
+      background: #f7f7f7;
+    }
+    #appLayout {
       display: flex;
-      height: 100vh;
+      height: calc(100vh - 64px);
     }
     #sidebar {
       width: 32%;
@@ -207,7 +211,9 @@
     }
   </style>
 </head>
-<body>
+<body data-page="inbox">
+  <div id="topNavMount"></div>
+  <div id="appLayout">
   <div id="sidebar">
     <h3>LSA GLOBAL Inbox</h3>
     <div class="view-toggle">
@@ -254,6 +260,9 @@
     </div>
   </div>
 
+  </div>
+
+  <script src="/top-nav.js"></script>
   <script>
     let currentWaId = null;
     let pendingAttachment = null;
@@ -625,8 +634,18 @@
       }
     }
 
-    setThreadActionButtons();
-    loadThreads();
+    const initialView = new URLSearchParams(window.location.search).get("view");
+    if (initialView === "archived") {
+      document.body.setAttribute("data-page", "archived");
+      const archivedLink = document.querySelector('.lsa-top-nav__link[href="/archived"]');
+      const inboxLink = document.querySelector('.lsa-top-nav__link[href="/inbox"]');
+      if (archivedLink) archivedLink.classList.add("is-active");
+      if (inboxLink) inboxLink.classList.remove("is-active");
+      setInboxView("archived");
+    } else {
+      setThreadActionButtons();
+      loadThreads();
+    }
     setInterval(loadThreads, 5000);
   </script>
 </body>
