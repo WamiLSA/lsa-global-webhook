@@ -1700,32 +1700,49 @@ app.get("/api/conversations", async (req, res) => {
   }
 });
 
+
+app.get("/api/conversations/archived", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("wa_id, contact_name, body, created_at, direction, label")
+      .eq("is_archived", true)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const map = new Map();
+
+    for (const row of data) {
+      if (!map.has(row.wa_id)) {
+        map.set(row.wa_id, {
+          wa_id: row.wa_id,
+          contact_name: row.contact_name,
+          last_message: row.body,
+          last_direction: row.direction,
+          last_time: row.created_at,
+          label: row.label || ""
+        });
+      }
+    }
+
+    return res.json(Array.from(map.values()));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/conversations/:wa_id", async (req, res) => {
   try {
     const wa_id = req.params.wa_id;
 
-    let data;
-    let error;
-
-    const activeOnlyResponse = await supabase
+    const { data, error } = await supabase
       .from("conversations")
       .select("*")
       .eq("wa_id", wa_id)
-      .eq("is_archived", false)
       .order("created_at", { ascending: true });
-
-    data = activeOnlyResponse.data;
-    error = activeOnlyResponse.error;
-
-    if (error && String(error.message || "").toLowerCase().includes("is_archived")) {
-      const fallbackResponse = await supabase
-        .from("conversations")
-        .select("*")
-        .eq("wa_id", wa_id)
-        .order("created_at", { ascending: true });
-      data = fallbackResponse.data;
-      error = fallbackResponse.error;
-    }
 
     if (error) {
       return res.status(500).json({ error });
@@ -1815,6 +1832,39 @@ app.post("/api/conversations/:wa_id/archive", async (req, res) => {
       ok: true,
       action: "archive",
       removedFromList: true
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.post("/api/conversations/:wa_id/unarchive", async (req, res) => {
+  try {
+    const wa_id = req.params.wa_id;
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    const { error } = await supabase
+      .from("conversations")
+      .update({ is_archived: false })
+      .eq("wa_id", wa_id);
+
+    if (error) {
+      const errorMessage = String(error.message || "");
+      if (errorMessage.toLowerCase().includes("is_archived")) {
+        return res.status(500).json({
+          error: "Unarchive requires the is_archived column. Run the SQL migration before using archive features."
+        });
+      }
+      return res.status(500).json({ error });
+    }
+
+    return res.json({
+      ok: true,
+      action: "unarchive",
+      restoredToList: true
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });

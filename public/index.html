@@ -150,6 +150,24 @@
       color: #666;
       font-size: 12px;
     }
+    .view-toggle {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .view-toggle button {
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .view-toggle button.active {
+      background: #ececec;
+      border-color: #bbb;
+      font-weight: 600;
+    }
     .badge {
       display: inline-block;
       margin-top: 6px;
@@ -192,6 +210,10 @@
 <body>
   <div id="sidebar">
     <h3>LSA GLOBAL Inbox</h3>
+    <div class="view-toggle">
+      <button id="activeViewBtn" type="button" class="active" onclick="setInboxView('active')">Active</button>
+      <button id="archivedViewBtn" type="button" onclick="setInboxView('archived')">Archived</button>
+    </div>
     <div id="threads"></div>
   </div>
 
@@ -200,7 +222,8 @@
       <div class="chat-header-row">
         <div id="chatTitle">Select a conversation</div>
         <div class="thread-actions">
-          <button type="button" onclick="archiveThread()">Archive</button>
+          <button type="button" id="archiveBtn" onclick="archiveThread()">Archive</button>
+          <button type="button" id="unarchiveBtn" onclick="unarchiveThread()" style="display:none;">Unarchive</button>
           <button type="button" onclick="clearChat()">Clear Chat</button>
           <button type="button" class="danger" onclick="deleteThread()">Delete Thread</button>
         </div>
@@ -234,6 +257,28 @@
   <script>
     let currentWaId = null;
     let pendingAttachment = null;
+    let currentView = "active";
+
+    function setInboxView(view) {
+      currentView = view === "archived" ? "archived" : "active";
+      document.getElementById("activeViewBtn").classList.toggle("active", currentView === "active");
+      document.getElementById("archivedViewBtn").classList.toggle("active", currentView === "archived");
+      setThreadActionButtons();
+      loadThreads();
+    }
+
+    function setThreadActionButtons() {
+      const isArchivedView = currentView === "archived";
+      document.getElementById("archiveBtn").style.display = isArchivedView ? "none" : "inline-block";
+      document.getElementById("unarchiveBtn").style.display = isArchivedView ? "inline-block" : "none";
+    }
+
+    function resetConversationPane() {
+      currentWaId = null;
+      document.getElementById("chatTitle").textContent = "Select a conversation";
+      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
+      document.getElementById("labelSelect").value = "";
+    }
     const MEDIA_TYPES = new Set(["image", "video", "audio", "document"]);
 
     function openAttachmentPicker() {
@@ -337,11 +382,17 @@
     }
 
     async function loadThreads() {
-      const res = await fetch("/api/conversations");
+      const endpoint = currentView === "archived" ? "/api/conversations/archived" : "/api/conversations";
+      const res = await fetch(endpoint);
       const threads = await res.json();
 
       const container = document.getElementById("threads");
       container.innerHTML = "";
+
+      if (!Array.isArray(threads) || threads.length === 0) {
+        container.innerHTML = `<div class="small">No ${currentView} threads.</div>`;
+        return;
+      }
 
       threads.forEach(thread => {
         const div = document.createElement("div");
@@ -359,6 +410,7 @@
 
     async function loadConversation(wa_id, contactName = "Contact") {
       currentWaId = wa_id;
+      setThreadActionButtons();
 
       document.getElementById("chatTitle").textContent =
         `${contactName} — ${wa_id}`;
@@ -517,10 +569,7 @@
         return;
       }
 
-      currentWaId = null;
-      document.getElementById("chatTitle").textContent = "Select a conversation";
-      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
-      document.getElementById("labelSelect").value = "";
+      resetConversationPane();
       await loadThreads();
     }
 
@@ -544,13 +593,39 @@
         return;
       }
 
-      currentWaId = null;
-      document.getElementById("chatTitle").textContent = "Select a conversation";
-      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
-      document.getElementById("labelSelect").value = "";
+      resetConversationPane();
       await loadThreads();
     }
 
+    async function unarchiveThread() {
+      if (!currentWaId) {
+        alert("Select a conversation first.");
+        return;
+      }
+
+      const unarchivingWaId = currentWaId;
+      const confirmed = window.confirm("Unarchive this thread? It will return to the active inbox.");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/conversations/${encodeURIComponent(unarchivingWaId)}/unarchive`, {
+        method: "POST"
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Unarchive thread failed: " + JSON.stringify(result));
+        return;
+      }
+
+      resetConversationPane();
+      if (currentView === "archived") {
+        await loadThreads();
+      } else {
+        setInboxView("active");
+      }
+    }
+
+    setThreadActionButtons();
     loadThreads();
     setInterval(loadThreads, 5000);
   </script>
