@@ -1456,6 +1456,58 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
   }
 });
 
+async function clearConversationByWaId(wa_id) {
+  return supabase
+    .from("conversations")
+    .delete()
+    .eq("wa_id", wa_id);
+}
+
+app.post("/api/conversations/:wa_id/clear", async (req, res) => {
+  try {
+    const wa_id = req.params.wa_id;
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    const { error } = await clearConversationByWaId(wa_id);
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({
+      ok: true,
+      action: "clear",
+      contactRetained: false,
+      reason: "Contact visibility is derived from conversation rows. Keeping contacts visible after clear requires a separate contacts table."
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/conversations/:wa_id/delete", async (req, res) => {
+  try {
+    const wa_id = req.params.wa_id;
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    const { error } = await clearConversationByWaId(wa_id);
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({
+      ok: true,
+      action: "delete",
+      removedFromList: true
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/send", async (req, res) => {
   try {
     const { wa_id, body } = req.body;
