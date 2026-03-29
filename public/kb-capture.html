@@ -3,13 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <title>LSA GLOBAL Knowledge Capture Assistant</title>
+  <link rel="stylesheet" href="/top-nav.css" />
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 0;
-      display: flex;
-      height: 100vh;
       background: #f7f7f7;
+    }
+
+    #pageLayout {
+      display: flex;
+      height: calc(100vh - 64px);
     }
 
     #left {
@@ -66,22 +70,6 @@
       margin-top: 8px;
     }
 
-    .topbar {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-
-    .topbar a {
-      text-decoration: none;
-      background: #fff;
-      border: 1px solid #ddd;
-      padding: 8px 12px;
-      border-radius: 8px;
-      color: #000;
-    }
-
     .actions {
       display: flex;
       gap: 10px;
@@ -98,15 +86,10 @@
     }
   </style>
 </head>
-<body>
+<body data-page="capture">
+  <div id="topNavMount"></div>
+  <div id="pageLayout">
   <div id="left">
-    <div class="topbar">
-      <a href="/inbox">Inbox</a>
-      <a href="/kb">KB</a>
-      <a href="/providers">Providers</a>
-      <a href="/logout">Logout</a>
-    </div>
-
     <h2>Knowledge Capture Assistant</h2>
 
     <div class="card" id="captureFormCard">
@@ -175,6 +158,9 @@
     <div id="captures"></div>
   </div>
 
+  </div>
+
+  <script src="/top-nav.js"></script>
   <script>
     let captures = [];
     let editingId = null;
