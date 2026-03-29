@@ -2,6 +2,7 @@ const OpenAI = require("openai");
 const express = require("express");
 const axios = require("axios");
 const path = require("path");
+const fs = require("fs/promises");
 const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 
@@ -9,6 +10,7 @@ const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.use(
   session({
@@ -30,6 +32,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const INBOX_USERNAME = process.env.INBOX_USERNAME;
 const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
+const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
+const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -444,19 +448,137 @@ async function localizeNarrowAnswer({ text, language }) {
 }
 
 async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
-  const { error } = await supabase.from("conversations").insert([
-    {
-      wa_id,
-      contact_name,
-      direction,
-      body,
-      message_type
-    }
-  ]);
+  const payload = {
+    wa_id,
+    contact_name,
+    direction,
+    body,
+    message_type
+  };
+  const { error } = await supabase.from("conversations").insert([payload]);
 
   if (error) {
     console.error("Supabase insert error:", error);
   }
+}
+
+function getAttachmentFromMessage(message) {
+  if (!message || !message.type) return null;
+  const supportedTypes = ["document", "image", "audio", "video"];
+  if (!supportedTypes.includes(message.type)) return null;
+
+  const mediaPayload = message[message.type] || {};
+  const caption = typeof mediaPayload.caption === "string" ? mediaPayload.caption.trim() : "";
+  const fileName = mediaPayload.filename || null;
+  const mimeType = mediaPayload.mime_type || null;
+  return {
+    media_type: message.type,
+    media_id: mediaPayload.id || null,
+    file_name: fileName,
+    mime_type: mimeType,
+    caption
+  };
+}
+
+function extensionFromMimeType(mimeType, fallbackType = "bin") {
+  const map = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "video/mp4": "mp4",
+    "video/3gpp": "3gp",
+    "application/pdf": "pdf"
+  };
+  if (!mimeType) return fallbackType;
+  return map[mimeType.toLowerCase()] || fallbackType;
+}
+
+async function fetchWhatsAppMediaMetadata(mediaId) {
+  if (!mediaId) return null;
+  const response = await axios.get(`https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${mediaId}`, {
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_TOKEN}`
+    }
+  });
+  return response.data;
+}
+
+async function downloadWhatsAppMedia({ mediaId, preferredFileName = null, mimeType = null }) {
+  if (!mediaId || !WHATSAPP_TOKEN) return null;
+  try {
+    const metadata = await fetchWhatsAppMediaMetadata(mediaId);
+    const mediaUrl = metadata?.url;
+    if (!mediaUrl) return null;
+
+    const mediaResponse = await axios.get(mediaUrl, {
+      responseType: "arraybuffer",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`
+      }
+    });
+
+    await fs.mkdir(MEDIA_STORAGE_DIR, { recursive: true });
+    const sanitizedBaseName = (preferredFileName || mediaId)
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .slice(0, 120);
+    const ext = extensionFromMimeType(mimeType || metadata?.mime_type, "bin");
+    const safeFilename = `${Date.now()}_${sanitizedBaseName}.${ext}`;
+    const absolutePath = path.join(MEDIA_STORAGE_DIR, safeFilename);
+
+    await fs.writeFile(absolutePath, mediaResponse.data);
+
+    return {
+      media_url: `/uploads/whatsapp/${safeFilename}`,
+      mime_type: mimeType || metadata?.mime_type || null
+    };
+  } catch (error) {
+    console.error("WhatsApp media download error:", error.response?.data || error.message || error);
+    return null;
+  }
+}
+
+async function saveMessageWithMetadata({
+  wa_id,
+  contact_name = null,
+  direction,
+  body,
+  message_type = "text",
+  media_type = null,
+  media_id = null,
+  media_url = null,
+  file_name = null,
+  mime_type = null,
+  caption = null
+}) {
+  const payload = {
+    wa_id,
+    contact_name,
+    direction,
+    body,
+    message_type,
+    media_type,
+    media_id,
+    media_url,
+    file_name,
+    mime_type,
+    caption
+  };
+
+  const { error } = await supabase.from("conversations").insert([payload]);
+  if (!error) return;
+
+  const columnMissing = /column .* does not exist/i.test(error.message || "");
+  if (!columnMissing) {
+    console.error("Supabase insert with metadata error:", error);
+    return;
+  }
+
+  await saveMessage({ wa_id, contact_name, direction, body, message_type });
 }
 
 function sleep(ms) {
@@ -477,7 +599,7 @@ async function sendWhatsAppText(to, body, delayMs = null) {
   await sleep(wait);
 
   const response = await axios.post(
-    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    `https://graph.facebook.com/${WHATSAPP_GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: "whatsapp",
       to,
@@ -1000,16 +1122,42 @@ app.post("/webhook", async (req, res) => {
     const from = message.from;
     const contactName = contact?.profile?.name || null;
     const text = normalizeTextMessage(message);
+    const attachment = getAttachmentFromMessage(message);
+    const hasAttachment = Boolean(attachment);
+    let downloadedAttachment = null;
 
-    console.log("Message received from:", from, "| text:", text);
+    if (hasAttachment && attachment.media_id) {
+      downloadedAttachment = await downloadWhatsAppMedia({
+        mediaId: attachment.media_id,
+        preferredFileName: attachment.file_name || attachment.media_id,
+        mimeType: attachment.mime_type
+      });
+    }
 
-    await saveMessage({
+    const attachmentFallbackBody = hasAttachment
+      ? `[${attachment.media_type} attachment]`
+      : "";
+    const inboundBody = text || attachment?.caption || attachmentFallbackBody;
+
+    console.log("Message received from:", from, "| text:", inboundBody);
+
+    await saveMessageWithMetadata({
       wa_id: from,
       contact_name: contactName,
       direction: "in",
-      body: text,
-      message_type: message.type || "text"
+      body: inboundBody,
+      message_type: message.type || "text",
+      media_type: attachment?.media_type || null,
+      media_id: attachment?.media_id || null,
+      media_url: downloadedAttachment?.media_url || null,
+      file_name: attachment?.file_name || null,
+      mime_type: downloadedAttachment?.mime_type || attachment?.mime_type || null,
+      caption: attachment?.caption || null
     });
+
+    if (hasAttachment && !text) {
+      return res.sendStatus(200);
+    }
 
     let reply = "";
 
