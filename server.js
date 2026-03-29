@@ -480,6 +480,16 @@ function getAttachmentFromMessage(message) {
   };
 }
 
+function getAttachmentFallbackBody(mediaType) {
+  const fallbackByType = {
+    image: "[image attachment]",
+    document: "[document attachment]",
+    audio: "[audio attachment]",
+    video: "[video attachment]"
+  };
+  return fallbackByType[mediaType] || "[attachment]";
+}
+
 function extensionFromMimeType(mimeType, fallbackType = "bin") {
   const map = {
     "image/jpeg": "jpg",
@@ -1135,9 +1145,13 @@ app.post("/webhook", async (req, res) => {
     }
 
     const attachmentFallbackBody = hasAttachment
-      ? `[${attachment.media_type} attachment]`
+      ? getAttachmentFallbackBody(attachment.media_type)
       : "";
     const inboundBody = text || attachment?.caption || attachmentFallbackBody;
+
+    if (!inboundBody) {
+      return res.sendStatus(200);
+    }
 
     console.log("Message received from:", from, "| text:", inboundBody);
 
