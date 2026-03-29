@@ -29,9 +29,35 @@
       border-bottom: 1px solid #ddd;
       background: #fff;
     }
+    .chat-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     #chatTitle {
       font-weight: bold;
       margin-bottom: 8px;
+    }
+    .thread-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .thread-actions button {
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .thread-actions button:hover {
+      background: #f6f6f6;
+    }
+    .thread-actions .danger {
+      border-color: #d8b7b7;
+      color: #a12626;
     }
     #messages {
       flex: 1;
@@ -171,7 +197,13 @@
 
   <div id="chatPane">
     <div id="chatHeader">
-      <div id="chatTitle">Select a conversation</div>
+      <div class="chat-header-row">
+        <div id="chatTitle">Select a conversation</div>
+        <div class="thread-actions">
+          <button type="button" onclick="clearChat()">Clear Chat</button>
+          <button type="button" class="danger" onclick="deleteThread()">Delete Thread</button>
+        </div>
+      </div>
       <div>
         <select id="labelSelect" onchange="updateLabel()">
           <option value="">No label</option>
@@ -435,6 +467,60 @@
 
       await loadThreads();
       await loadConversation(currentWaId);
+    }
+
+    async function clearChat() {
+      if (!currentWaId) {
+        alert("Select a conversation first.");
+        return;
+      }
+
+      const confirmed = window.confirm("Clear all messages in this chat? This cannot be undone.");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/conversations/${encodeURIComponent(currentWaId)}/clear`, {
+        method: "POST"
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Clear chat failed: " + JSON.stringify(result));
+        return;
+      }
+
+      await loadConversation(currentWaId);
+      await loadThreads();
+
+      if (result.contactRetained === false && result.reason) {
+        alert(result.reason);
+      }
+    }
+
+    async function deleteThread() {
+      if (!currentWaId) {
+        alert("Select a conversation first.");
+        return;
+      }
+
+      const deletingWaId = currentWaId;
+      const confirmed = window.confirm("Delete this thread completely? This cannot be undone.");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/conversations/${encodeURIComponent(deletingWaId)}/delete`, {
+        method: "POST"
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Delete thread failed: " + JSON.stringify(result));
+        return;
+      }
+
+      currentWaId = null;
+      document.getElementById("chatTitle").textContent = "Select a conversation";
+      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
+      document.getElementById("labelSelect").value = "";
+      await loadThreads();
     }
 
     loadThreads();
