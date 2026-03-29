@@ -200,6 +200,7 @@
       <div class="chat-header-row">
         <div id="chatTitle">Select a conversation</div>
         <div class="thread-actions">
+          <button type="button" onclick="archiveThread()">Archive</button>
           <button type="button" onclick="clearChat()">Clear Chat</button>
           <button type="button" class="danger" onclick="deleteThread()">Delete Thread</button>
         </div>
@@ -513,6 +514,33 @@
 
       if (!res.ok) {
         alert("Delete thread failed: " + JSON.stringify(result));
+        return;
+      }
+
+      currentWaId = null;
+      document.getElementById("chatTitle").textContent = "Select a conversation";
+      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
+      document.getElementById("labelSelect").value = "";
+      await loadThreads();
+    }
+
+    async function archiveThread() {
+      if (!currentWaId) {
+        alert("Select a conversation first.");
+        return;
+      }
+
+      const archivingWaId = currentWaId;
+      const confirmed = window.confirm("Archive this thread? It will be hidden from the active inbox.");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/conversations/${encodeURIComponent(archivingWaId)}/archive`, {
+        method: "POST"
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Archive thread failed: " + JSON.stringify(result));
         return;
       }
 
