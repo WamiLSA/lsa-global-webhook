@@ -718,25 +718,83 @@ async function sendWhatsAppMedia({ to, mediaType, mediaId, caption = "" }) {
 
   return response.data;
 }
-async function searchKnowledgeBase(userMessage) {
-  const rawMessage = (userMessage || "").trim();
-  if (!rawMessage) return [];
+function normalizeForRetrievalTerms(value) {
+  return (value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, " ")
+    .replace(/[’'`]/g, " ")
+    .replace(/[^\p{L}\p{N}\s/-]/gu, " ")
+    .split(/\s+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+}
 
-  const normalizeForTerms = value =>
-    (value || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, " ")
-      .replace(/[’'`]/g, " ")
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
-      .split(/\s+/)
-      .map(part => part.trim())
-      .filter(Boolean);
+function dedupeTerms(items) {
+  return Array.from(new Set((items || []).filter(Boolean)));
+}
 
-  const dedupe = items => Array.from(new Set(items.filter(Boolean)));
+function escapeLikeTerm(term) {
+  return (term || "").replace(/[%,]/g, "").trim();
+}
 
-  let englishQuery = rawMessage;
-  const queryVariants = [rawMessage];
+function extractSnippetFromText(text, terms, maxLength = 280) {
+  const source = (text || "").trim();
+  if (!source) return "";
+
+  const sections = source
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(section => section.trim())
+    .filter(Boolean);
+
+  const candidates = sections.length ? sections : [source];
+  let best = candidates[0] || "";
+  let bestScore = -1;
+
+  for (const section of candidates) {
+    const normalized = section.toLowerCase();
+    let score = 0;
+    for (const term of terms) {
+      if (!term || term.length < 2) continue;
+      if (normalized.includes(term)) {
+        score += term.length >= 6 ? 2 : 1;
+      }
+    }
+    if (score > bestScore || (score === bestScore && section.length < best.length)) {
+      best = section;
+      bestScore = score;
+    }
+  }
+
+  if (best.length <= maxLength) return best;
+  return `${best.slice(0, maxLength - 3).trim()}...`;
+}
+
+function detectProviderSearchIntent(query) {
+  const value = (query || "").toLowerCase();
+  return /\b(provider|vendor|translator|interpreter|teacher|partner|partnership|language pair|language pairs|working language|working languages|service|services|specialization|specializations|country|city|availability|match|matching)\b/.test(value);
+}
+
+async function retrieveInternalKnowledge(query, options = {}) {
+  const rawQuery = (query || "").trim();
+  if (!rawQuery) {
+    return {
+      normalized_query: "",
+      detected_language: "en",
+      matches: []
+    };
+  }
+
+  const allowedSources = ["kb_articles", "kb_capture_assistant", "kb_quick_capture", "providers"];
+  const requestedSources = Array.isArray(options.sources) && options.sources.length
+    ? options.sources.filter(source => allowedSources.includes(source))
+    : allowedSources;
+  const maxMatches = Math.max(1, Math.min(Number(options.maxMatches) || 10, 25));
+
+  let normalizedQuery = rawQuery;
+  const queryVariants = [rawQuery];
+  const detectedLanguage = detectMessageLanguage(rawQuery);
+
   try {
     const translation = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -745,21 +803,20 @@ async function searchKnowledgeBase(userMessage) {
         {
           role: "system",
           content:
-            "Rewrite user requests as a concise KB retrieval query in English. " +
+            "Rewrite user requests as a concise internal retrieval query in English. " +
             "Preserve product/service names and proper nouns. Return plain text only."
         },
-        { role: "user", content: rawMessage }
+        { role: "user", content: rawQuery }
       ],
       max_tokens: 60
     });
-
     const translated = translation.choices?.[0]?.message?.content?.trim();
     if (translated) {
-      englishQuery = translated;
+      normalizedQuery = translated;
       queryVariants.push(translated);
     }
   } catch (translationError) {
-    console.error("KB query translation error:", translationError?.message || translationError);
+    console.error("Internal retrieval translation error:", translationError?.message || translationError);
   }
 
   try {
@@ -772,13 +829,12 @@ async function searchKnowledgeBase(userMessage) {
           role: "system",
           content:
             "Expand the user query for multilingual retrieval. " +
-            "Return JSON only with shape {\"queries\":[...]} containing short search queries in English, French, Spanish, Italian, Portuguese, and German."
+            "Return JSON only with shape {\"queries\":[...]} containing short retrieval queries in English, French, Spanish, Italian, Portuguese, and German."
         },
-        { role: "user", content: rawMessage }
+        { role: "user", content: rawQuery }
       ],
-      max_tokens: 180
+      max_tokens: 200
     });
-
     const parsed = JSON.parse(multilingualExpansion.choices?.[0]?.message?.content || "{}");
     const expansions = Array.isArray(parsed?.queries) ? parsed.queries : [];
     for (const expansion of expansions) {
@@ -787,128 +843,239 @@ async function searchKnowledgeBase(userMessage) {
       }
     }
   } catch (expansionError) {
-    console.error("KB query expansion error:", expansionError?.message || expansionError);
+    console.error("Internal retrieval expansion error:", expansionError?.message || expansionError);
   }
 
-  const originalTerms = normalizeForTerms(rawMessage).filter(term => !KB_STOP_WORDS.has(term));
-  const englishTerms = normalizeForTerms(englishQuery).filter(term => !KB_STOP_WORDS.has(term));
-  const expandedTerms = queryVariants.flatMap(value => normalizeForTerms(value));
+  const originalTerms = normalizeForRetrievalTerms(rawQuery).filter(term => !KB_STOP_WORDS.has(term));
+  const englishTerms = normalizeForRetrievalTerms(normalizedQuery).filter(term => !KB_STOP_WORDS.has(term));
+  const expandedTerms = queryVariants.flatMap(value => normalizeForRetrievalTerms(value));
   const crossLanguageTerms = [];
-  for (const term of dedupe([...originalTerms, ...englishTerms, ...expandedTerms])) {
+
+  for (const term of dedupeTerms([...originalTerms, ...englishTerms, ...expandedTerms])) {
     const canonical = CROSS_LANGUAGE_CANONICAL_INDEX[term] || term;
     const variants = CROSS_LANGUAGE_TERM_MAP[canonical];
     if (Array.isArray(variants)) {
       crossLanguageTerms.push(canonical, ...variants);
     }
   }
-  const terms = dedupe(
+
+  const terms = dedupeTerms(
     [...expandedTerms, ...englishTerms, ...originalTerms, ...crossLanguageTerms]
       .filter(term => !KB_STOP_WORDS.has(term))
-  ).slice(0, 24);
+      .map(escapeLikeTerm)
+      .filter(Boolean)
+  ).slice(0, 28);
 
-  let query = supabase
-    .from("kb_articles")
-    .select(`
-      id,
-      title,
-      question,
-      answer,
-      keywords,
-      audience,
-      language,
-      status,
-      kb_categories (
-        name
-      )
-    `)
-    .eq("status", "published")
-    .limit(120);
+  const shouldSearchProviders = requestedSources.includes("providers") &&
+    (detectProviderSearchIntent(rawQuery) || detectProviderSearchIntent(normalizedQuery));
 
-  if (terms.length > 0) {
-    const escapedTerms = terms.map(term => term.replace(/[%,]/g, ""));
-    const orParts = [];
-    for (const term of escapedTerms) {
-      if (!term) continue;
-      orParts.push(`title.ilike.%${term}%`);
-      orParts.push(`question.ilike.%${term}%`);
-      orParts.push(`answer.ilike.%${term}%`);
-      orParts.push(`keywords.ilike.%${term}%`);
-      orParts.push(`kb_categories.name.ilike.%${term}%`);
+  const sourceQueries = [];
+
+  if (requestedSources.includes("kb_articles")) {
+    let articleQuery = supabase
+      .from("kb_articles")
+      .select(`
+        id,
+        title,
+        question,
+        answer,
+        keywords,
+        audience,
+        language,
+        status,
+        kb_categories (
+          name
+        )
+      `)
+      .eq("status", "published")
+      .limit(120);
+
+    if (terms.length) {
+      const orParts = [];
+      for (const term of terms) {
+        orParts.push(`title.ilike.%${term}%`);
+        orParts.push(`question.ilike.%${term}%`);
+        orParts.push(`answer.ilike.%${term}%`);
+        orParts.push(`keywords.ilike.%${term}%`);
+        orParts.push(`kb_categories.name.ilike.%${term}%`);
+      }
+      articleQuery = articleQuery.or(orParts.join(","));
     }
-    if (orParts.length) {
-      query = query.or(orParts.join(","));
+    sourceQueries.push(articleQuery.then(result => ({ source: "kb_articles", ...result })));
+  }
+
+  if (requestedSources.includes("kb_capture_assistant")) {
+    let captureQuery = supabase
+      .from("kb_capture_assistant")
+      .select("id,title,raw_question,raw_answer,suggested_category,audience,source_channel,status,notes")
+      .limit(120);
+    if (terms.length) {
+      const orParts = [];
+      for (const term of terms) {
+        orParts.push(`title.ilike.%${term}%`);
+        orParts.push(`raw_question.ilike.%${term}%`);
+        orParts.push(`raw_answer.ilike.%${term}%`);
+        orParts.push(`suggested_category.ilike.%${term}%`);
+        orParts.push(`notes.ilike.%${term}%`);
+      }
+      captureQuery = captureQuery.or(orParts.join(","));
+    }
+    sourceQueries.push(captureQuery.then(result => ({ source: "kb_capture_assistant", ...result })));
+  }
+
+  if (requestedSources.includes("kb_quick_capture")) {
+    let quickCaptureQuery = supabase
+      .from("kb_quick_capture")
+      .select("id,title,raw_text,source_type,status,notes")
+      .limit(120);
+    if (terms.length) {
+      const orParts = [];
+      for (const term of terms) {
+        orParts.push(`title.ilike.%${term}%`);
+        orParts.push(`raw_text.ilike.%${term}%`);
+        orParts.push(`source_type.ilike.%${term}%`);
+        orParts.push(`notes.ilike.%${term}%`);
+      }
+      quickCaptureQuery = quickCaptureQuery.or(orParts.join(","));
+    }
+    sourceQueries.push(quickCaptureQuery.then(result => ({ source: "kb_quick_capture", ...result })));
+  }
+
+  if (requestedSources.includes("providers") && (shouldSearchProviders || options.forceProviderSearch)) {
+    let providerQuery = supabase
+      .from("providers")
+      .select("id,provider_type,full_name,organization_name,country,city,working_languages,language_pairs,services,specializations,availability_status,status,notes")
+      .eq("status", "active")
+      .limit(120);
+    if (terms.length) {
+      const orParts = [];
+      for (const term of terms) {
+        orParts.push(`provider_type.ilike.%${term}%`);
+        orParts.push(`full_name.ilike.%${term}%`);
+        orParts.push(`organization_name.ilike.%${term}%`);
+        orParts.push(`country.ilike.%${term}%`);
+        orParts.push(`city.ilike.%${term}%`);
+        orParts.push(`working_languages.ilike.%${term}%`);
+        orParts.push(`language_pairs.ilike.%${term}%`);
+        orParts.push(`services.ilike.%${term}%`);
+        orParts.push(`specializations.ilike.%${term}%`);
+        orParts.push(`availability_status.ilike.%${term}%`);
+        orParts.push(`notes.ilike.%${term}%`);
+      }
+      providerQuery = providerQuery.or(orParts.join(","));
+    }
+    sourceQueries.push(providerQuery.then(result => ({ source: "providers", ...result })));
+  }
+
+  const sourceResults = await Promise.all(sourceQueries);
+  const specificIntent = detectSpecificIntent(rawQuery);
+
+  const scoredMatches = [];
+  for (const result of sourceResults) {
+    if (result.error) {
+      console.error(`Internal retrieval error (${result.source}):`, result.error);
+      continue;
+    }
+
+    const records = result.data || [];
+    for (const record of records) {
+      const source = result.source;
+      let title = "";
+      let category = "";
+      let contentBody = "";
+      let score = 0;
+
+      if (source === "kb_articles") {
+        title = record.title || "Untitled KB Article";
+        category = record.kb_categories?.name || "kb_article";
+        contentBody = [record.question, record.answer, record.keywords].filter(Boolean).join("\n");
+      } else if (source === "kb_capture_assistant") {
+        title = record.title || record.raw_question || "Captured knowledge";
+        category = record.suggested_category || "capture_assistant";
+        contentBody = [record.raw_question, record.raw_answer, record.notes].filter(Boolean).join("\n");
+      } else if (source === "kb_quick_capture") {
+        title = record.title || "Quick capture";
+        category = record.source_type || "quick_capture";
+        contentBody = [record.raw_text, record.notes].filter(Boolean).join("\n");
+      } else if (source === "providers") {
+        title = record.organization_name || record.full_name || "Provider";
+        category = record.provider_type || "provider";
+        contentBody = [
+          record.services,
+          record.language_pairs,
+          record.working_languages,
+          record.specializations,
+          record.country,
+          record.city,
+          record.availability_status,
+          record.notes
+        ].filter(Boolean).join("\n");
+      }
+
+      const titleLower = title.toLowerCase();
+      const contentLower = contentBody.toLowerCase();
+      const categoryLower = (category || "").toLowerCase();
+
+      for (const term of terms) {
+        if (!term || term.length < 2) continue;
+        if (titleLower.includes(term)) score += 12;
+        if (categoryLower.includes(term)) score += 7;
+        if (contentLower.includes(term)) score += source === "providers" ? 7 : 5;
+      }
+
+      for (const variant of dedupeTerms(queryVariants.map(item => (item || "").toLowerCase().trim()))) {
+        if (!variant || variant.length < 4) continue;
+        if (titleLower.includes(variant)) score += 8;
+        if (contentLower.includes(variant)) score += 4;
+      }
+
+      if (specificIntent) {
+        if (titleLower.includes(specificIntent)) score += 7;
+        if (contentLower.includes(specificIntent)) score += 6;
+      }
+
+      if (source === "kb_articles") score += 3;
+      if (source === "providers" && shouldSearchProviders) score += 5;
+
+      if (score <= 0) continue;
+
+      scoredMatches.push({
+        source,
+        source_id: record.id,
+        title,
+        category,
+        score,
+        snippet: extractSnippetFromText(contentBody, terms),
+        raw_reference: record
+      });
     }
   }
 
-  const { data, error } = await query;
+  const ranked = scoredMatches.sort((a, b) => b.score - a.score);
+  const bestScore = ranked[0]?.score || 0;
+  const minScore = bestScore >= 20 ? 10 : 12;
 
-  if (error) {
-    console.error("KB search error:", error);
-    return [];
-  }
-
-  const records = data || [];
-  if (!records.length) return [];
-
-  const scoreArticle = article => {
-    const title = (article.title || "").toLowerCase();
-    const question = (article.question || "").toLowerCase();
-    const answer = (article.answer || "").toLowerCase();
-    const keywords = (article.keywords || "").toLowerCase();
-    const category = (article.kb_categories?.name || "").toLowerCase();
-
-    let score = 0;
-    const specificIntent = detectSpecificIntent(rawMessage);
-    for (const term of terms) {
-      if (!term || term.length < 2) continue;
-      if (title.includes(term)) score += 14;
-      if (question.includes(term)) score += 10;
-      if (keywords.includes(term)) score += 8;
-      if (category.includes(term)) score += 7;
-      if (answer.includes(term)) score += 4;
-    }
-
-    const uniqueVariants = dedupe(queryVariants.map(q => (q || "").toLowerCase().trim()));
-    for (const variant of uniqueVariants) {
-      if (!variant || variant.length < 5) continue;
-      if (title.includes(variant)) score += 9;
-      if (question.includes(variant)) score += 7;
-      if (keywords.includes(variant)) score += 6;
-      if (answer.includes(variant)) score += 4;
-    }
-
-    const messageLanguage = detectMessageLanguage(rawMessage);
-    const articleLanguage = (article.language || "").toLowerCase();
-    if (messageLanguage && articleLanguage && messageLanguage === articleLanguage) {
-      score += 2;
-    }
-
-    if (specificIntent) {
-      if (title.includes(specificIntent)) score += 8;
-      if (question.includes(specificIntent)) score += 6;
-      if (keywords.includes(specificIntent)) score += 6;
-    }
-
-    const phrase = normalizeForTerms(rawMessage).slice(0, 5).join(" ");
-    if (phrase.length > 8) {
-      if (question.includes(phrase)) score += 8;
-      if (title.includes(phrase)) score += 8;
-    }
-
-    return score;
+  return {
+    normalized_query: normalizedQuery,
+    detected_language: detectedLanguage,
+    matches: ranked
+      .filter(match => match.score >= minScore)
+      .slice(0, maxMatches)
   };
+}
 
-  const ranked = records
-    .map(article => ({ ...article, relevance_score: scoreArticle(article) }))
-    .sort((a, b) => b.relevance_score - a.relevance_score);
-
-  const bestScore = ranked[0]?.relevance_score || 0;
-  const minScore = bestScore >= 18 ? 10 : 12;
-
-  return ranked
-    .filter(article => article.relevance_score >= minScore)
-    .slice(0, 6)
-    .map(({ relevance_score, ...article }) => article);
+async function searchKnowledgeBase(userMessage) {
+  const rawMessage = (userMessage || "").trim();
+  if (!rawMessage) return [];
+  const retrieval = await retrieveInternalKnowledge(rawMessage, {
+    maxMatches: 12,
+    sources: ["kb_articles"]
+  });
+  return retrieval.matches
+    .filter(match => match.source === "kb_articles")
+    .map(match => match.raw_reference)
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 function detectMessageLanguage(text) {
@@ -1127,9 +1294,23 @@ function enforceReplyStyle(text, language = "en") {
   return compact;
 }
 
-async function generateAIAnswerMessage({ customerMessage, kbMatches, specificIntent = null }) {
-  const kbContext = kbMatches.length
-    ? kbMatches
+async function generateAIAnswerMessage({ customerMessage, kbMatches, retrievalResult = null, specificIntent = null }) {
+  const retrievalMatches = retrievalResult?.matches || [];
+  const kbContext = retrievalMatches.length
+    ? retrievalMatches
+      .map((item, index) => {
+        return `
+[MATCH ${index + 1}]
+Source: ${item.source}
+Category: ${item.category || "None"}
+Title: ${item.title || ""}
+Score: ${item.score || 0}
+Snippet: ${item.snippet || ""}
+`;
+      })
+      .join("\n")
+    : (kbMatches.length
+      ? kbMatches
         .map((item, index) => {
           return `
 [KB ${index + 1}]
@@ -1143,10 +1324,10 @@ Answer: ${item.answer || ""}
 `;
         })
         .join("\n")
-    : "NO_MATCH";
+      : "NO_MATCH");
 
   const vagueHint = isVagueCustomerMessage(customerMessage) ? "YES" : "NO";
-  const kbMode = kbMatches.length ? "KB_PRESENT" : "KB_MISSING";
+  const kbMode = retrievalMatches.length ? "INTERNAL_MATCHES_PRESENT" : (kbMatches.length ? "KB_PRESENT" : "KB_MISSING");
   const detectedLanguage = detectMessageLanguage(customerMessage);
 
   const aiResponse = await openai.responses.create({
@@ -1281,7 +1462,11 @@ app.post("/webhook", async (req, res) => {
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
     } else {
-      const kbMatches = await searchKnowledgeBase(text);
+      const retrievalResult = await retrieveInternalKnowledge(text, { maxMatches: 10 });
+      const kbMatches = retrievalResult.matches
+        .filter(match => match.source === "kb_articles")
+        .map(match => match.raw_reference)
+        .filter(Boolean);
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
@@ -1336,6 +1521,7 @@ app.post("/webhook", async (req, res) => {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
             kbMatches,
+            retrievalResult,
             specificIntent: resolvedIntent
           });
           if (!broadMessage) {
@@ -1876,21 +2062,23 @@ app.post("/api/ai-reply", async (req, res) => {
       return res.status(400).json({ error: "message is required" });
     }
 
-    const kbMatches = await searchKnowledgeBase(message);
+    const retrievalResult = await retrieveInternalKnowledge(message, { maxMatches: 10 });
+    const kbMatches = retrievalResult.matches
+      .filter(match => match.source === "kb_articles")
+      .map(match => match.raw_reference)
+      .filter(Boolean);
 
-    const kbContext = kbMatches.length
-      ? kbMatches.map((item, index) => {
-          return `
-[KB ${index + 1}]
-Category: ${item.kb_categories?.name || "None"}
+    const kbContext = retrievalResult.matches.length
+      ? retrievalResult.matches.map((item, index) => {
+        return `
+[MATCH ${index + 1}]
+Source: ${item.source}
+Category: ${item.category || "None"}
 Title: ${item.title || ""}
-Question: ${item.question || ""}
-Keywords: ${item.keywords || ""}
-Audience: ${item.audience || ""}
-Language: ${item.language || "en"}
-Answer: ${item.answer || ""}
+Score: ${item.score || 0}
+Snippet: ${item.snippet || ""}
 `;
-        }).join("\n")
+      }).join("\n")
       : "NO_MATCH";
 
     const instructions = `
@@ -1898,6 +2086,7 @@ You are the LSA GLOBAL AI assistant.
 
 Rules:
 1. Use LSA GLOBAL knowledge base first.
+1b. Prioritize retrieved internal matches (KB articles, capture assistant, quick capture, providers) before generic reasoning.
 2. Never invent prices, legal guarantees, turnaround promises, or policies.
 3. If the knowledge base does not clearly answer the question, say so politely and suggest human follow-up.
 4. Keep answers businesslike, clear, and concise.
@@ -1906,6 +2095,7 @@ Rules:
 7. If the question is vague, ask one clarifying question.
 8. If a relevant KB article is in another language, still use it and answer in the user's language.
 9. Keep replies concise and narrow to the user's exact question.
+10. If internal matches clearly answer the question, provide the answer directly and do not claim information is missing.
 `;
 
     const input = `
@@ -1936,7 +2126,8 @@ Write the best answer for LSA GLOBAL.
     return res.json({
       ok: true,
       answer,
-      kb_matches: kbMatches.length
+      kb_matches: kbMatches.length,
+      retrieval_matches: retrievalResult.matches.length
     });
   } catch (error) {
     console.error("AI route error:", error.response?.data || error.message || error);
