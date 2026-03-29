@@ -485,6 +485,59 @@ async function localizeNarrowAnswer({ text, language }) {
   }
 }
 
+function extractAnswerTextFromRetrievalMatch(match) {
+  if (!match || !match.raw_reference) return "";
+  const source = match.source;
+  const record = match.raw_reference;
+
+  if (source === "kb_articles") {
+    return record.answer || record.question || match.snippet || "";
+  }
+
+  if (source === "kb_capture_assistant") {
+    return record.raw_answer || record.raw_question || record.notes || match.snippet || "";
+  }
+
+  if (source === "kb_quick_capture") {
+    return record.raw_text || record.notes || match.snippet || "";
+  }
+
+  if (source === "providers") {
+    return [
+      record.organization_name || record.full_name || "",
+      record.services || "",
+      record.language_pairs || "",
+      record.working_languages || "",
+      record.specializations || "",
+      [record.city, record.country].filter(Boolean).join(", "),
+      record.availability_status || "",
+      record.notes || ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return match.snippet || "";
+}
+
+async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, specificIntent = null }) {
+  const matches = retrievalResult?.matches || [];
+  if (!matches.length) return "";
+
+  const topMatch = matches[0];
+  const directText = extractAnswerTextFromRetrievalMatch(topMatch);
+  if (!directText) return "";
+
+  const resolvedIntent = resolveNarrowIntent(specificIntent);
+  const intentFocused = resolvedIntent ? extractRelevantKbSection(directText, resolvedIntent) : null;
+  const replySource = intentFocused || directText;
+
+  return localizeNarrowAnswer({
+    text: replySource,
+    language
+  });
+}
+
 async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
   const payload = {
     wa_id,
@@ -1511,11 +1564,20 @@ app.post("/webhook", async (req, res) => {
         } else if (broadMessage && !kbMatches.length) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
           setCustomerState(from, { clarifyingAsked: true });
-        } else if (kbMatches.length && !vagueMessage) {
-          reply = await localizeNarrowAnswer({
-            text: kbMatches[0].answer || "",
-            language: detectedLanguage
+        } else if (retrievalResult.matches.length && !vagueMessage) {
+          reply = await buildReplyFromUnifiedRetrieval({
+            retrievalResult,
+            language: detectedLanguage,
+            specificIntent: resolvedIntent
           });
+          if (!reply) {
+            reply = await generateAIAnswerMessage({
+              customerMessage: text,
+              kbMatches,
+              retrievalResult,
+              specificIntent: resolvedIntent
+            });
+          }
           setCustomerState(from, { clarifyingAsked: false });
         } else {
           reply = await generateAIAnswerMessage({
@@ -2080,6 +2142,21 @@ Snippet: ${item.snippet || ""}
 `;
       }).join("\n")
       : "NO_MATCH";
+
+    const retrievalFirstAnswer = await buildReplyFromUnifiedRetrieval({
+      retrievalResult,
+      language: detectMessageLanguage(message),
+      specificIntent: resolveNarrowIntent(detectNarrowIntent(message) || detectSpecificIntent(message))
+    });
+
+    if (retrievalFirstAnswer) {
+      return res.json({
+        ok: true,
+        answer: retrievalFirstAnswer,
+        kb_matches: kbMatches.length,
+        retrieval_matches: retrievalResult.matches.length
+      });
+    }
 
     const instructions = `
 You are the LSA GLOBAL AI assistant.
