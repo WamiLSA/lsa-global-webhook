@@ -3,16 +3,64 @@
   --lsa-red: #c1121f;
   --lsa-white: #ffffff;
   --lsa-black: #111111;
+
+  --lsa-app-bg: #f7f7f7;
+  --lsa-surface: #ffffff;
+  --lsa-surface-muted: #f1f4f8;
   --lsa-border: #d9dce3;
+  --lsa-text: #151515;
+  --lsa-text-muted: #5d6470;
+  --lsa-input-bg: #ffffff;
+  --lsa-input-border: #ccd3dd;
+  --lsa-hover: #eef3fb;
+  --lsa-chat-out: #dcf8c6;
+  --lsa-warning-bg: #fff8dc;
+}
+
+:root[data-theme="dark"] {
+  --lsa-app-bg: #101318;
+  --lsa-surface: #171b22;
+  --lsa-surface-muted: #1e2430;
+  --lsa-border: #2a3344;
+  --lsa-text: #f5f7fb;
+  --lsa-text-muted: #b5c0d4;
+  --lsa-input-bg: #121720;
+  --lsa-input-border: #364357;
+  --lsa-hover: #202a3a;
+  --lsa-chat-out: #1f3f2f;
+  --lsa-warning-bg: #3a321f;
+}
+
+body {
+  background: var(--lsa-app-bg);
+  color: var(--lsa-text);
+}
+
+a {
+  color: var(--lsa-blue);
+}
+
+input,
+textarea,
+select,
+button {
+  background: var(--lsa-input-bg);
+  color: var(--lsa-text);
+  border: 1px solid var(--lsa-input-border);
+  border-radius: 6px;
+}
+
+button {
+  cursor: pointer;
 }
 
 .lsa-top-nav {
   position: sticky;
   top: 0;
   z-index: 1000;
-  background: var(--lsa-white);
+  background: var(--lsa-surface);
   border-bottom: 3px solid var(--lsa-blue);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .lsa-top-nav__inner {
@@ -30,6 +78,12 @@
   white-space: nowrap;
 }
 
+.lsa-top-nav__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .lsa-top-nav__links {
   display: flex;
   flex-wrap: wrap;
@@ -38,8 +92,8 @@
 
 .lsa-top-nav__link {
   text-decoration: none;
-  color: var(--lsa-black);
-  background: var(--lsa-white);
+  color: var(--lsa-text);
+  background: var(--lsa-surface);
   border: 1px solid var(--lsa-border);
   border-radius: 999px;
   padding: 7px 12px;
@@ -72,9 +126,31 @@
   opacity: 0.75;
 }
 
+.lsa-theme-toggle {
+  width: auto;
+  min-width: 96px;
+  margin-bottom: 0;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--lsa-blue);
+  background: var(--lsa-surface);
+  color: var(--lsa-blue);
+  font-weight: 700;
+}
+
+.lsa-theme-toggle:hover {
+  background: var(--lsa-hover);
+}
+
 @media (max-width: 900px) {
   .lsa-top-nav__inner {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .lsa-top-nav__right {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
