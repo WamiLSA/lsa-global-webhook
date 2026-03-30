@@ -242,7 +242,9 @@ const COURSE_LANGUAGE_KEYWORDS = {
   french: ["francais", "français", "french", "francese", "frances", "française"],
   german: ["allemand", "german", "deutsch", "tedesco", "aleman", "alemán"],
   spanish: ["espagnol", "spanish", "espanol", "español", "spagnolo"],
-  portuguese: ["portugais", "portuguese", "portugues", "português", "portoghese"]
+  portuguese: ["portugais", "portuguese", "portugues", "português", "portoghese"],
+  chinese: ["chinois", "chinese", "mandarin", "mandarim", "mandarín", "cinese"],
+  arabic: ["arabe", "arabe", "arabic", "arabo", "árabe"]
 };
 const PROCESSED_MESSAGE_IDS = new Map();
 const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -440,8 +442,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null };
 }
 
 function setCustomerState(waId, state) {
@@ -449,7 +451,9 @@ function setCustomerState(waId, state) {
   const current = getCustomerState(waId);
   customerState.set(waId, {
     clarifyingAsked: Boolean(state?.clarifyingAsked),
-    preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null
+    preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null,
+    topicType: state?.topicType || current.topicType || null,
+    topicLanguage: state?.topicLanguage || current.topicLanguage || null
   });
 }
 
@@ -465,6 +469,35 @@ function detectCourseLanguageMention(text) {
     if (matches) return language;
   }
   return null;
+}
+
+function detectRequestedCourseLanguage(query, recentContext = {}) {
+  const explicitLanguage = detectCourseLanguageMention(query);
+  if (explicitLanguage) return explicitLanguage;
+  return recentContext.topicLanguage || recentContext.preferredCourseLanguage || null;
+}
+
+function detectArticleCourseLanguage(article) {
+  if (!article) return null;
+  const blob = [
+    article.title || "",
+    article.question || "",
+    article.keywords || "",
+    article.answer || "",
+    article.language || ""
+  ].join("\n");
+  return detectCourseLanguageMention(blob);
+}
+
+function isCourseLanguageMismatch(queryLanguageEntity, candidateArticle) {
+  if (!queryLanguageEntity || !candidateArticle) return false;
+  const candidateLanguage = detectArticleCourseLanguage(candidateArticle);
+  return Boolean(candidateLanguage && candidateLanguage !== queryLanguageEntity);
+}
+
+function filterMismatchedCourseArticles(matches, queryLanguageEntity) {
+  if (!queryLanguageEntity) return matches;
+  return (matches || []).filter((article) => !isCourseLanguageMismatch(queryLanguageEntity, article));
 }
 
 function hasProcessedMessage(messageId) {
@@ -1216,15 +1249,21 @@ app.post("/webhook", async (req, res) => {
       const vagueMessage = isVagueCustomerMessage(text);
       const userState = getCustomerState(from);
       const broadMessage = vagueMessage && !resolvedIntent;
-      const currentCourseLanguage = detectCourseLanguageMention(text) || userState.preferredCourseLanguage || null;
+      const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
+      const explicitCourseLanguage = detectCourseLanguageMention(text);
+      const courseTopicActive = userState.topicType === "language_course" || Boolean(explicitCourseLanguage);
       const retrievalResult = await retrieveInternalKnowledge(text, {
         maxMatches: 10,
-        preferredCourseLanguage: currentCourseLanguage
+        preferredCourseLanguage: currentCourseLanguage,
+        courseTopicActive
       });
-      const kbMatches = retrievalResult.matches
+      const kbMatches = filterMismatchedCourseArticles(
+        retrievalResult.matches
         .filter(match => match.source === "kb_articles")
         .map(match => match.raw_reference)
-        .filter(Boolean);
+        .filter(Boolean),
+        currentCourseLanguage
+      );
 
       try {
         if (shouldEscalateToHuman(text)) {
@@ -1259,23 +1298,35 @@ app.post("/webhook", async (req, res) => {
           }
           setCustomerState(from, {
             clarifyingAsked: false,
-            preferredCourseLanguage: currentCourseLanguage
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: currentCourseLanguage ? "language_course" : null,
+            topicLanguage: currentCourseLanguage
           });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
           setCustomerState(from, {
             clarifyingAsked: true,
-            preferredCourseLanguage: currentCourseLanguage
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: currentCourseLanguage ? "language_course" : userState.topicType,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage
           });
         } else if (broadMessage && !kbMatches.length) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
           setCustomerState(from, {
             clarifyingAsked: true,
-            preferredCourseLanguage: currentCourseLanguage
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: currentCourseLanguage ? "language_course" : userState.topicType,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage
           });
         } else if (retrievalResult.matches.length && !vagueMessage) {
+          const safeMatches = currentCourseLanguage
+            ? retrievalResult.matches.filter((match) => {
+              if (match.source !== "kb_articles") return true;
+              return !isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
+            })
+            : retrievalResult.matches;
           reply = await buildReplyFromUnifiedRetrieval({
-            retrievalResult,
+            retrievalResult: { ...retrievalResult, matches: safeMatches },
             language: detectedLanguage,
             specificIntent: resolvedIntent
           });
@@ -1289,7 +1340,9 @@ app.post("/webhook", async (req, res) => {
           }
           setCustomerState(from, {
             clarifyingAsked: false,
-            preferredCourseLanguage: currentCourseLanguage
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: currentCourseLanguage ? "language_course" : null,
+            topicLanguage: currentCourseLanguage
           });
         } else {
           reply = await generateAIAnswerMessage({
@@ -1301,7 +1354,9 @@ app.post("/webhook", async (req, res) => {
           if (!broadMessage) {
             setCustomerState(from, {
               clarifyingAsked: false,
-              preferredCourseLanguage: currentCourseLanguage
+              preferredCourseLanguage: currentCourseLanguage,
+              topicType: currentCourseLanguage ? "language_course" : null,
+              topicLanguage: currentCourseLanguage
             });
           }
         }
