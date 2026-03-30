@@ -236,6 +236,16 @@ const GREETING_PHRASES = {
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
 const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
+const COURSE_LANGUAGE_KEYWORDS = {
+  italian: ["italien", "italian", "italiano", "italiana"],
+  english: ["anglais", "english", "ingles", "inglés", "inglese"],
+  french: ["francais", "français", "french", "francese", "frances", "française"],
+  german: ["allemand", "german", "deutsch", "tedesco", "aleman", "alemán"],
+  spanish: ["espagnol", "spanish", "espanol", "español", "spagnolo"],
+  portuguese: ["portugais", "portuguese", "portugues", "português", "portoghese"]
+};
+const PROCESSED_MESSAGE_IDS = new Map();
+const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 
 const LOCALIZED_WELCOME_MENUS = {
   en:
@@ -430,13 +440,48 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false };
-  return customerState.get(waId) || { clarifyingAsked: false };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null };
 }
 
 function setCustomerState(waId, state) {
   if (!waId) return;
-  customerState.set(waId, { clarifyingAsked: Boolean(state?.clarifyingAsked) });
+  const current = getCustomerState(waId);
+  customerState.set(waId, {
+    clarifyingAsked: Boolean(state?.clarifyingAsked),
+    preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null
+  });
+}
+
+function detectCourseLanguageMention(text) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return null;
+  for (const [language, variants] of Object.entries(COURSE_LANGUAGE_KEYWORDS)) {
+    const matches = variants.some((variant) => {
+      const normalizedVariant = normalizeForIntent(variant).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      if (!normalizedVariant) return false;
+      return new RegExp(`\\b${normalizedVariant}\\b`, "i").test(normalized);
+    });
+    if (matches) return language;
+  }
+  return null;
+}
+
+function hasProcessedMessage(messageId) {
+  if (!messageId) return false;
+  const seenAt = PROCESSED_MESSAGE_IDS.get(messageId);
+  if (!seenAt) return false;
+  return (Date.now() - seenAt) < MESSAGE_DEDUP_TTL_MS;
+}
+
+function markMessageProcessed(messageId) {
+  if (!messageId) return;
+  PROCESSED_MESSAGE_IDS.set(messageId, Date.now());
+  for (const [id, seenAt] of PROCESSED_MESSAGE_IDS.entries()) {
+    if ((Date.now() - seenAt) >= MESSAGE_DEDUP_TTL_MS) {
+      PROCESSED_MESSAGE_IDS.delete(id);
+    }
+  }
 }
 
 async function localizeNarrowAnswer({ text, language }) {
@@ -1098,6 +1143,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     const from = message.from;
+    const inboundMessageId = message.id || null;
     const contactName = contact?.profile?.name || null;
     const text = normalizeTextMessage(message);
     const attachment = getAttachmentFromMessage(message);
@@ -1120,6 +1166,10 @@ app.post("/webhook", async (req, res) => {
     if (!inboundBody) {
       return res.sendStatus(200);
     }
+    if (hasProcessedMessage(inboundMessageId)) {
+      return res.sendStatus(200);
+    }
+    markMessageProcessed(inboundMessageId);
 
     console.log("Message received from:", from, "| text:", inboundBody);
 
@@ -1143,6 +1193,7 @@ app.post("/webhook", async (req, res) => {
 
     let reply = "";
     let suppressAutoAck = false;
+    let allowIntermediateAck = false;
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -1159,17 +1210,21 @@ app.post("/webhook", async (req, res) => {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
       suppressAutoAck = true;
     } else {
-      const retrievalResult = await retrieveInternalKnowledge(text, { maxMatches: 10 });
-      const kbMatches = retrievalResult.matches
-        .filter(match => match.source === "kb_articles")
-        .map(match => match.raw_reference)
-        .filter(Boolean);
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
       const vagueMessage = isVagueCustomerMessage(text);
       const userState = getCustomerState(from);
       const broadMessage = vagueMessage && !resolvedIntent;
+      const currentCourseLanguage = detectCourseLanguageMention(text) || userState.preferredCourseLanguage || null;
+      const retrievalResult = await retrieveInternalKnowledge(text, {
+        maxMatches: 10,
+        preferredCourseLanguage: currentCourseLanguage
+      });
+      const kbMatches = retrievalResult.matches
+        .filter(match => match.source === "kb_articles")
+        .map(match => match.raw_reference)
+        .filter(Boolean);
 
       try {
         if (shouldEscalateToHuman(text)) {
@@ -1181,6 +1236,7 @@ app.post("/webhook", async (req, res) => {
             de: "Danke. Diese Anfrage benötigt einen LSA GLOBAL-Berater. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, unser Team meldet sich zeitnah.",
             en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
           }[detectedLanguage] || getLocalizedAck(detectedLanguage);
+          allowIntermediateAck = true;
         } else if (resolvedIntent && kbMatches.length) {
           const extractedSection = await extractNarrowAnswerFromKb({
             kbMatches,
@@ -1201,13 +1257,22 @@ app.post("/webhook", async (req, res) => {
               en: "I could not find that specific point in the knowledge base. Would you like to be connected with an LSA GLOBAL advisor?"
             }[detectedLanguage] || getLocalizedAck(detectedLanguage);
           }
-          setCustomerState(from, { clarifyingAsked: false });
+          setCustomerState(from, {
+            clarifyingAsked: false,
+            preferredCourseLanguage: currentCourseLanguage
+          });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
-          setCustomerState(from, { clarifyingAsked: true });
+          setCustomerState(from, {
+            clarifyingAsked: true,
+            preferredCourseLanguage: currentCourseLanguage
+          });
         } else if (broadMessage && !kbMatches.length) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
-          setCustomerState(from, { clarifyingAsked: true });
+          setCustomerState(from, {
+            clarifyingAsked: true,
+            preferredCourseLanguage: currentCourseLanguage
+          });
         } else if (retrievalResult.matches.length && !vagueMessage) {
           reply = await buildReplyFromUnifiedRetrieval({
             retrievalResult,
@@ -1222,7 +1287,10 @@ app.post("/webhook", async (req, res) => {
               specificIntent: resolvedIntent
             });
           }
-          setCustomerState(from, { clarifyingAsked: false });
+          setCustomerState(from, {
+            clarifyingAsked: false,
+            preferredCourseLanguage: currentCourseLanguage
+          });
         } else {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
@@ -1231,7 +1299,10 @@ app.post("/webhook", async (req, res) => {
             specificIntent: resolvedIntent
           });
           if (!broadMessage) {
-            setCustomerState(from, { clarifyingAsked: false });
+            setCustomerState(from, {
+              clarifyingAsked: false,
+              preferredCourseLanguage: currentCourseLanguage
+            });
           }
         }
 
@@ -1244,7 +1315,7 @@ app.post("/webhook", async (req, res) => {
       }
     }
     if (reply) {
-  if (reply.length > 180 && !suppressAutoAck) {
+  if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
     const ack = getLocalizedAck(detectMessageLanguage(text));
 
     await sendWhatsAppText(from, ack, 1500);
@@ -1257,7 +1328,7 @@ app.post("/webhook", async (req, res) => {
       message_type: "text"
     });
 
-    await sendWhatsAppText(from, reply, 5000);
+    await sendWhatsAppText(from, reply, 0);
 
     await saveMessage({
       wa_id: from,
@@ -1267,7 +1338,7 @@ app.post("/webhook", async (req, res) => {
       message_type: "text"
     });
   } else {
-    await sendWhatsAppText(from, reply, 2500);
+    await sendWhatsAppText(from, reply, 0);
 
     await saveMessage({
       wa_id: from,
