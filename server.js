@@ -8,6 +8,7 @@ const FormData = require("form-data");
 const multer = require("multer");
 const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
+const { createInternalRetriever } = require("./lib/internal-retrieval");
 
 const app = express();
 
@@ -173,37 +174,6 @@ function normalizeTextMessage(message) {
   if (!message) return "";
   return message.text?.body?.trim() || "";
 }
-
-const KB_STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "by", "de", "des", "du", "en", "et",
-  "for", "i", "in", "is", "je", "la", "le", "les", "los", "me", "my", "of", "on",
-  "or", "por", "que", "the", "to", "un", "une", "vos", "votre", "want", "we", "with",
-  "please", "pls", "bonjour", "hello", "hi", "salut", "hola", "ciao", "hallo", "ola", "olá", "obrigado"
-]);
-
-const CROSS_LANGUAGE_TERM_MAP = {
-  course: ["courses", "cours", "curso", "cursos", "corso", "corsi", "kurs", "kurse", "class", "classes"],
-  italian: ["italien", "italiana", "italiano", "italian"],
-  french: ["francais", "français", "francese", "frances", "french"],
-  spanish: ["espagnol", "español", "spagnolo", "spanish"],
-  portuguese: ["portugais", "portugués", "portugues", "portoghese", "portuguese"],
-  english: ["anglais", "ingles", "inglés", "inglese", "english"],
-  translation: ["traduction", "traduccion", "traduzione", "ubersetzung", "translation", "translator"],
-  interpreting: ["interpretation", "interpreting", "interpretariat", "interpretazione", "interpretacion"],
-  exam: ["examen", "exam", "certification", "test", "deadline"],
-  schedule: ["horaire", "horario", "orario", "schedule", "timetable", "time"],
-  price: ["prix", "precio", "prezzo", "price", "tarif", "tariffa", "fee", "fees", "cost", "tuition"],
-  duration: ["durée", "duracion", "durata", "duration", "length"],
-  level: ["niveau", "nivel", "livello", "level"],
-  registration: ["inscription", "registro", "iscrizione", "registration", "enrollment"]
-};
-
-const CROSS_LANGUAGE_CANONICAL_INDEX = Object.entries(CROSS_LANGUAGE_TERM_MAP).reduce((acc, [canonical, variants]) => {
-  for (const variant of [canonical, ...variants]) {
-    acc[variant] = canonical;
-  }
-  return acc;
-}, {});
 
 const SPECIFIC_INTENT_PATTERNS = {
   fee: /\b(fee|fees|price|prix|precio|prezzo|cost|tarif|tariffa|tuition)\b/i,
@@ -451,6 +421,11 @@ async function extractNarrowAnswerFromKb({ kbMatches, intent }) {
     return null;
   }
 }
+
+const retrieveInternalKnowledge = createInternalRetriever({
+  supabase,
+  detectLanguage: detectMessageLanguage
+});
 
 const customerState = new Map();
 
@@ -772,352 +747,6 @@ async function sendWhatsAppMedia({ to, mediaType, mediaId, caption = "" }) {
 
   return response.data;
 }
-function normalizeForRetrievalTerms(value) {
-  return (value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, " ")
-    .replace(/[’'`]/g, " ")
-    .replace(/[^\p{L}\p{N}\s/-]/gu, " ")
-    .split(/\s+/)
-    .map(part => part.trim())
-    .filter(Boolean);
-}
-
-function dedupeTerms(items) {
-  return Array.from(new Set((items || []).filter(Boolean)));
-}
-
-function escapeLikeTerm(term) {
-  return (term || "").replace(/[%,]/g, "").trim();
-}
-
-function extractSnippetFromText(text, terms, maxLength = 280) {
-  const source = (text || "").trim();
-  if (!source) return "";
-
-  const sections = source
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map(section => section.trim())
-    .filter(Boolean);
-
-  const candidates = sections.length ? sections : [source];
-  let best = candidates[0] || "";
-  let bestScore = -1;
-
-  for (const section of candidates) {
-    const normalized = section.toLowerCase();
-    let score = 0;
-    for (const term of terms) {
-      if (!term || term.length < 2) continue;
-      if (normalized.includes(term)) {
-        score += term.length >= 6 ? 2 : 1;
-      }
-    }
-    if (score > bestScore || (score === bestScore && section.length < best.length)) {
-      best = section;
-      bestScore = score;
-    }
-  }
-
-  if (best.length <= maxLength) return best;
-  return `${best.slice(0, maxLength - 3).trim()}...`;
-}
-
-function detectProviderSearchIntent(query) {
-  const value = (query || "").toLowerCase();
-  return /\b(provider|vendor|translator|interpreter|teacher|partner|partnership|language pair|language pairs|working language|working languages|service|services|specialization|specializations|country|city|availability|match|matching)\b/.test(value);
-}
-
-async function retrieveInternalKnowledge(query, options = {}) {
-  const rawQuery = (query || "").trim();
-  if (!rawQuery) {
-    return {
-      normalized_query: "",
-      detected_language: "en",
-      matches: []
-    };
-  }
-
-  const allowedSources = ["kb_articles", "kb_capture_assistant", "kb_quick_capture", "providers"];
-  const requestedSources = Array.isArray(options.sources) && options.sources.length
-    ? options.sources.filter(source => allowedSources.includes(source))
-    : allowedSources;
-  const maxMatches = Math.max(1, Math.min(Number(options.maxMatches) || 10, 25));
-
-  let normalizedQuery = rawQuery;
-  const queryVariants = [rawQuery];
-  const detectedLanguage = detectMessageLanguage(rawQuery);
-
-  try {
-    const translation = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Rewrite user requests as a concise internal retrieval query in English. " +
-            "Preserve product/service names and proper nouns. Return plain text only."
-        },
-        { role: "user", content: rawQuery }
-      ],
-      max_tokens: 60
-    });
-    const translated = translation.choices?.[0]?.message?.content?.trim();
-    if (translated) {
-      normalizedQuery = translated;
-      queryVariants.push(translated);
-    }
-  } catch (translationError) {
-    console.error("Internal retrieval translation error:", translationError?.message || translationError);
-  }
-
-  try {
-    const multilingualExpansion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Expand the user query for multilingual retrieval. " +
-            "Return JSON only with shape {\"queries\":[...]} containing short retrieval queries in English, French, Spanish, Italian, Portuguese, and German."
-        },
-        { role: "user", content: rawQuery }
-      ],
-      max_tokens: 200
-    });
-    const parsed = JSON.parse(multilingualExpansion.choices?.[0]?.message?.content || "{}");
-    const expansions = Array.isArray(parsed?.queries) ? parsed.queries : [];
-    for (const expansion of expansions) {
-      if (typeof expansion === "string" && expansion.trim()) {
-        queryVariants.push(expansion.trim());
-      }
-    }
-  } catch (expansionError) {
-    console.error("Internal retrieval expansion error:", expansionError?.message || expansionError);
-  }
-
-  const originalTerms = normalizeForRetrievalTerms(rawQuery).filter(term => !KB_STOP_WORDS.has(term));
-  const englishTerms = normalizeForRetrievalTerms(normalizedQuery).filter(term => !KB_STOP_WORDS.has(term));
-  const expandedTerms = queryVariants.flatMap(value => normalizeForRetrievalTerms(value));
-  const crossLanguageTerms = [];
-
-  for (const term of dedupeTerms([...originalTerms, ...englishTerms, ...expandedTerms])) {
-    const canonical = CROSS_LANGUAGE_CANONICAL_INDEX[term] || term;
-    const variants = CROSS_LANGUAGE_TERM_MAP[canonical];
-    if (Array.isArray(variants)) {
-      crossLanguageTerms.push(canonical, ...variants);
-    }
-  }
-
-  const terms = dedupeTerms(
-    [...expandedTerms, ...englishTerms, ...originalTerms, ...crossLanguageTerms]
-      .filter(term => !KB_STOP_WORDS.has(term))
-      .map(escapeLikeTerm)
-      .filter(Boolean)
-  ).slice(0, 28);
-
-  const shouldSearchProviders = requestedSources.includes("providers") &&
-    (detectProviderSearchIntent(rawQuery) || detectProviderSearchIntent(normalizedQuery));
-
-  const sourceQueries = [];
-
-  if (requestedSources.includes("kb_articles")) {
-    let articleQuery = supabase
-      .from("kb_articles")
-      .select(`
-        id,
-        title,
-        question,
-        answer,
-        keywords,
-        audience,
-        language,
-        status,
-        kb_categories (
-          name
-        )
-      `)
-      .eq("status", "published")
-      .limit(120);
-
-    if (terms.length) {
-      const orParts = [];
-      for (const term of terms) {
-        orParts.push(`title.ilike.%${term}%`);
-        orParts.push(`question.ilike.%${term}%`);
-        orParts.push(`answer.ilike.%${term}%`);
-        orParts.push(`keywords.ilike.%${term}%`);
-        orParts.push(`kb_categories.name.ilike.%${term}%`);
-      }
-      articleQuery = articleQuery.or(orParts.join(","));
-    }
-    sourceQueries.push(articleQuery.then(result => ({ source: "kb_articles", ...result })));
-  }
-
-  if (requestedSources.includes("kb_capture_assistant")) {
-    let captureQuery = supabase
-      .from("kb_capture_assistant")
-      .select("id,title,raw_question,raw_answer,suggested_category,audience,source_channel,status,notes")
-      .limit(120);
-    if (terms.length) {
-      const orParts = [];
-      for (const term of terms) {
-        orParts.push(`title.ilike.%${term}%`);
-        orParts.push(`raw_question.ilike.%${term}%`);
-        orParts.push(`raw_answer.ilike.%${term}%`);
-        orParts.push(`suggested_category.ilike.%${term}%`);
-        orParts.push(`notes.ilike.%${term}%`);
-      }
-      captureQuery = captureQuery.or(orParts.join(","));
-    }
-    sourceQueries.push(captureQuery.then(result => ({ source: "kb_capture_assistant", ...result })));
-  }
-
-  if (requestedSources.includes("kb_quick_capture")) {
-    let quickCaptureQuery = supabase
-      .from("kb_quick_capture")
-      .select("id,title,raw_text,source_type,status,notes")
-      .limit(120);
-    if (terms.length) {
-      const orParts = [];
-      for (const term of terms) {
-        orParts.push(`title.ilike.%${term}%`);
-        orParts.push(`raw_text.ilike.%${term}%`);
-        orParts.push(`source_type.ilike.%${term}%`);
-        orParts.push(`notes.ilike.%${term}%`);
-      }
-      quickCaptureQuery = quickCaptureQuery.or(orParts.join(","));
-    }
-    sourceQueries.push(quickCaptureQuery.then(result => ({ source: "kb_quick_capture", ...result })));
-  }
-
-  if (requestedSources.includes("providers") && (shouldSearchProviders || options.forceProviderSearch)) {
-    let providerQuery = supabase
-      .from("providers")
-      .select("id,provider_type,full_name,organization_name,country,city,working_languages,language_pairs,services,specializations,availability_status,status,notes")
-      .eq("status", "active")
-      .limit(120);
-    if (terms.length) {
-      const orParts = [];
-      for (const term of terms) {
-        orParts.push(`provider_type.ilike.%${term}%`);
-        orParts.push(`full_name.ilike.%${term}%`);
-        orParts.push(`organization_name.ilike.%${term}%`);
-        orParts.push(`country.ilike.%${term}%`);
-        orParts.push(`city.ilike.%${term}%`);
-        orParts.push(`working_languages.ilike.%${term}%`);
-        orParts.push(`language_pairs.ilike.%${term}%`);
-        orParts.push(`services.ilike.%${term}%`);
-        orParts.push(`specializations.ilike.%${term}%`);
-        orParts.push(`availability_status.ilike.%${term}%`);
-        orParts.push(`notes.ilike.%${term}%`);
-      }
-      providerQuery = providerQuery.or(orParts.join(","));
-    }
-    sourceQueries.push(providerQuery.then(result => ({ source: "providers", ...result })));
-  }
-
-  const sourceResults = await Promise.all(sourceQueries);
-  const specificIntent = detectSpecificIntent(rawQuery);
-
-  const scoredMatches = [];
-  for (const result of sourceResults) {
-    if (result.error) {
-      console.error(`Internal retrieval error (${result.source}):`, result.error);
-      continue;
-    }
-
-    const records = result.data || [];
-    for (const record of records) {
-      const source = result.source;
-      let title = "";
-      let category = "";
-      let contentBody = "";
-      let score = 0;
-
-      if (source === "kb_articles") {
-        title = record.title || "Untitled KB Article";
-        category = record.kb_categories?.name || "kb_article";
-        contentBody = [record.question, record.answer, record.keywords].filter(Boolean).join("\n");
-      } else if (source === "kb_capture_assistant") {
-        title = record.title || record.raw_question || "Captured knowledge";
-        category = record.suggested_category || "capture_assistant";
-        contentBody = [record.raw_question, record.raw_answer, record.notes].filter(Boolean).join("\n");
-      } else if (source === "kb_quick_capture") {
-        title = record.title || "Quick capture";
-        category = record.source_type || "quick_capture";
-        contentBody = [record.raw_text, record.notes].filter(Boolean).join("\n");
-      } else if (source === "providers") {
-        title = record.organization_name || record.full_name || "Provider";
-        category = record.provider_type || "provider";
-        contentBody = [
-          record.services,
-          record.language_pairs,
-          record.working_languages,
-          record.specializations,
-          record.country,
-          record.city,
-          record.availability_status,
-          record.notes
-        ].filter(Boolean).join("\n");
-      }
-
-      const titleLower = title.toLowerCase();
-      const contentLower = contentBody.toLowerCase();
-      const categoryLower = (category || "").toLowerCase();
-
-      for (const term of terms) {
-        if (!term || term.length < 2) continue;
-        if (titleLower.includes(term)) score += 12;
-        if (categoryLower.includes(term)) score += 7;
-        if (contentLower.includes(term)) score += source === "providers" ? 7 : 5;
-      }
-
-      for (const variant of dedupeTerms(queryVariants.map(item => (item || "").toLowerCase().trim()))) {
-        if (!variant || variant.length < 4) continue;
-        if (titleLower.includes(variant)) score += 8;
-        if (contentLower.includes(variant)) score += 4;
-      }
-
-      if (specificIntent) {
-        if (titleLower.includes(specificIntent)) score += 7;
-        if (contentLower.includes(specificIntent)) score += 6;
-      }
-
-      if (source === "kb_articles") score += 3;
-      if (source === "providers" && shouldSearchProviders) score += 5;
-
-      if (score <= 0) continue;
-
-      scoredMatches.push({
-        source,
-        source_id: record.id,
-        title,
-        category,
-        score,
-        snippet: extractSnippetFromText(contentBody, terms),
-        raw_reference: record
-      });
-    }
-  }
-
-  const ranked = scoredMatches.sort((a, b) => b.score - a.score);
-  const bestScore = ranked[0]?.score || 0;
-  const minScore = bestScore >= 20 ? 10 : 12;
-
-  return {
-    normalized_query: normalizedQuery,
-    detected_language: detectedLanguage,
-    matches: ranked
-      .filter(match => match.score >= minScore)
-      .slice(0, maxMatches)
-  };
-}
-
 async function searchKnowledgeBase(userMessage) {
   const rawMessage = (userMessage || "").trim();
   if (!rawMessage) return [];
@@ -2171,6 +1800,20 @@ app.delete("/api/kb/articles/:id", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+app.post("/api/retrieval-test", requireAuth, async (req, res) => {
+  try {
+    const { query = "", options = {} } = req.body || {};
+    if (!query || !query.trim()) {
+      return res.status(400).json({ error: "query is required" });
+    }
+
+    const result = await retrieveInternalKnowledge(query, options);
+    return res.json({ ok: true, retrieval: result });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/ai-reply", async (req, res) => {
   try {
     const { message, channel = "internal", wa_id = null } = req.body;
