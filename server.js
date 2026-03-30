@@ -855,8 +855,19 @@ function getLocalizedMainMenu(language) {
 function detectMenuSelection(text) {
   const normalized = normalizeForIntent(text);
   if (!normalized) return null;
+  const tokenCount = normalized.split(/\s+/).filter(Boolean).length;
   for (const [selection, terms] of Object.entries(MENU_KEYWORDS)) {
-    if (terms.some((term) => normalizeForIntent(term) === normalized || new RegExp(`\\b${normalizeForIntent(term)}\\b`, "i").test(normalized))) {
+    if (terms.some((term) => {
+      const normalizedTerm = normalizeForIntent(term);
+      if (!normalizedTerm) return false;
+      if (normalizedTerm === normalized) return true;
+
+      // Keep menu keyword matching strict to avoid swallowing specific follow-up questions
+      // like "cours d'italien" after option 2.
+      if (tokenCount > 2) return false;
+      const termPattern = normalizedTerm.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      return new RegExp(`^${termPattern}$`, "i").test(normalized);
+    })) {
       return selection;
     }
   }
@@ -1131,6 +1142,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     let reply = "";
+    let suppressAutoAck = false;
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -1142,8 +1154,10 @@ app.post("/webhook", async (req, res) => {
 
     if (greetingIntent || isGreetingMessage(text)) {
       reply = getLocalizedMainMenu(detectedLanguage);
+      suppressAutoAck = true;
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
+      suppressAutoAck = true;
     } else {
       const retrievalResult = await retrieveInternalKnowledge(text, { maxMatches: 10 });
       const kbMatches = retrievalResult.matches
@@ -1230,7 +1244,7 @@ app.post("/webhook", async (req, res) => {
       }
     }
     if (reply) {
-  if (reply.length > 180) {
+  if (reply.length > 180 && !suppressAutoAck) {
     const ack = getLocalizedAck(detectMessageLanguage(text));
 
     await sendWhatsAppText(from, ack, 1500);
