@@ -452,28 +452,29 @@ function extractRelevantKbSection(answerText, intent) {
   return matchedLine || null;
 }
 
-async function extractNarrowAnswerFromKb({ kbMatches, intent }) {
+async function extractNarrowAnswerFromMatches({ matches, intent }) {
   const safeIntent = resolveNarrowIntent(intent);
-  if (!safeIntent || !kbMatches?.length) return null;
+  if (!safeIntent || !matches?.length) return null;
 
-  for (const article of kbMatches) {
-    const section = extractRelevantKbSection(article.answer || "", safeIntent);
+  for (const match of matches) {
+    const text = extractAnswerTextFromRetrievalMatch(match);
+    const section = extractRelevantKbSection(text, safeIntent);
     if (section) return section;
   }
 
-  const compactKb = kbMatches
+  const compactKb = matches
     .slice(0, 3)
-    .map((article, index) => `[Article ${index + 1}] ${article.title || "Untitled"}\n${article.answer || ""}`)
+    .map((match, index) => `[Record ${index + 1}] ${match.title || "Untitled"}\n${extractAnswerTextFromRetrievalMatch(match)}`)
     .join("\n\n");
 
   try {
     const extraction = await openai.responses.create({
       model: "gpt-5-mini",
       instructions:
-        "Extract ONLY the text that answers the requested field from the KB content. " +
+        "Extract ONLY the text that answers the requested field from the internal content. " +
         "Do not add explanations, introductions, or questions. " +
         "If the field does not exist, reply exactly: NOT_FOUND.",
-      input: `Field: ${safeIntent}\n\nKB content:\n${compactKb}`
+      input: `Field: ${safeIntent}\n\nInternal content:\n${compactKb}`
     });
     const extracted = (extraction.output_text || "").trim();
     if (!extracted || /^NOT_FOUND$/i.test(extracted)) return null;
@@ -492,8 +493,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null };
 }
 
 function setCustomerState(waId, state) {
@@ -503,7 +504,8 @@ function setCustomerState(waId, state) {
     clarifyingAsked: Boolean(state?.clarifyingAsked),
     preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null,
     topicType: state?.topicType || current.topicType || null,
-    topicLanguage: state?.topicLanguage || current.topicLanguage || null
+    topicLanguage: state?.topicLanguage || current.topicLanguage || null,
+    topicEntity: state?.topicEntity || current.topicEntity || null
   });
 }
 
@@ -1371,12 +1373,11 @@ app.post("/webhook", async (req, res) => {
       const retrievalResult = await retrieveInternalKnowledge(text, {
         maxMatches: 10,
         preferredCourseLanguage: currentCourseLanguage,
-        courseTopicActive
+        courseTopicActive,
+        contextMemory: {
+          entity: userState.topicEntity || null
+        }
       });
-      let strictCourseArticle = null;
-      if (courseQueryActive && currentCourseLanguage) {
-        strictCourseArticle = await findCourseArticleByLanguage(currentCourseLanguage);
-      }
       const kbMatches = filterMismatchedCourseArticles(
         retrievalResult.matches
         .filter(match => match.source === "kb_articles")
@@ -1396,9 +1397,9 @@ app.post("/webhook", async (req, res) => {
             en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
           }[detectedLanguage] || getLocalizedAck(detectedLanguage);
           allowIntermediateAck = true;
-        } else if (resolvedIntent && kbMatches.length) {
-          const extractedSection = await extractNarrowAnswerFromKb({
-            kbMatches,
+        } else if (resolvedIntent && retrievalResult.matches.length) {
+          const extractedSection = await extractNarrowAnswerFromMatches({
+            matches: retrievalResult.matches,
             intent: resolvedIntent
           });
           if (extractedSection) {
@@ -1446,51 +1447,6 @@ app.post("/webhook", async (req, res) => {
               return !isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
             })
             : retrievalResult.matches;
-          if (courseQueryActive && currentCourseLanguage) {
-            const strictMismatch = safeMatches.find((match) => {
-              if (match.source !== "kb_articles") return false;
-              return isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
-            });
-            if (strictMismatch) {
-              const reason = enforceCourseLanguageMatchOrReject(currentCourseLanguage, strictMismatch.raw_reference);
-              if (!reason.accepted) {
-                console.log("[course-debug] rejection reason:", reason.reason);
-              }
-            }
-
-            if (strictCourseArticle) {
-              const strictDecision = enforceCourseLanguageMatchOrReject(currentCourseLanguage, strictCourseArticle);
-              if (!strictDecision.accepted) {
-                console.log("[course-debug] rejection reason:", strictDecision.reason);
-              } else {
-                reply = await localizeNarrowAnswer({
-                  text: strictCourseArticle.answer || strictCourseArticle.question || "",
-                  language: detectedLanguage
-                });
-              }
-            } else {
-              const languageLabelByLocale = {
-                italian: { fr: "italien", en: "Italian", es: "italiano", it: "italiano", pt: "italiano", de: "Italienisch" },
-                english: { fr: "anglais", en: "English", es: "inglés", it: "inglese", pt: "inglês", de: "Englisch" },
-                french: { fr: "français", en: "French", es: "francés", it: "francese", pt: "francês", de: "Französisch" },
-                german: { fr: "allemand", en: "German", es: "alemán", it: "tedesco", pt: "alemão", de: "Deutsch" },
-                spanish: { fr: "espagnol", en: "Spanish", es: "español", it: "spagnolo", pt: "espanhol", de: "Spanisch" },
-                portuguese: { fr: "portugais", en: "Portuguese", es: "portugués", it: "portoghese", pt: "português", de: "Portugiesisch" },
-                chinese: { fr: "chinois", en: "Chinese", es: "chino", it: "cinese", pt: "chinês", de: "Chinesisch" },
-                arabic: { fr: "arabe", en: "Arabic", es: "árabe", it: "arabo", pt: "árabe", de: "Arabisch" }
-              };
-              const requestedLabel = languageLabelByLocale[currentCourseLanguage]?.[detectedLanguage] || currentCourseLanguage;
-              reply = {
-                fr: `Je n’ai pas trouvé de fiche de cours pour le ${requestedLabel} dans la base de connaissances pour le moment.`,
-                es: `No encontré una ficha del curso de ${requestedLabel} en la base de conocimientos por ahora.`,
-                it: `Al momento non ho trovato una scheda del corso di ${requestedLabel} nella base di conoscenza.`,
-                pt: `De momento, não encontrei uma ficha do curso de ${requestedLabel} na base de conhecimento.`,
-                de: `Ich habe aktuell keinen Kursartikel für ${requestedLabel} in der Wissensdatenbank gefunden.`,
-                en: `I could not find a ${requestedLabel} course article in the knowledge base at the moment.`
-              }[detectedLanguage] || getLocalizedAck(detectedLanguage);
-            }
-          }
-
           if (!reply) {
             reply = await buildReplyFromUnifiedRetrieval({
               retrievalResult: { ...retrievalResult, matches: safeMatches },
@@ -1510,7 +1466,8 @@ app.post("/webhook", async (req, res) => {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
-            topicLanguage: currentCourseLanguage || userState.topicLanguage || null
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null
           });
           console.log("[course-debug] course memory context set:", JSON.stringify({
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
