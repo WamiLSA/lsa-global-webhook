@@ -339,8 +339,58 @@ function resolveNarrowIntent(intent) {
   return NARROW_INTENT_ALIASES[intent] || null;
 }
 
+function extractFeeOnlySection(answerText) {
+  const source = (answerText || "").trim();
+  if (!source) return null;
+
+  const lines = source
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const fallbackChunks = source
+    .split(/(?<=[.!?])\s+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  const units = "(?:frs?\\s*cfa|fcfa|xaf|xof|eur|usd|cad|€|\\$|£)";
+  const amountPattern = new RegExp(`\\b\\d{1,3}(?:[\\s.,]\\d{3})*(?:\\s*${units})?\\b`, "i");
+  const levelPattern = /\b(a1|a2|b1|b2|c1|c2)\b/i;
+  const feeSignalPattern = /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|prix|frais|tuition|montant|amount)\b/i;
+  const registrationSignalPattern = /\b(inscription|registration|enrollment|enrolment|register)\b/i;
+  const inclusionSignalPattern = /\b(manuel|manuels|manual|manuals|certificat|certificats|certificate|certificates|inclus|included)\b/i;
+  const installmentSignalPattern = /\b(tranche|tranches|installment|installments|instalment|instalments|paiement|payment)\b/i;
+
+  const candidates = lines.length ? lines : fallbackChunks;
+  const selected = [];
+
+  for (const chunk of candidates) {
+    const normalized = normalizeForIntent(chunk);
+    if (!normalized) continue;
+
+    const isLevelFeeLine = levelPattern.test(normalized) && (amountPattern.test(normalized) || feeSignalPattern.test(normalized));
+    const isGeneralFeeLine = feeSignalPattern.test(normalized) && amountPattern.test(normalized);
+    const isRegistrationLine = registrationSignalPattern.test(normalized) && (feeSignalPattern.test(normalized) || /\bfree|gratuit|gratuits|gratuite\b/i.test(normalized));
+    const isInclusionLine = inclusionSignalPattern.test(normalized);
+    const isInstallmentLine = installmentSignalPattern.test(normalized);
+
+    if (isLevelFeeLine || isGeneralFeeLine || isRegistrationLine || isInclusionLine || isInstallmentLine) {
+      selected.push(chunk);
+    }
+  }
+
+  if (!selected.length) return null;
+
+  const deduped = Array.from(new Set(selected));
+  return deduped.join("\n");
+}
+
 function extractRelevantKbSection(answerText, intent) {
   if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
+  if (intent === "fees") {
+    const feeOnlySection = extractFeeOnlySection(answerText);
+    if (feeOnlySection) return feeOnlySection;
+  }
 
   const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
   const normalizedAnswer = normalizeForIntent(answerText);
@@ -578,7 +628,7 @@ function markMessageProcessed(messageId) {
   }
 }
 
-async function localizeNarrowAnswer({ text, language }) {
+async function localizeNarrowAnswer({ text, language, preserveCompleteness = false }) {
   if (!text?.trim()) return "";
 
   if (!language || language === "en") {
@@ -588,9 +638,11 @@ async function localizeNarrowAnswer({ text, language }) {
   try {
     const localized = await openai.responses.create({
       model: "gpt-5-mini",
-      instructions:
-        "Translate the provided answer into the target language while preserving exact facts, figures, and formatting. " +
-        "Do not add extra explanations or questions. Keep it concise.",
+      instructions: preserveCompleteness
+        ? "Translate the provided answer into the target language while preserving ALL facts, figures, and lines exactly. " +
+          "Do not omit or summarize any item. Keep line breaks and formatting."
+        : "Translate the provided answer into the target language while preserving exact facts, figures, and formatting. " +
+          "Do not add extra explanations or questions. Keep it concise.",
       input: `Target language: ${language}\n\nText:\n${text}`
     });
     return enforceReplyStyle(localized.output_text || text, language);
@@ -649,7 +701,8 @@ async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, speci
 
   return localizeNarrowAnswer({
     text: replySource,
-    language
+    language,
+    preserveCompleteness: resolvedIntent === "fees"
   });
 }
 
@@ -1351,7 +1404,8 @@ app.post("/webhook", async (req, res) => {
           if (extractedSection) {
             reply = await localizeNarrowAnswer({
               text: extractedSection,
-              language: detectedLanguage
+              language: detectedLanguage,
+              preserveCompleteness: resolvedIntent === "fees"
             });
           } else {
             reply = {
