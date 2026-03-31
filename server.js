@@ -452,6 +452,88 @@ function extractRelevantKbSection(answerText, intent) {
   return matchedLine || null;
 }
 
+function finalizeCourseMessage(text, maxLength = 900) {
+  const source = (text || "").trim();
+  if (!source) return "";
+  if (source.length <= maxLength) return source;
+
+  const boundary = source.slice(0, maxLength);
+  const lastSentenceBreak = Math.max(
+    boundary.lastIndexOf(". "),
+    boundary.lastIndexOf("! "),
+    boundary.lastIndexOf("? "),
+    boundary.lastIndexOf("\n")
+  );
+  if (lastSentenceBreak > 120) {
+    return boundary.slice(0, lastSentenceBreak + 1).trim();
+  }
+  return boundary.trim();
+}
+
+function extractCourseFees(article) {
+  return extractRelevantKbSection(article?.answer || "", "fees");
+}
+
+function extractCourseDuration(article) {
+  return extractRelevantKbSection(article?.answer || "", "duration");
+}
+
+function extractCourseSchedule(article) {
+  return extractRelevantKbSection(article?.answer || "", "schedule");
+}
+
+function extractCourseLevels(article) {
+  return extractRelevantKbSection(article?.answer || "", "levels");
+}
+
+function extractCourseRegistration(article) {
+  return extractRelevantKbSection(article?.answer || "", "registration");
+}
+
+function formatCourseSummary(article, userLanguage = "fr") {
+  if (!article) return "";
+
+  const levels = extractCourseLevels(article);
+  const duration = extractCourseDuration(article);
+  const format = extractRelevantKbSection(article?.answer || "", "format");
+  const schedule = extractCourseSchedule(article);
+  const certification = extractRelevantKbSection(article?.answer || "", "certification");
+
+  const compactBits = [levels, duration, format, schedule, certification]
+    .filter(Boolean)
+    .map((part) => part.replace(/\s+/g, " ").trim());
+
+  if (userLanguage === "fr") {
+    const intro = article?.title ? `Voici un résumé du ${article.title.trim()} :` : "Voici un résumé du programme :";
+    const bullets = compactBits.slice(0, 5).map((line) => `• ${line}`).join("\n");
+    const prompt = "Souhaitez-vous les tarifs, la durée, les horaires, les niveaux ou les modalités d’inscription ?";
+    return finalizeCourseMessage([intro, bullets, prompt].filter(Boolean).join("\n"));
+  }
+
+  const promptsByLanguage = {
+    en: "Would you like fees, duration, schedule, levels, or registration details?",
+    es: "¿Desea tarifas, duración, horarios, niveles o modalidades de inscripción?",
+    it: "Vuole tariffe, durata, orari, livelli o modalità di iscrizione?",
+    pt: "Deseja tarifas, duração, horários, níveis ou modalidades de inscrição?",
+    de: "Möchten Sie Gebühren, Dauer, Zeitplan, Niveaus oder Anmeldedetails?"
+  };
+  const introByLanguage = {
+    en: "Here is a quick summary of the course:",
+    es: "Aquí tiene un resumen breve del curso:",
+    it: "Ecco un breve riepilogo del corso:",
+    pt: "Aqui está um resumo breve do curso:",
+    de: "Hier ist eine kurze Zusammenfassung des Kurses:"
+  };
+
+  const safeLanguage = promptsByLanguage[userLanguage] ? userLanguage : "en";
+  const bullets = compactBits.slice(0, 5).map((line) => `• ${line}`).join("\n");
+  return finalizeCourseMessage([
+    introByLanguage[safeLanguage],
+    bullets,
+    promptsByLanguage[safeLanguage]
+  ].filter(Boolean).join("\n"));
+}
+
 async function extractNarrowAnswerFromMatches({ matches, intent }) {
   const safeIntent = resolveNarrowIntent(intent);
   if (!safeIntent || !matches?.length) return null;
@@ -630,11 +712,11 @@ function markMessageProcessed(messageId) {
   }
 }
 
-async function localizeNarrowAnswer({ text, language, preserveCompleteness = false }) {
+async function localizeNarrowAnswer({ text, language, preserveCompleteness = false, applyStyle = true }) {
   if (!text?.trim()) return "";
 
   if (!language || language === "en") {
-    return enforceReplyStyle(text, "en");
+    return applyStyle ? enforceReplyStyle(text, "en") : finalizeCourseMessage(text);
   }
 
   try {
@@ -647,10 +729,11 @@ async function localizeNarrowAnswer({ text, language, preserveCompleteness = fal
           "Do not add extra explanations or questions. Keep it concise.",
       input: `Target language: ${language}\n\nText:\n${text}`
     });
-    return enforceReplyStyle(localized.output_text || text, language);
+    const finalText = localized.output_text || text;
+    return applyStyle ? enforceReplyStyle(finalText, language) : finalizeCourseMessage(finalText);
   } catch (error) {
     console.error("Narrow answer localization error:", error?.message || error);
-    return enforceReplyStyle(text, language);
+    return applyStyle ? enforceReplyStyle(text, language) : finalizeCourseMessage(text);
   }
 }
 
@@ -1397,6 +1480,31 @@ app.post("/webhook", async (req, res) => {
             en: "Thank you. This request needs an LSA GLOBAL advisor. Please share your name and WhatsApp number, and our team will contact you shortly."
           }[detectedLanguage] || getLocalizedAck(detectedLanguage);
           allowIntermediateAck = true;
+        } else if (courseQueryActive && !resolvedIntent) {
+          const courseMatchFromRetrieval = currentCourseLanguage
+            ? retrievalResult.matches.find((match) => {
+              if (match.source !== "kb_articles") return false;
+              return !isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
+            })?.raw_reference
+            : retrievalResult.matches.find((match) => match.source === "kb_articles")?.raw_reference;
+          const courseArticle = courseMatchFromRetrieval
+            || (currentCourseLanguage ? await findCourseArticleByLanguage(currentCourseLanguage) : null)
+            || kbMatches[0]
+            || null;
+
+          if (courseArticle) {
+            const summary = formatCourseSummary(courseArticle, detectedLanguage);
+            reply = summary || getLocalizedClarifyingQuestion(detectedLanguage);
+          } else {
+            reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          }
+          setCustomerState(from, {
+            clarifyingAsked: false,
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: "language_course",
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null
+          });
         } else if (resolvedIntent && retrievalResult.matches.length) {
           const extractedSection = await extractNarrowAnswerFromMatches({
             matches: retrievalResult.matches,
@@ -1406,7 +1514,8 @@ app.post("/webhook", async (req, res) => {
             reply = await localizeNarrowAnswer({
               text: extractedSection,
               language: detectedLanguage,
-              preserveCompleteness: resolvedIntent === "fees"
+              preserveCompleteness: resolvedIntent === "fees",
+              applyStyle: false
             });
           } else {
             reply = {
