@@ -477,6 +477,59 @@ function detectRequestedCourseLanguage(query, recentContext = {}) {
   return recentContext.topicLanguage || recentContext.preferredCourseLanguage || null;
 }
 
+function isLanguageCourseQuery(query, recentContext = {}) {
+  const normalized = normalizeForIntent(query || "");
+  if (!normalized) return Boolean(recentContext.topicType === "language_course");
+  const courseSignal = /\b(course|courses|cours|curso|corsi|corso|class|classes|formation|program|programme|langue|language|idioma|lingua)\b/i.test(normalized);
+  return courseSignal || recentContext.topicType === "language_course";
+}
+
+async function findCourseArticleByLanguage(requestedLanguage) {
+  if (!requestedLanguage || !COURSE_LANGUAGE_KEYWORDS[requestedLanguage]) return null;
+
+  const { data, error } = await supabase
+    .from("kb_articles")
+    .select("id,title,question,keywords,answer,language,updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    console.error("Course article lookup error:", error?.message || error);
+    return null;
+  }
+
+  const languageKeywords = COURSE_LANGUAGE_KEYWORDS[requestedLanguage] || [];
+  const strictMatches = (data || []).filter((article) => {
+    const normalizedBlob = normalizeForIntent([
+      article?.title || "",
+      article?.question || "",
+      article?.keywords || "",
+      article?.answer || "",
+      article?.language || ""
+    ].join(" "));
+
+    if (!normalizedBlob) return false;
+
+    const hasCourseSignal = /\b(course|courses|cours|curso|corsi|corso|class|classes|formation|program|programme|langue|language|idioma|lingua)\b/i.test(normalizedBlob);
+    if (!hasCourseSignal) return false;
+
+    return languageKeywords.some((variant) => {
+      const token = normalizeForIntent(variant).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      if (!token) return false;
+      return new RegExp(`\\b${token}\\b`, "i").test(normalizedBlob);
+    });
+  });
+
+  if (!strictMatches.length) {
+    console.log("[course-debug] selected KB article title: none (strict language match not found)");
+    return null;
+  }
+
+  const selected = strictMatches[0];
+  console.log("[course-debug] selected KB article title:", selected?.title || "(untitled)");
+  return selected;
+}
+
 function detectArticleCourseLanguage(article) {
   if (!article) return null;
   const blob = [
@@ -493,6 +546,14 @@ function isCourseLanguageMismatch(queryLanguageEntity, candidateArticle) {
   if (!queryLanguageEntity || !candidateArticle) return false;
   const candidateLanguage = detectArticleCourseLanguage(candidateArticle);
   return Boolean(candidateLanguage && candidateLanguage !== queryLanguageEntity);
+}
+
+function enforceCourseLanguageMatchOrReject(requestedLanguage, candidateArticle) {
+  if (!requestedLanguage || !candidateArticle) return { accepted: true, reason: "" };
+  if (!isCourseLanguageMismatch(requestedLanguage, candidateArticle)) return { accepted: true, reason: "" };
+  const candidateLanguage = detectArticleCourseLanguage(candidateArticle);
+  const reason = `requested=${requestedLanguage}, candidate=${candidateLanguage || "unknown"}`;
+  return { accepted: false, reason };
 }
 
 function filterMismatchedCourseArticles(matches, queryLanguageEntity) {
@@ -1252,11 +1313,17 @@ app.post("/webhook", async (req, res) => {
       const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
       const explicitCourseLanguage = detectCourseLanguageMention(text);
       const courseTopicActive = userState.topicType === "language_course" || Boolean(explicitCourseLanguage);
+      const courseQueryActive = isLanguageCourseQuery(text, userState);
+      console.log("[course-debug] detected requested course language:", currentCourseLanguage || "none");
       const retrievalResult = await retrieveInternalKnowledge(text, {
         maxMatches: 10,
         preferredCourseLanguage: currentCourseLanguage,
         courseTopicActive
       });
+      let strictCourseArticle = null;
+      if (courseQueryActive && currentCourseLanguage) {
+        strictCourseArticle = await findCourseArticleByLanguage(currentCourseLanguage);
+      }
       const kbMatches = filterMismatchedCourseArticles(
         retrievalResult.matches
         .filter(match => match.source === "kb_articles")
@@ -1325,11 +1392,58 @@ app.post("/webhook", async (req, res) => {
               return !isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
             })
             : retrievalResult.matches;
-          reply = await buildReplyFromUnifiedRetrieval({
-            retrievalResult: { ...retrievalResult, matches: safeMatches },
-            language: detectedLanguage,
-            specificIntent: resolvedIntent
-          });
+          if (courseQueryActive && currentCourseLanguage) {
+            const strictMismatch = safeMatches.find((match) => {
+              if (match.source !== "kb_articles") return false;
+              return isCourseLanguageMismatch(currentCourseLanguage, match.raw_reference);
+            });
+            if (strictMismatch) {
+              const reason = enforceCourseLanguageMatchOrReject(currentCourseLanguage, strictMismatch.raw_reference);
+              if (!reason.accepted) {
+                console.log("[course-debug] rejection reason:", reason.reason);
+              }
+            }
+
+            if (strictCourseArticle) {
+              const strictDecision = enforceCourseLanguageMatchOrReject(currentCourseLanguage, strictCourseArticle);
+              if (!strictDecision.accepted) {
+                console.log("[course-debug] rejection reason:", strictDecision.reason);
+              } else {
+                reply = await localizeNarrowAnswer({
+                  text: strictCourseArticle.answer || strictCourseArticle.question || "",
+                  language: detectedLanguage
+                });
+              }
+            } else {
+              const languageLabelByLocale = {
+                italian: { fr: "italien", en: "Italian", es: "italiano", it: "italiano", pt: "italiano", de: "Italienisch" },
+                english: { fr: "anglais", en: "English", es: "inglés", it: "inglese", pt: "inglês", de: "Englisch" },
+                french: { fr: "français", en: "French", es: "francés", it: "francese", pt: "francês", de: "Französisch" },
+                german: { fr: "allemand", en: "German", es: "alemán", it: "tedesco", pt: "alemão", de: "Deutsch" },
+                spanish: { fr: "espagnol", en: "Spanish", es: "español", it: "spagnolo", pt: "espanhol", de: "Spanisch" },
+                portuguese: { fr: "portugais", en: "Portuguese", es: "portugués", it: "portoghese", pt: "português", de: "Portugiesisch" },
+                chinese: { fr: "chinois", en: "Chinese", es: "chino", it: "cinese", pt: "chinês", de: "Chinesisch" },
+                arabic: { fr: "arabe", en: "Arabic", es: "árabe", it: "arabo", pt: "árabe", de: "Arabisch" }
+              };
+              const requestedLabel = languageLabelByLocale[currentCourseLanguage]?.[detectedLanguage] || currentCourseLanguage;
+              reply = {
+                fr: `Je n’ai pas trouvé de fiche de cours pour le ${requestedLabel} dans la base de connaissances pour le moment.`,
+                es: `No encontré una ficha del curso de ${requestedLabel} en la base de conocimientos por ahora.`,
+                it: `Al momento non ho trovato una scheda del corso di ${requestedLabel} nella base di conoscenza.`,
+                pt: `De momento, não encontrei uma ficha do curso de ${requestedLabel} na base de conhecimento.`,
+                de: `Ich habe aktuell keinen Kursartikel für ${requestedLabel} in der Wissensdatenbank gefunden.`,
+                en: `I could not find a ${requestedLabel} course article in the knowledge base at the moment.`
+              }[detectedLanguage] || getLocalizedAck(detectedLanguage);
+            }
+          }
+
+          if (!reply) {
+            reply = await buildReplyFromUnifiedRetrieval({
+              retrievalResult: { ...retrievalResult, matches: safeMatches },
+              language: detectedLanguage,
+              specificIntent: resolvedIntent
+            });
+          }
           if (!reply) {
             reply = await generateAIAnswerMessage({
               customerMessage: text,
@@ -1341,9 +1455,13 @@ app.post("/webhook", async (req, res) => {
           setCustomerState(from, {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
-            topicType: currentCourseLanguage ? "language_course" : null,
-            topicLanguage: currentCourseLanguage
+            topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null
           });
+          console.log("[course-debug] course memory context set:", JSON.stringify({
+            topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null
+          }));
         } else {
           reply = await generateAIAnswerMessage({
             customerMessage: text,
@@ -1355,9 +1473,13 @@ app.post("/webhook", async (req, res) => {
             setCustomerState(from, {
               clarifyingAsked: false,
               preferredCourseLanguage: currentCourseLanguage,
-              topicType: currentCourseLanguage ? "language_course" : null,
-              topicLanguage: currentCourseLanguage
+              topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
+              topicLanguage: currentCourseLanguage || userState.topicLanguage || null
             });
+            console.log("[course-debug] course memory context set:", JSON.stringify({
+              topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
+              topicLanguage: currentCourseLanguage || userState.topicLanguage || null
+            }));
           }
         }
 
