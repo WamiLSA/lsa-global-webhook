@@ -82,6 +82,11 @@
     .edit-mode {
       background: var(--lsa-warning-bg);
     }
+
+    .attachment-list {
+      margin: 0 0 10px;
+      padding-left: 18px;
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -89,6 +94,32 @@
   <div id="pageLayout">
   <div id="left">
     <h2>Provider Network Manager</h2>
+
+    <div class="card" id="providerCaptureAssistantCard">
+      <h3>Provider Capture Assistant</h3>
+      <textarea id="capture_raw_text" placeholder="Paste raw provider application text, email, WhatsApp content, or manual notes"></textarea>
+      <textarea id="capture_manual_notes" placeholder="Manual notes (optional)"></textarea>
+      <select id="capture_source_channel">
+        <option value="manual">manual</option>
+        <option value="email">email</option>
+        <option value="whatsapp">whatsapp</option>
+        <option value="website">website</option>
+        <option value="partner">partner</option>
+      </select>
+      <input id="capture_source_reference" placeholder="Source reference (optional)" />
+
+      <label class="small" for="capture_attachments"><strong>Attached Documents</strong></label>
+      <input id="capture_attachments" type="file" multiple onchange="uploadProviderCaptureAttachments()" />
+      <ul id="captureAttachmentList" class="attachment-list"></ul>
+
+      <button onclick="generateStructuredProvider()">Generate Structured Provider</button>
+
+      <div class="card" id="providerDraftCard" style="display:none;">
+        <h3>Provider Draft Preview</h3>
+        <div class="small" id="providerDraftSummary"></div>
+        <button onclick="applyDraftToProviderForm()">Send to Official Providers</button>
+      </div>
+    </div>
 
     <div class="card" id="providerFormCard">
       <h3 id="formTitle">Create Provider</h3>
@@ -159,6 +190,8 @@
   <script>
     let providers = [];
     let editingProviderId = null;
+    let providerCaptureAttachments = [];
+    let providerDraft = null;
 
     async function loadProviders() {
       const res = await fetch("/api/providers");
@@ -221,6 +254,142 @@
 
         container.appendChild(div);
       });
+    }
+
+    async function uploadProviderCaptureAttachments() {
+      const input = document.getElementById("capture_attachments");
+      if (!input.files || !input.files.length) {
+        return;
+      }
+
+      const formData = new FormData();
+      for (const file of input.files) {
+        formData.append("documents", file);
+      }
+
+      const res = await fetch("/api/provider-capture/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Upload failed: " + JSON.stringify(result));
+        input.value = "";
+        return;
+      }
+
+      providerCaptureAttachments = providerCaptureAttachments.concat(result.files || []);
+      input.value = "";
+      renderCaptureAttachmentList();
+    }
+
+    function renderCaptureAttachmentList() {
+      const list = document.getElementById("captureAttachmentList");
+      list.innerHTML = "";
+
+      if (!providerCaptureAttachments.length) {
+        list.innerHTML = "<li class='small'>No files attached yet.</li>";
+        return;
+      }
+
+      providerCaptureAttachments.forEach((file, index) => {
+        const li = document.createElement("li");
+        li.className = "small";
+        li.innerHTML = `${file.originalName || file.filename} <button style="width:auto; margin-left:8px; padding:4px 8px;" onclick="removeCaptureAttachment(${index})">Remove</button>`;
+        list.appendChild(li);
+      });
+    }
+
+    function removeCaptureAttachment(index) {
+      providerCaptureAttachments.splice(index, 1);
+      renderCaptureAttachmentList();
+    }
+
+    async function generateStructuredProvider() {
+      const raw_text = document.getElementById("capture_raw_text").value.trim();
+      const manual_notes = document.getElementById("capture_manual_notes").value.trim();
+      const source_channel = document.getElementById("capture_source_channel").value;
+      const source_reference = document.getElementById("capture_source_reference").value.trim();
+
+      const res = await fetch("/api/provider-capture/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          raw_text,
+          manual_notes,
+          source_channel,
+          source_reference,
+          attachments: providerCaptureAttachments
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Generation failed: " + JSON.stringify(result));
+        return;
+      }
+
+      providerDraft = result.result || {};
+      applyDraftToForm(providerDraft);
+      document.getElementById("providerDraftSummary").textContent = result.summary || "Draft generated. Review the fields before sending.";
+      document.getElementById("providerDraftCard").style.display = "block";
+    }
+
+    function applyDraftToForm(data) {
+      const keys = [
+        "provider_type",
+        "full_name",
+        "organization_name",
+        "contact_person",
+        "email",
+        "phone",
+        "whatsapp",
+        "country",
+        "city",
+        "native_language",
+        "working_languages",
+        "language_pairs",
+        "services",
+        "specializations",
+        "years_experience",
+        "availability_status",
+        "source_channel",
+        "notes"
+      ];
+
+      keys.forEach(key => {
+        const el = document.getElementById(key);
+        if (!el) return;
+        if (data[key] !== undefined && data[key] !== null && String(data[key]).trim() !== "") {
+          el.value = data[key];
+        }
+      });
+
+      if (data.source_reference && String(data.source_reference).trim()) {
+        const existingNotes = document.getElementById("notes").value.trim();
+        const sourceLine = `Source reference: ${data.source_reference}`;
+        if (!existingNotes.includes(sourceLine)) {
+          document.getElementById("notes").value = existingNotes ? `${existingNotes}
+${sourceLine}` : sourceLine;
+        }
+      }
+    }
+
+    async function applyDraftToProviderForm() {
+      if (!providerDraft) {
+        alert("Generate a structured provider draft first.");
+        return;
+      }
+
+      const confirmed = confirm("Send reviewed provider draft to Official Providers?");
+      if (!confirmed) return;
+
+      await createOrUpdateProvider();
     }
 
     async function createOrUpdateProvider() {
@@ -360,6 +529,7 @@
       await loadProviders();
     }
 
+    renderCaptureAttachmentList();
     loadProviders();
   </script>
 </body>

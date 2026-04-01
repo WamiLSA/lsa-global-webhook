@@ -83,6 +83,49 @@ const outboundUpload = multer({
   }
 });
 
+
+const PROVIDER_CAPTURE_STORAGE_DIR = path.join(__dirname, "uploads", "provider-capture");
+const PROVIDER_CAPTURE_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/csv",
+  "application/json"
+]);
+
+const providerCaptureUploadStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(PROVIDER_CAPTURE_STORAGE_DIR, { recursive: true });
+      cb(null, PROVIDER_CAPTURE_STORAGE_DIR);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const originalName = (file.originalname || "provider_document").replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}_${originalName.slice(0, 120)}`);
+  }
+});
+
+const providerCaptureUpload = multer({
+  storage: providerCaptureUploadStorage,
+  limits: {
+    fileSize: 20 * 1024 * 1024,
+    files: 10
+  },
+  fileFilter: (req, file, cb) => {
+    const mimeType = (file.mimetype || "").toLowerCase();
+    const isAllowed = PROVIDER_CAPTURE_ALLOWED_MIME_TYPES.has(mimeType) || mimeType.startsWith("image/");
+    if (!isAllowed) {
+      cb(new Error("Unsupported file type for Provider Capture Assistant."));
+      return;
+    }
+    cb(null, true);
+  }
+});
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const TEST_LIKE_ENVS = new Set(["test", "testing", "staging", "development", "dev"]);
@@ -2649,6 +2692,141 @@ app.delete("/api/kb/quick-capture/:id", async (req, res) => {
 // ===== PROVIDER NETWORK PAGE =====
 app.get("/providers", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "providers.html"));
+});
+
+
+app.post("/api/provider-capture/upload", requireAuth, providerCaptureUpload.array("documents", 10), async (req, res) => {
+  try {
+    const files = (req.files || []).map(file => ({
+      filename: file.filename,
+      originalName: file.originalname,
+      mimeType: file.mimetype,
+      size: file.size,
+      url: `/uploads/provider-capture/${file.filename}`
+    }));
+
+    return res.json({ ok: true, files });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/provider-capture/generate", requireAuth, async (req, res) => {
+  try {
+    const {
+      raw_text,
+      manual_notes,
+      source_channel,
+      source_reference,
+      attachments
+    } = req.body || {};
+
+    if ((!raw_text || !String(raw_text).trim()) && (!manual_notes || !String(manual_notes).trim()) && (!Array.isArray(attachments) || !attachments.length)) {
+      return res.status(400).json({ error: "Provide raw text, notes, or attachments for extraction." });
+    }
+
+    const attachmentLines = [];
+    for (const item of (attachments || []).slice(0, 10)) {
+      const fileName = path.basename(String(item.filename || ""));
+      if (!fileName) continue;
+      const safePath = path.join(PROVIDER_CAPTURE_STORAGE_DIR, fileName);
+      if (!safePath.startsWith(PROVIDER_CAPTURE_STORAGE_DIR)) continue;
+      const exists = fsSync.existsSync(safePath);
+      if (!exists) continue;
+
+      let extractedText = "";
+      const mimeType = String(item.mimeType || "").toLowerCase();
+      if (mimeType.startsWith("text/") || mimeType === "application/json") {
+        try {
+          extractedText = await fs.readFile(safePath, "utf-8");
+          extractedText = extractedText.slice(0, 4000);
+        } catch (_error) {
+          extractedText = "";
+        }
+      }
+
+      attachmentLines.push(`- File: ${item.originalName || fileName} (${mimeType || "unknown mime"})`);
+      if (extractedText) {
+        attachmentLines.push(`  Extracted text snippet: ${extractedText.replace(/\s+/g, " ").trim()}`);
+      } else {
+        attachmentLines.push("  Extracted text snippet: [No direct text extracted. Use file metadata and other source inputs.] ");
+      }
+    }
+
+    const prompt = `
+You extract and structure provider intake data for LSA GLOBAL.
+
+Rules:
+1. Use raw text, manual notes, and any attachment snippets together.
+2. Keep output factual and conservative; do not invent missing facts.
+3. If unknown, return an empty string for that field.
+4. Standardize list-like fields as comma-separated strings.
+5. availability_status must be one of: available, busy, unknown.
+6. provider_type should be one of: Freelancer, Agency, Institution, Teacher Provider, Interpreter, Voice-over Provider, Dubbing Provider, Language Partner. If uncertain, use Freelancer.
+7. Return valid JSON only.
+
+Return JSON with exactly these keys:
+provider_type
+full_name
+organization_name
+contact_person
+email
+phone
+whatsapp
+country
+city
+native_language
+working_languages
+language_pairs
+services
+specializations
+years_experience
+availability_status
+notes
+source_channel
+source_reference
+`;
+
+    const input = `
+Raw provider input:
+${raw_text || ""}
+
+Manual notes:
+${manual_notes || ""}
+
+Source channel:
+${source_channel || "manual"}
+
+Source reference:
+${source_reference || ""}
+
+Attachments summary:
+${attachmentLines.join("\n") || "No attachments."}
+`;
+
+    const response = await openai.responses.create({
+      model: "gpt-5-mini",
+      instructions: prompt,
+      input
+    });
+
+    const outputText = response.output_text || "{}";
+    let parsed;
+    try {
+      parsed = JSON.parse(outputText);
+    } catch (_error) {
+      return res.status(500).json({ error: "AI returned invalid JSON", raw_output: outputText });
+    }
+
+    return res.json({
+      ok: true,
+      result: parsed,
+      summary: "Structured draft generated. Review and edit before sending to Official Providers."
+    });
+  } catch (error) {
+    console.error("Provider capture generate error:", error.response?.data || error.message || error);
+    return res.status(500).json({ error: "Provider generation failed" });
+  }
 });
 
 // ===== PROVIDER API: LIST =====
