@@ -70,6 +70,10 @@
       <div class="lsa-top-nav__inner">
         <div class="lsa-top-nav__brand">LSA GLOBAL Internal</div>
         <div class="lsa-top-nav__right">
+          <div class="lsa-mode-control" aria-live="polite">
+            <span id="modeStatusBadge" class="lsa-mode-badge lsa-mode-badge--loading">MODE: ...</span>
+            <button id="modeToggleBtn" class="lsa-mode-toggle" type="button" disabled>Loading mode...</button>
+          </div>
           <nav class="lsa-top-nav__links" aria-label="Primary">
             ${linksHtml}
           </nav>
@@ -80,12 +84,86 @@
   `;
 
   const themeToggle = document.getElementById("themeToggleBtn");
+  const modeStatusBadge = document.getElementById("modeStatusBadge");
+  const modeToggleBtn = document.getElementById("modeToggleBtn");
+  let currentMode = null;
+  let canChangeMode = false;
+
+  function renderMode() {
+    if (!modeStatusBadge || !modeToggleBtn) return;
+    const isTest = currentMode === "test";
+    modeStatusBadge.textContent = isTest ? "TEST MODE" : "LIVE MODE";
+    modeStatusBadge.classList.remove("lsa-mode-badge--loading", "lsa-mode-badge--live", "lsa-mode-badge--test");
+    modeStatusBadge.classList.add(isTest ? "lsa-mode-badge--test" : "lsa-mode-badge--live");
+
+    if (!canChangeMode) {
+      modeToggleBtn.textContent = "Mode locked";
+      modeToggleBtn.disabled = true;
+      modeToggleBtn.setAttribute("aria-disabled", "true");
+      modeToggleBtn.title = "Only trusted/admin internal users can change mode";
+      return;
+    }
+
+    modeToggleBtn.disabled = false;
+    modeToggleBtn.setAttribute("aria-disabled", "false");
+    modeToggleBtn.textContent = isTest ? "Switch to Live Mode" : "Switch to Test Mode";
+    modeToggleBtn.title = isTest
+      ? "Live Mode disables autonomous AI replies for customer-facing safety"
+      : "Test Mode enables controlled internal AI experimentation";
+  }
+
+  async function loadMode() {
+    if (!modeStatusBadge || !modeToggleBtn) return;
+    try {
+      const response = await fetch("/api/system/mode", { credentials: "same-origin" });
+      if (!response.ok) throw new Error("Failed to load mode");
+      const payload = await response.json();
+      currentMode = payload.mode === "test" ? "test" : "live";
+      canChangeMode = Boolean(payload.can_change);
+      renderMode();
+    } catch (error) {
+      modeStatusBadge.textContent = "MODE UNAVAILABLE";
+      modeStatusBadge.classList.remove("lsa-mode-badge--loading");
+      modeStatusBadge.classList.add("lsa-mode-badge--live");
+      modeToggleBtn.textContent = "Unavailable";
+      modeToggleBtn.disabled = true;
+      modeToggleBtn.setAttribute("aria-disabled", "true");
+    }
+  }
+
+  async function toggleMode() {
+    if (!canChangeMode || !currentMode) return;
+    const nextMode = currentMode === "test" ? "live" : "test";
+    modeToggleBtn.disabled = true;
+    modeToggleBtn.textContent = "Saving...";
+    try {
+      const response = await fetch("/api/system/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ mode: nextMode })
+      });
+      if (!response.ok) throw new Error("Failed to update mode");
+      const payload = await response.json();
+      currentMode = payload.mode === "test" ? "test" : "live";
+      canChangeMode = Boolean(payload.can_change);
+      renderMode();
+    } catch (error) {
+      modeToggleBtn.disabled = false;
+      modeToggleBtn.textContent = "Try again";
+    }
+  }
+
   if (themeToggle) {
     themeToggle.addEventListener("click", () => {
       const nextTheme = getTheme() === "dark" ? "light" : "dark";
       applyTheme(nextTheme);
     });
   }
+  if (modeToggleBtn) {
+    modeToggleBtn.addEventListener("click", toggleMode);
+  }
 
   applyTheme(getTheme());
+  loadMode();
 })();
