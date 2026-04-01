@@ -47,3 +47,26 @@ add column if not exists is_archived boolean not null default false;
 create index if not exists conversations_wa_id_is_archived_idx
 on public.conversations (wa_id, is_archived, created_at desc);
 ```
+
+## Manual SQL migration (required for multilingual mediation phase 1)
+
+Run this in Supabase SQL editor to store original + translated message variants:
+
+```sql
+alter table public.conversations
+add column if not exists original_language text,
+add column if not exists translated_text text,
+add column if not exists translated_language text,
+add column if not exists staff_reply_text text,
+add column if not exists staff_reply_language text,
+add column if not exists sent_reply_text text,
+add column if not exists sent_reply_language text;
+```
+
+Optional environment variable:
+
+```bash
+INTERNAL_WORKING_LANGUAGE=en
+```
+
+If omitted, the internal working language defaults to English (`en`).
