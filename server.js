@@ -304,21 +304,21 @@ const MENU_KEYWORDS = {
 };
 
 const GREETING_PHRASES = {
-  en: ["hi", "hello", "hey", "good morning", "good evening"],
+  en: ["hello", "hi", "hey", "good morning", "good evening"],
   fr: ["bonjour", "bonsoir", "salut", "coucou"],
-  es: ["hola", "buenos dias", "buenas tardes", "buenas noches"],
+  es: ["hola", "buenos días", "buenos dias", "buenas tardes", "buenas noches"],
+  de: ["guten tag", "guten morgen", "guten abend", "hallo"],
   it: ["ciao", "buongiorno", "buonasera", "salve"],
-  pt: ["ola", "bom dia", "boa tarde", "boa noite", "oi"],
-  de: ["hallo", "guten tag", "guten morgen", "guten abend"],
-  zh: ["你好", "您好"],
-  ru: ["привет", "здравствуйте", "добрый день"],
-  ja: ["こんにちは", "こんばんは"],
+  pt: ["olá", "ola", "bom dia", "boa tarde", "boa noite", "oi"],
+  zh: ["你好", "您好", "早上好", "下午好", "晚上好"],
+  ru: ["привет", "здравствуйте", "добрый день", "добрый вечер"],
+  ja: ["こんにちは", "おはよう", "こんばんは", "もしもし"],
   nl: ["hallo", "goedemorgen", "goedenavond"],
-  ro: ["salut", "bună", "buna ziua"],
-  pl: ["cześć", "dzien dobry", "witam"],
-  sv: ["hej", "god morgon"],
-  da: ["hej", "goddag"],
-  no: ["hei", "god dag"]
+  ro: ["bună", "buna", "bună ziua", "buna ziua", "bună seara", "buna seara"],
+  pl: ["cześć", "czesc", "dzień dobry", "dzien dobry", "dobry wieczór", "dobry wieczor"],
+  sv: ["hej", "god morgon", "god kväll", "god kvall"],
+  da: ["hej", "godmorgen", "godaften"],
+  no: ["hei", "god morgen", "god kveld"]
 };
 
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
@@ -1247,7 +1247,7 @@ async function searchKnowledgeBase(userMessage) {
 function detectMessageLanguage(text) {
   const value = (text || "").toLowerCase();
   if (!value.trim()) return "en";
-  const greetingLanguage = detectGreetingIntent(text)?.language;
+  const greetingLanguage = detectGreetingLanguage(text);
   if (greetingLanguage) return greetingLanguage;
 
   if (/[\u4e00-\u9fff]/.test(value)) return "zh";
@@ -1339,30 +1339,39 @@ function getLocalizedClarifyingQuestion(language) {
 }
 
 function isGreetingMessage(text) {
-  return Boolean(detectGreetingIntent(text));
+  return Boolean(detectGreetingLanguage(text));
 }
 
-function detectGreetingIntent(text) {
+function detectGreetingLanguage(text) {
   const normalized = normalizeForIntent(text);
-  if (!normalized) return null;
+  if (!normalized) return "";
 
   const words = normalized.split(" ").filter(Boolean);
   for (const [language, phrases] of Object.entries(GREETING_PHRASES)) {
     for (const phrase of phrases) {
       const safePhrase = normalizeForIntent(phrase);
+      if (!safePhrase) continue;
       const phrasePattern = safePhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
       const exactRegex = new RegExp(`^${phrasePattern}$`, "i");
       const openerRegex = new RegExp(`^${phrasePattern}\\b`, "i");
-      if (exactRegex.test(normalized)) {
-        return { language, phrase: safePhrase };
-      }
-      if (openerRegex.test(normalized) && words.length <= 12) {
-        return { language, phrase: safePhrase };
-      }
+      if (exactRegex.test(normalized)) return language;
+      if (openerRegex.test(normalized) && words.length <= 12) return language;
     }
   }
 
-  return null;
+  return "";
+}
+
+function detectGreetingIntent(text) {
+  const language = detectGreetingLanguage(text);
+  if (!language) return null;
+  const normalized = normalizeForIntent(text);
+  const normalizedPhrases = (GREETING_PHRASES[language] || []).map(normalizeForIntent).filter(Boolean);
+  const matchedPhrase = normalizedPhrases.find((phrase) => {
+    const phrasePattern = phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+    return new RegExp(`^${phrasePattern}(\\b|$)`, "i").test(normalized);
+  }) || null;
+  return { language, phrase: matchedPhrase };
 }
 
 function detectMenuSelection(text) {
