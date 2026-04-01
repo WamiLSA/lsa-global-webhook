@@ -309,11 +309,20 @@ const GREETING_PHRASES = {
   es: ["hola", "buenos dias", "buenas tardes", "buenas noches"],
   it: ["ciao", "buongiorno", "buonasera", "salve"],
   pt: ["ola", "bom dia", "boa tarde", "boa noite", "oi"],
-  de: ["hallo", "guten tag", "guten morgen", "guten abend"]
+  de: ["hallo", "guten tag", "guten morgen", "guten abend"],
+  zh: ["你好", "您好"],
+  ru: ["привет", "здравствуйте", "добрый день"],
+  ja: ["こんにちは", "こんばんは"],
+  nl: ["hallo", "goedemorgen", "goedenavond"],
+  ro: ["salut", "bună", "buna ziua"],
+  pl: ["cześć", "dzien dobry", "witam"],
+  sv: ["hej", "god morgon"],
+  da: ["hej", "goddag"],
+  no: ["hei", "god dag"]
 };
 
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
-const SUPPORTED_MENU_LANGUAGES = ["en", "fr", "es", "it", "pt", "de"];
+const SUPPORTED_LIVE_MODE_LANGUAGES = ["en", "fr", "de", "es", "it", "pt", "zh", "ru", "ja", "nl", "ro", "pl", "sv", "da", "no"];
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
 const COURSE_LANGUAGE_KEYWORDS = {
   italian: ["italien", "italian", "italiano", "italiana"],
@@ -328,53 +337,171 @@ const COURSE_LANGUAGE_KEYWORDS = {
 const PROCESSED_MESSAGE_IDS = new Map();
 const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 
-const LOCALIZED_WELCOME_MENUS = {
-  en:
-    "Hello 👋 Welcome to LSA GLOBAL.\n\nWe offer:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor\n\nPlease reply with 1, 2, 3 or 4.",
-  fr:
-    "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nNous proposons :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller\n\nVeuillez répondre par 1, 2, 3 ou 4.",
-  es:
-    "Hola 👋 Bienvenido(a) a LSA GLOBAL.\n\nOfrecemos:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor\n\nPor favor, responda con 1, 2, 3 o 4.",
-  it:
-    "Ciao 👋 Benvenuto/a su LSA GLOBAL.\n\nOffriamo:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parla con un consulente\n\nPer favore, rispondi con 1, 2, 3 o 4.",
-  pt:
-    "Olá 👋 Bem-vindo(a) à LSA GLOBAL.\n\nOferecemos:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de idiomas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor\n\nPor favor, responda com 1, 2, 3 ou 4.",
-  de:
-    "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nWir bieten:\n1️⃣ Übersetzungsdienstleistungen\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen\n\nBitte antworten Sie mit 1, 2, 3 oder 4."
-};
-
-const LOCALIZED_OPTION_REPLIES = {
-  translation: {
-    en: "🌍 Translation services.\nPlease send language pair, document type, and deadline.\nQuote request: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    fr: "🌍 Services de traduction.\nMerci d’envoyer la combinaison linguistique, le type de document et le délai.\nDevis : https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    es: "🌍 Servicios de traducción.\nEnvíe combinación de idiomas, tipo de documento y plazo.\nPresupuesto: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    it: "🌍 Servizi di traduzione.\nInvii combinazione linguistica, tipo di documento e scadenza.\nPreventivo: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    pt: "🌍 Serviços de tradução.\nEnvie par de idiomas, tipo de documento e prazo.\nOrçamento: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
-    de: "🌍 Übersetzungsdienste.\nBitte senden Sie Sprachpaar, Dokumenttyp und Frist.\nAngebot: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/"
+const LIVE_MODE_MESSAGES = {
+  en: {
+    greeting_menu: "Hello 👋 Welcome to LSA GLOBAL.\n\nWe offer:\n1️⃣ Translation services\n2️⃣ Language courses\n3️⃣ Interpreting services\n4️⃣ Speak to an advisor\n\nPlease reply with 1, 2, 3 or 4.",
+    options: {
+      translation: "🌍 Translation services.\nPlease send language pair, document type, and deadline.\nQuote request: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Language courses A1–C2 (online/guided).\nTell me the language you want and your current level.\nRegistration: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Interpreting services (online/onsite).\nPlease share language pair, date, and duration.",
+      advisor: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly."
+    },
+    safe_handoff: "Thank you. Your request has been received. A member of the LSA GLOBAL team will reply shortly.",
+    fallback: "Please reply with 1, 2, 3 or 4."
   },
-  courses: {
-    en: "🎓 Language courses A1–C2 (online/guided).\nTell me the language you want and your current level.\nRegistration: https://lsa-global.com/register-now-2/",
-    fr: "🎓 Cours de langues A1–C2 (en ligne/encadrés).\nIndiquez la langue souhaitée et votre niveau actuel.\nInscription : https://lsa-global.com/register-now-2/",
-    es: "🎓 Cursos de idiomas A1–C2 (en línea/guiados).\nIndique el idioma deseado y su nivel actual.\nInscripción: https://lsa-global.com/register-now-2/",
-    it: "🎓 Corsi di lingua A1–C2 (online/guidati).\nIndichi la lingua desiderata e il livello attuale.\nIscrizione: https://lsa-global.com/register-now-2/",
-    pt: "🎓 Cursos de idiomas A1–C2 (online/orientados).\nIndique o idioma desejado e o seu nível atual.\nInscrição: https://lsa-global.com/register-now-2/",
-    de: "🎓 Sprachkurse A1–C2 (online/betreut).\nBitte nennen Sie gewünschte Sprache und aktuelles Niveau.\nAnmeldung: https://lsa-global.com/register-now-2/"
+  fr: {
+    greeting_menu: "Bonjour 👋 Bienvenue chez LSA GLOBAL.\n\nNous proposons :\n1️⃣ Services de traduction\n2️⃣ Cours de langues\n3️⃣ Services d’interprétation\n4️⃣ Parler à un conseiller\n\nVeuillez répondre par 1, 2, 3 ou 4.",
+    options: {
+      translation: "🌍 Services de traduction.\nMerci d’envoyer la combinaison linguistique, le type de document et le délai.\nDevis : https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Cours de langues A1–C2 (en ligne/encadrés).\nIndiquez la langue souhaitée et votre niveau actuel.\nInscription : https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Services d’interprétation (en ligne/sur site).\nMerci d’indiquer la combinaison linguistique, la date et la durée.",
+      advisor: "👨‍💼 Demande de conseiller\n\nVeuillez décrire brièvement votre besoin. Notre équipe vous contactera sous peu."
+    },
+    safe_handoff: "Merci. Votre demande a bien été reçue. Un membre de l’équipe LSA GLOBAL vous répondra sous peu.",
+    fallback: "Veuillez répondre par 1, 2, 3 ou 4."
   },
-  interpreting: {
-    en: "🎧 Interpreting services (online/onsite).\nPlease share language pair, date, and duration.",
-    fr: "🎧 Services d’interprétation (en ligne/sur site).\nMerci d’indiquer la combinaison linguistique, la date et la durée.",
-    es: "🎧 Servicios de interpretación (en línea/presencial).\nIndique combinación lingüística, fecha y duración.",
-    it: "🎧 Servizi di interpretariato (online/in presenza).\nIndichi combinazione linguistica, data e durata.",
-    pt: "🎧 Serviços de interpretação (online/presencial).\nInforme par de idiomas, data e duração.",
-    de: "🎧 Dolmetschdienste (online/vor Ort).\nBitte teilen Sie Sprachkombination, Datum und Dauer mit."
+  de: {
+    greeting_menu: "Hallo 👋 Willkommen bei LSA GLOBAL.\n\nWir bieten:\n1️⃣ Übersetzungsdienstleistungen\n2️⃣ Sprachkurse\n3️⃣ Dolmetschdienste\n4️⃣ Mit einem Berater sprechen\n\nBitte antworten Sie mit 1, 2, 3 oder 4.",
+    options: {
+      translation: "🌍 Übersetzungsdienste.\nBitte senden Sie Sprachpaar, Dokumenttyp und Frist.\nAngebot: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Sprachkurse A1–C2 (online/betreut).\nBitte nennen Sie gewünschte Sprache und aktuelles Niveau.\nAnmeldung: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Dolmetschdienste (online/vor Ort).\nBitte teilen Sie Sprachkombination, Datum und Dauer mit.",
+      advisor: "👨‍💼 Berateranfrage\n\nBitte beschreiben Sie Ihr Anliegen kurz. Unser Team wird sich in Kürze bei Ihnen melden."
+    },
+    safe_handoff: "Danke. Ihre Anfrage wurde erhalten. Ein Mitglied des LSA GLOBAL-Teams wird Ihnen in Kürze antworten.",
+    fallback: "Bitte antworten Sie mit 1, 2, 3 oder 4."
   },
-  advisor: {
-    en: "👨‍💼 Advisor Request\n\nPlease describe your need briefly. Our team will contact you shortly.",
-    fr: "👨‍💼 Demande de conseiller\n\nVeuillez décrire brièvement votre besoin. Notre équipe vous contactera sous peu.",
-    es: "👨‍💼 Solicitud de asesor\n\nDescriba brevemente su necesidad. Nuestro equipo se pondrá en contacto con usted en breve.",
-    it: "👨‍💼 Richiesta di consulente\n\nDescriva brevemente la sua esigenza. Il nostro team la contatterà al più presto.",
-    pt: "👨‍💼 Solicitação de consultor\n\nDescreva brevemente a sua necessidade. Nossa equipe entrará em contato em breve.",
-    de: "👨‍💼 Berateranfrage\n\nBitte beschreiben Sie Ihr Anliegen kurz. Unser Team wird sich in Kürze bei Ihnen melden."
+  es: {
+    greeting_menu: "Hola 👋 Bienvenido(a) a LSA GLOBAL.\n\nOfrecemos:\n1️⃣ Servicios de traducción\n2️⃣ Cursos de idiomas\n3️⃣ Servicios de interpretación\n4️⃣ Hablar con un asesor\n\nPor favor, responda con 1, 2, 3 o 4.",
+    options: {
+      translation: "🌍 Servicios de traducción.\nEnvíe combinación de idiomas, tipo de documento y plazo.\nPresupuesto: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Cursos de idiomas A1–C2 (en línea/guiados).\nIndique el idioma deseado y su nivel actual.\nInscripción: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Servicios de interpretación (en línea/presencial).\nIndique combinación lingüística, fecha y duración.",
+      advisor: "👨‍💼 Solicitud de asesor\n\nDescriba brevemente su necesidad. Nuestro equipo se pondrá en contacto con usted en breve."
+    },
+    safe_handoff: "Gracias. Su solicitud ha sido recibida. Un miembro del equipo de LSA GLOBAL le responderá en breve.",
+    fallback: "Por favor, responda con 1, 2, 3 o 4."
+  },
+  it: {
+    greeting_menu: "Ciao 👋 Benvenuto/a su LSA GLOBAL.\n\nOffriamo:\n1️⃣ Servizi di traduzione\n2️⃣ Corsi di lingua\n3️⃣ Servizi di interpretariato\n4️⃣ Parla con un consulente\n\nPer favore, rispondi con 1, 2, 3 o 4.",
+    options: {
+      translation: "🌍 Servizi di traduzione.\nInvii combinazione linguistica, tipo di documento e scadenza.\nPreventivo: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Corsi di lingua A1–C2 (online/guidati).\nIndichi la lingua desiderata e il livello attuale.\nIscrizione: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Servizi di interpretariato (online/in presenza).\nIndichi combinazione linguistica, data e durata.",
+      advisor: "👨‍💼 Richiesta di consulente\n\nDescriva brevemente la sua esigenza. Il nostro team la contatterà al più presto."
+    },
+    safe_handoff: "Grazie. La sua richiesta è stata ricevuta. Un membro del team LSA GLOBAL le risponderà al più presto.",
+    fallback: "Per favore, rispondi con 1, 2, 3 o 4."
+  },
+  pt: {
+    greeting_menu: "Olá 👋 Bem-vindo(a) à LSA GLOBAL.\n\nOferecemos:\n1️⃣ Serviços de tradução\n2️⃣ Cursos de idiomas\n3️⃣ Serviços de interpretação\n4️⃣ Falar com um consultor\n\nPor favor, responda com 1, 2, 3 ou 4.",
+    options: {
+      translation: "🌍 Serviços de tradução.\nEnvie par de idiomas, tipo de documento e prazo.\nOrçamento: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Cursos de idiomas A1–C2 (online/orientados).\nIndique o idioma desejado e o seu nível atual.\nInscrição: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Serviços de interpretação (online/presencial).\nInforme par de idiomas, data e duração.",
+      advisor: "👨‍💼 Solicitação de consultor\n\nDescreva brevemente a sua necessidade. Nossa equipe entrará em contato em breve."
+    },
+    safe_handoff: "Obrigado(a). Seu pedido foi recebido. Um membro da equipe LSA GLOBAL responderá em breve.",
+    fallback: "Por favor, responda com 1, 2, 3 ou 4."
+  },
+  zh: {
+    greeting_menu: "您好 👋 欢迎来到 LSA GLOBAL。\n\n我们提供：\n1️⃣ 翻译服务\n2️⃣ 语言课程\n3️⃣ 口译服务\n4️⃣ 联系顾问\n\n请回复 1、2、3 或 4。",
+    options: {
+      translation: "🌍 翻译服务。\n请发送语言组合、文件类型和截止日期。\n报价申请：https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 语言课程 A1–C2（线上/指导）。\n请告诉我您想学习的语言和当前水平。\n注册：https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 口译服务（线上/现场）。\n请提供语言组合、日期和时长。",
+      advisor: "👨‍💼 顾问咨询\n\n请简要描述您的需求。我们的团队将尽快与您联系。"
+    },
+    safe_handoff: "感谢您。我们已收到您的请求。LSA GLOBAL 团队成员将很快回复您。",
+    fallback: "请回复 1、2、3 或 4。"
+  },
+  ru: {
+    greeting_menu: "Здравствуйте 👋 Добро пожаловать в LSA GLOBAL.\n\nМы предлагаем:\n1️⃣ Услуги перевода\n2️⃣ Языковые курсы\n3️⃣ Услуги устного перевода\n4️⃣ Связаться с консультантом\n\nПожалуйста, ответьте 1, 2, 3 или 4.",
+    options: {
+      translation: "🌍 Услуги перевода.\nПожалуйста, укажите языковую пару, тип документа и срок.\nЗапрос цены: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Языковые курсы A1–C2 (онлайн/с сопровождением).\nСообщите нужный язык и ваш текущий уровень.\nРегистрация: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Услуги устного перевода (онлайн/на месте).\nУкажите языковую пару, дату и длительность.",
+      advisor: "👨‍💼 Запрос консультанта\n\nКратко опишите ваш запрос. Наша команда скоро свяжется с вами."
+    },
+    safe_handoff: "Спасибо. Ваш запрос получен. Сотрудник команды LSA GLOBAL скоро свяжется с вами.",
+    fallback: "Пожалуйста, ответьте 1, 2, 3 или 4."
+  },
+  ja: {
+    greeting_menu: "こんにちは 👋 LSA GLOBALへようこそ。\n\n以下のサービスをご提供しています：\n1️⃣ 翻訳サービス\n2️⃣ 語学コース\n3️⃣ 通訳サービス\n4️⃣ アドバイザーに相談\n\n1、2、3、4 のいずれかで返信してください。",
+    options: {
+      translation: "🌍 翻訳サービス。\n言語ペア、文書種類、納期をお送りください。\n見積依頼: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 語学コース A1–C2（オンライン/ガイド付き）。\n希望言語と現在のレベルを教えてください。\n登録: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 通訳サービス（オンライン/対面）。\n言語ペア、日付、所要時間を共有してください。",
+      advisor: "👨‍💼 アドバイザー相談\n\nご要望を簡単にご記入ください。担当チームよりまもなくご連絡します。"
+    },
+    safe_handoff: "ありがとうございます。ご依頼を受け付けました。LSA GLOBALチームの担当者がまもなくご返信します。",
+    fallback: "1、2、3、4 のいずれかで返信してください。"
+  },
+  nl: {
+    greeting_menu: "Hallo 👋 Welkom bij LSA GLOBAL.\n\nWij bieden:\n1️⃣ Vertaaldiensten\n2️⃣ Taalcursussen\n3️⃣ Tolkdiensten\n4️⃣ Spreek met een adviseur\n\nAntwoord alstublieft met 1, 2, 3 of 4.",
+    options: {
+      translation: "🌍 Vertaaldiensten.\nStuur taalpaar, documenttype en deadline.\nOfferteaanvraag: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Taalcursussen A1–C2 (online/begeleid).\nVertel welke taal u wilt en uw huidige niveau.\nRegistratie: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Tolkdiensten (online/op locatie).\nDeel taalpaar, datum en duur.",
+      advisor: "👨‍💼 Adviseurverzoek\n\nBeschrijf kort uw behoefte. Ons team neemt binnenkort contact met u op."
+    },
+    safe_handoff: "Dank u. Uw aanvraag is ontvangen. Een lid van het LSA GLOBAL-team zal spoedig reageren.",
+    fallback: "Antwoord alstublieft met 1, 2, 3 of 4."
+  },
+  ro: {
+    greeting_menu: "Salut 👋 Bine ați venit la LSA GLOBAL.\n\nOferim:\n1️⃣ Servicii de traducere\n2️⃣ Cursuri de limbi străine\n3️⃣ Servicii de interpretariat\n4️⃣ Discutați cu un consilier\n\nVă rugăm să răspundeți cu 1, 2, 3 sau 4.",
+    options: {
+      translation: "🌍 Servicii de traducere.\nVă rugăm să trimiteți perechea de limbi, tipul documentului și termenul limită.\nCerere ofertă: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Cursuri de limbi A1–C2 (online/ghidate).\nSpuneți-ne limba dorită și nivelul dvs. actual.\nÎnscriere: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Servicii de interpretariat (online/la fața locului).\nTrimiteți perechea de limbi, data și durata.",
+      advisor: "👨‍💼 Solicitare consilier\n\nDescrieți pe scurt nevoia dvs. Echipa noastră vă va contacta în curând."
+    },
+    safe_handoff: "Vă mulțumim. Cererea dvs. a fost primită. Un membru al echipei LSA GLOBAL vă va răspunde în curând.",
+    fallback: "Vă rugăm să răspundeți cu 1, 2, 3 sau 4."
+  },
+  pl: {
+    greeting_menu: "Cześć 👋 Witamy w LSA GLOBAL.\n\nOferujemy:\n1️⃣ Usługi tłumaczeniowe\n2️⃣ Kursy językowe\n3️⃣ Usługi tłumaczeń ustnych\n4️⃣ Rozmowa z doradcą\n\nProszę odpowiedzieć 1, 2, 3 lub 4.",
+    options: {
+      translation: "🌍 Usługi tłumaczeniowe.\nProsimy podać parę językową, typ dokumentu i termin.\nZapytanie o wycenę: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Kursy językowe A1–C2 (online/z opieką).\nPodaj język, którego chcesz się uczyć, oraz obecny poziom.\nRejestracja: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Usługi tłumaczeń ustnych (online/na miejscu).\nPodaj parę językową, datę i czas trwania.",
+      advisor: "👨‍💼 Prośba o doradcę\n\nKrótko opisz swoją potrzebę. Nasz zespół skontaktuje się wkrótce."
+    },
+    safe_handoff: "Dziękujemy. Twoje zgłoszenie zostało otrzymane. Członek zespołu LSA GLOBAL wkrótce odpowie.",
+    fallback: "Proszę odpowiedzieć 1, 2, 3 lub 4."
+  },
+  sv: {
+    greeting_menu: "Hej 👋 Välkommen till LSA GLOBAL.\n\nVi erbjuder:\n1️⃣ Översättningstjänster\n2️⃣ Språkkurser\n3️⃣ Tolkningstjänster\n4️⃣ Prata med en rådgivare\n\nVänligen svara med 1, 2, 3 eller 4.",
+    options: {
+      translation: "🌍 Översättningstjänster.\nSkicka språkpar, dokumenttyp och deadline.\nOffertförfrågan: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Språkkurser A1–C2 (online/handledda).\nBerätta vilket språk du vill läsa och din nuvarande nivå.\nRegistrering: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Tolkningstjänster (online/på plats).\nDela språkpar, datum och varaktighet.",
+      advisor: "👨‍💼 Rådgivarförfrågan\n\nBeskriv ditt behov kort. Vårt team kontaktar dig inom kort."
+    },
+    safe_handoff: "Tack. Din förfrågan har tagits emot. En medlem i LSA GLOBAL-teamet svarar inom kort.",
+    fallback: "Vänligen svara med 1, 2, 3 eller 4."
+  },
+  da: {
+    greeting_menu: "Hej 👋 Velkommen til LSA GLOBAL.\n\nVi tilbyder:\n1️⃣ Oversættelsestjenester\n2️⃣ Sprogkurser\n3️⃣ Tolkningstjenester\n4️⃣ Tal med en rådgiver\n\nSvar venligst med 1, 2, 3 eller 4.",
+    options: {
+      translation: "🌍 Oversættelsestjenester.\nSend venligst sprogpar, dokumenttype og deadline.\nTilbudsforespørgsel: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Sprogkurser A1–C2 (online/med vejledning).\nFortæl hvilket sprog du ønsker og dit nuværende niveau.\nTilmelding: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Tolkningstjenester (online/på stedet).\nDel sprogpar, dato og varighed.",
+      advisor: "👨‍💼 Rådgiverforespørgsel\n\nBeskriv kort dit behov. Vores team kontakter dig snart."
+    },
+    safe_handoff: "Tak. Din forespørgsel er modtaget. Et medlem af LSA GLOBAL-teamet vil svare dig snart.",
+    fallback: "Svar venligst med 1, 2, 3 eller 4."
+  },
+  no: {
+    greeting_menu: "Hei 👋 Velkommen til LSA GLOBAL.\n\nVi tilbyr:\n1️⃣ Oversettelsestjenester\n2️⃣ Språkkurs\n3️⃣ Tolketjenester\n4️⃣ Snakk med en rådgiver\n\nVennligst svar med 1, 2, 3 eller 4.",
+    options: {
+      translation: "🌍 Oversettelsestjenester.\nSend språkpar, dokumenttype og frist.\nPrisforespørsel: https://lsaglobal-translate.co.uk/get-your-free-quote-lsa-global/",
+      courses: "🎓 Språkkurs A1–C2 (online/veiledet).\nFortell hvilket språk du ønsker og ditt nåværende nivå.\nRegistrering: https://lsa-global.com/register-now-2/",
+      interpreting: "🎧 Tolketjenester (online/på stedet).\nDel språkpar, dato og varighet.",
+      advisor: "👨‍💼 Rådgiverforespørsel\n\nBeskriv behovet ditt kort. Teamet vårt kontakter deg snart."
+    },
+    safe_handoff: "Takk. Vi har mottatt forespørselen din. Et medlem av LSA GLOBAL-teamet vil svare snart.",
+    fallback: "Vennligst svar med 1, 2, 3 eller 4."
   }
 };
 
@@ -1123,6 +1250,10 @@ function detectMessageLanguage(text) {
   const greetingLanguage = detectGreetingIntent(text)?.language;
   if (greetingLanguage) return greetingLanguage;
 
+  if (/[\u4e00-\u9fff]/.test(value)) return "zh";
+  if (/[\u3040-\u30ff]/.test(value)) return "ja";
+  if (/[\u0400-\u04ff]/.test(value)) return "ru";
+
   if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation|horaire)\b/.test(value)) {
     return "fr";
   }
@@ -1138,6 +1269,12 @@ function detectMessageLanguage(text) {
   if (/[ãõçáâàéêíóôú]/.test(value) || /\b(ola|olá|obrigado|obrigada|curso|preco|preço|horario|horário|duração|inscricao|inscrição)\b/.test(value)) {
     return "pt";
   }
+  if (/\b(hallo|dank|vertaling|cursus|tolk)\b/.test(value)) return "nl";
+  if (/\b(salut|mulțum|curs|traducere|interpret)\b/.test(value)) return "ro";
+  if (/\b(czesc|cześć|dziekuje|dziękuję|kurs|tlumaczen|tłumaczen)\b/.test(value)) return "pl";
+  if (/\b(hej|tack|kurs|oversatt|översätt)\b/.test(value)) return "sv";
+  if (/\b(hej|tak|kurs|oversaett|oversæt)\b/.test(value)) return "da";
+  if (/\b(hei|takk|kurs|oversett)\b/.test(value)) return "no";
 
   return "en";
 }
@@ -1159,16 +1296,29 @@ function getLocalizedAck(language) {
   }
 }
 
-function getLocalizedSafeHandoffMessage(language) {
-  const byLang = {
-    en: "Thank you. Your request has been received. A member of the LSA GLOBAL team will reply shortly.",
-    fr: "Merci. Votre demande a bien été reçue. Un membre de l’équipe LSA GLOBAL vous répondra sous peu.",
-    es: "Gracias. Su solicitud ha sido recibida. Un miembro del equipo de LSA GLOBAL le responderá en breve.",
-    it: "Grazie. La sua richiesta è stata ricevuta. Un membro del team LSA GLOBAL le risponderà al più presto.",
-    pt: "Obrigado(a). Seu pedido foi recebido. Um membro da equipe LSA GLOBAL responderá em breve.",
-    de: "Danke. Ihre Anfrage wurde erhalten. Ein Mitglied des LSA GLOBAL-Teams wird Ihnen in Kürze antworten."
-  };
-  return byLang[language] || byLang.en;
+function normalizeLanguageCode(languageCode) {
+  const safeCode = String(languageCode || "").toLowerCase();
+  return SUPPORTED_LIVE_MODE_LANGUAGES.includes(safeCode) ? safeCode : "en";
+}
+
+function getGreetingMenu(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  return LIVE_MODE_MESSAGES[language]?.greeting_menu || LIVE_MODE_MESSAGES.en.greeting_menu;
+}
+
+function getOptionReply(option, languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  return LIVE_MODE_MESSAGES[language]?.options?.[option] || LIVE_MODE_MESSAGES.en.options?.[option] || "";
+}
+
+function getSafeHandoffMessage(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  return LIVE_MODE_MESSAGES[language]?.safe_handoff || LIVE_MODE_MESSAGES.en.safe_handoff;
+}
+
+function getControlledFallbackReply(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  return LIVE_MODE_MESSAGES[language]?.fallback || LIVE_MODE_MESSAGES.en.fallback;
 }
 
 function getLocalizedClarifyingQuestion(language) {
@@ -1215,11 +1365,6 @@ function detectGreetingIntent(text) {
   return null;
 }
 
-function getLocalizedMainMenu(language) {
-  const safeLang = SUPPORTED_MENU_LANGUAGES.includes(language) ? language : "en";
-  return LOCALIZED_WELCOME_MENUS[safeLang] || LOCALIZED_WELCOME_MENUS.en;
-}
-
 function detectMenuSelection(text) {
   const normalized = normalizeForIntent(text);
   if (!normalized) return null;
@@ -1242,11 +1387,6 @@ function detectMenuSelection(text) {
   return null;
 }
 
-function getLocalizedMenuReply(language, selection) {
-  const safeLang = SUPPORTED_MENU_LANGUAGES.includes(language) ? language : "en";
-  return LOCALIZED_OPTION_REPLIES[selection]?.[safeLang] || "";
-}
-
 function getLocalizedEscalationMessage(language) {
   const byLang = {
     fr: "Merci. Ce point doit être validé par un conseiller LSA GLOBAL. Partagez votre nom et numéro WhatsApp, nous revenons vite vers vous.",
@@ -1261,18 +1401,18 @@ function getLocalizedEscalationMessage(language) {
 
 function resolveConversationLanguage({ waId, text, greetingLanguage }) {
   const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
-  if (greetingLanguage && SUPPORTED_MENU_LANGUAGES.includes(greetingLanguage)) {
+  if (stored) return stored;
+  if (greetingLanguage && SUPPORTED_LIVE_MODE_LANGUAGES.includes(greetingLanguage)) {
     CONVERSATION_LANGUAGE_BY_CONTACT.set(waId, greetingLanguage);
     return greetingLanguage;
   }
 
   const normalized = normalizeForIntent(text);
+  const detected = detectMessageLanguage(text);
+  const safeDetected = SUPPORTED_LIVE_MODE_LANGUAGES.includes(detected) ? detected : "en";
   if (/^[1-4]$/.test(normalized) && stored) {
     return stored;
   }
-
-  const detected = detectMessageLanguage(text);
-  const safeDetected = SUPPORTED_MENU_LANGUAGES.includes(detected) ? detected : "en";
   CONVERSATION_LANGUAGE_BY_CONTACT.set(waId, safeDetected);
   return safeDetected;
 }
@@ -1525,15 +1665,25 @@ app.post("/webhook", async (req, res) => {
       greetingLanguage: greetingIntent?.language
     });
     const menuSelection = detectMenuSelection(text);
+    const normalizedInbound = normalizeForIntent(text);
+    const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
+    const fallbackEligible = hasStoredLanguage
+      && !menuSelection
+      && !greetingIntent
+      && normalizedInbound
+      && normalizedInbound.split(/\s+/).filter(Boolean).length <= 2;
 
     if (greetingIntent || isGreetingMessage(text)) {
-      reply = getLocalizedMainMenu(detectedLanguage);
+      reply = getGreetingMenu(detectedLanguage);
       suppressAutoAck = true;
     } else if (menuSelection) {
-      reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
+      reply = getOptionReply(menuSelection, detectedLanguage);
+      suppressAutoAck = true;
+    } else if (!isAutonomousReplyAllowed() && fallbackEligible) {
+      reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
     } else if (!isAutonomousReplyAllowed()) {
-      reply = getLocalizedSafeHandoffMessage(detectedLanguage);
+      reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else {
       const narrowIntent = detectNarrowIntent(text);
@@ -1707,7 +1857,7 @@ app.post("/webhook", async (req, res) => {
     }
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
-    const ack = getLocalizedAck(detectMessageLanguage(text));
+    const ack = getLocalizedAck(detectedLanguage);
 
     await sendWhatsAppText(from, ack, 1500);
 
