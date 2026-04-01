@@ -41,7 +41,12 @@ const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
 const AI_AUTOREPLY_ENABLED = String(process.env.AI_AUTOREPLY_ENABLED || "false").toLowerCase() === "true";
 const APP_ENV = String(process.env.APP_ENV || process.env.NODE_ENV || "production").toLowerCase();
 const AI_EXPERIMENTS_ENABLED = String(process.env.AI_EXPERIMENTS_ENABLED || "false").toLowerCase() === "true";
+const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS || "")
+  .split(",")
+  .map(item => item.trim().toLowerCase())
+  .filter(Boolean);
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
+const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
   "image/",
   "application/pdf"
@@ -82,17 +87,73 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const TEST_LIKE_ENVS = new Set(["test", "testing", "staging", "development", "dev"]);
 const IS_TEST_MODE = TEST_LIKE_ENVS.has(APP_ENV);
-const AI_EXPERIMENT_MODE = IS_TEST_MODE && AI_EXPERIMENTS_ENABLED;
-const AUTONOMOUS_REPLY_ALLOWED = AI_EXPERIMENT_MODE && AI_AUTOREPLY_ENABLED;
-console.log(`[mode] APP_ENV=${APP_ENV} | IS_TEST_MODE=${IS_TEST_MODE ? "true" : "false"}`);
-console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${AUTONOMOUS_REPLY_ALLOWED ? "true" : "false"}`);
+function resolveDefaultSystemMode() {
+  if (IS_TEST_MODE && AI_EXPERIMENTS_ENABLED) {
+    return "test";
+  }
+  return "live";
+}
+
+function readPersistedSystemMode() {
+  try {
+    if (!fsSync.existsSync(SYSTEM_MODE_FILE)) {
+      return null;
+    }
+    const payload = fsSync.readFileSync(SYSTEM_MODE_FILE, "utf-8");
+    const parsed = JSON.parse(payload);
+    return parsed?.mode === "test" ? "test" : parsed?.mode === "live" ? "live" : null;
+  } catch (error) {
+    console.warn("[mode] Failed to read persisted mode:", error.message);
+    return null;
+  }
+}
+
+const runtimeSystemState = {
+  mode: readPersistedSystemMode() || resolveDefaultSystemMode(),
+  updatedAt: new Date().toISOString()
+};
+
+async function persistSystemMode(mode) {
+  await fs.mkdir(path.dirname(SYSTEM_MODE_FILE), { recursive: true });
+  await fs.writeFile(
+    SYSTEM_MODE_FILE,
+    JSON.stringify({ mode, updated_at: new Date().toISOString() }, null, 2),
+    "utf-8"
+  );
+}
+
+function isTestModeEnabled() {
+  return runtimeSystemState.mode === "test";
+}
+
+function isAutonomousReplyAllowed() {
+  return isTestModeEnabled() && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED;
+}
+
+function getModeCapabilities() {
+  return {
+    autonomous_ai_answering: isAutonomousReplyAllowed(),
+    ai_experimentation: isTestModeEnabled() && AI_EXPERIMENTS_ENABLED
+  };
+}
+
+console.log(`[mode] APP_ENV=${APP_ENV} | IS_TEST_ENV=${IS_TEST_MODE ? "true" : "false"} | START_MODE=${runtimeSystemState.mode.toUpperCase()}`);
+console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${isAutonomousReplyAllowed() ? "true" : "false"}`);
 
 function requireAiExperimentMode(res) {
-  if (AI_EXPERIMENT_MODE) return true;
+  if (isTestModeEnabled() && AI_EXPERIMENTS_ENABLED) return true;
   res.status(403).json({
-    error: "AI experiment endpoints are disabled in production-safe mode"
+    error: "AI experiment endpoints are disabled while Live Mode is active"
   });
   return false;
+}
+function canChangeMode(req) {
+  const sessionUser = String(req.session?.username || "").toLowerCase();
+  if (!sessionUser) return false;
+  if (!INTERNAL_MODE_ADMIN_USERS.length) {
+    return sessionUser === String(INBOX_USERNAME || "").toLowerCase();
+  }
+  return INTERNAL_MODE_ADMIN_USERS.includes(sessionUser);
 }
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
@@ -164,6 +225,7 @@ app.post("/login", (req, res) => {
 
   if (username === INBOX_USERNAME && password === INBOX_PASSWORD) {
     req.session.authenticated = true;
+    req.session.username = username;
     return res.redirect("/inbox");
   }
 
@@ -1470,7 +1532,7 @@ app.post("/webhook", async (req, res) => {
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
       suppressAutoAck = true;
-    } else if (!AUTONOMOUS_REPLY_ALLOWED) {
+    } else if (!isAutonomousReplyAllowed()) {
       reply = getLocalizedSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else {
@@ -1699,6 +1761,44 @@ app.get("/archived", requireAuth, (req, res) => {
 });
 
 app.use("/api", requireAuth);
+
+app.get("/api/system/mode", (req, res) => {
+  return res.json({
+    ok: true,
+    mode: runtimeSystemState.mode,
+    label: runtimeSystemState.mode === "test" ? "TEST MODE" : "LIVE MODE",
+    can_change: canChangeMode(req),
+    capabilities: getModeCapabilities(),
+    updated_at: runtimeSystemState.updatedAt
+  });
+});
+
+app.post("/api/system/mode", async (req, res) => {
+  try {
+    if (!canChangeMode(req)) {
+      return res.status(403).json({ error: "Only trusted internal users can change mode" });
+    }
+    const nextMode = String(req.body?.mode || "").toLowerCase();
+    if (nextMode !== "live" && nextMode !== "test") {
+      return res.status(400).json({ error: "mode must be 'live' or 'test'" });
+    }
+
+    runtimeSystemState.mode = nextMode;
+    runtimeSystemState.updatedAt = new Date().toISOString();
+    await persistSystemMode(nextMode);
+
+    return res.json({
+      ok: true,
+      mode: runtimeSystemState.mode,
+      label: runtimeSystemState.mode === "test" ? "TEST MODE" : "LIVE MODE",
+      can_change: canChangeMode(req),
+      capabilities: getModeCapabilities(),
+      updated_at: runtimeSystemState.updatedAt
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 app.get("/api/conversations", async (req, res) => {
   try {
