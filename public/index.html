@@ -258,6 +258,23 @@
       color: var(--lsa-text);
       white-space: pre-wrap;
     }
+    .msg-meta {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--lsa-border);
+      display: grid;
+      gap: 6px;
+    }
+    .meta-block {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--lsa-text-muted);
+      white-space: pre-wrap;
+    }
+    .meta-label {
+      font-weight: 600;
+      color: var(--lsa-text);
+    }
   </style>
 </head>
 <body data-page="inbox">
@@ -507,16 +524,55 @@
       const safeCaption = escapeHtml(msg.caption || "");
       const attachmentHtml = renderAttachment(msg);
       const shouldRenderCaption = Boolean(msg.caption) && msg.caption !== textBody;
+      const isOutbound = msg.direction === "out";
+      const staffReplyText = String(msg.staff_reply_text || "").trim();
+      const sentReplyText = String(msg.sent_reply_text || "").trim();
+      const translatedText = String(msg.translated_text || "").trim();
+      const hasInboundTranslation = !isOutbound && translatedText && translatedText !== textBody;
+      const hasOutboundSentVersion = isOutbound && sentReplyText && sentReplyText !== (staffReplyText || textBody);
+
+      let metadataHtml = "";
+      if (!isOutbound && hasInboundTranslation) {
+        metadataHtml = `
+          <div class="msg-meta">
+            <div class="meta-block">
+              <span class="meta-label">Staff translation (${escapeHtml(msg.translated_language || "en")}):</span>
+              ${escapeHtml(translatedText)}
+            </div>
+          </div>
+        `;
+      } else if (isOutbound) {
+        const blocks = [];
+        const staffTextToShow = staffReplyText || textBody;
+        if (staffTextToShow) {
+          blocks.push(`
+            <div class="meta-block">
+              <span class="meta-label">Staff typed (${escapeHtml(msg.staff_reply_language || "en")}):</span>
+              ${escapeHtml(staffTextToShow)}
+            </div>
+          `);
+        }
+        if (hasOutboundSentVersion) {
+          blocks.push(`
+            <div class="meta-block">
+              <span class="meta-label">Sent to customer (${escapeHtml(msg.sent_reply_language || "")}):</span>
+              ${escapeHtml(sentReplyText)}
+            </div>
+          `);
+        }
+        metadataHtml = blocks.length ? `<div class="msg-meta">${blocks.join("")}</div>` : "";
+      }
 
       if (attachmentHtml) {
         return `
           <div>${escapeHtml(textBody)}</div>
           ${attachmentHtml}
           ${shouldRenderCaption ? `<div class="caption">${safeCaption}</div>` : ""}
+          ${metadataHtml}
         `;
       }
 
-      return `<div>${escapeHtml(textBody)}</div>`;
+      return `<div>${escapeHtml(textBody)}</div>${metadataHtml}`;
     }
 
     async function loadThreads() {

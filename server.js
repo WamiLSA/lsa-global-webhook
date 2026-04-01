@@ -513,6 +513,9 @@ const GREETING_PHRASES = {
 
 const SENSITIVE_ESCALATION_PATTERNS = /\b(discount|special offer|negotiat|exception|exceptions|urgent complaint|complaint|complaints|legal issue|refund|refunds|policy waiver|waiver|remboursement|rembolso|rimborso|reembolso)\b/i;
 const SUPPORTED_LIVE_MODE_LANGUAGES = ["en", "fr", "de", "es", "it", "pt", "zh", "ru", "ja", "nl", "ro", "pl", "sv", "da", "no"];
+const INTERNAL_WORKING_LANGUAGE_DEFAULT = SUPPORTED_LIVE_MODE_LANGUAGES.includes(String(process.env.INTERNAL_WORKING_LANGUAGE || "").toLowerCase())
+  ? String(process.env.INTERNAL_WORKING_LANGUAGE || "").toLowerCase()
+  : "en";
 const CONVERSATION_LANGUAGE_BY_CONTACT = new Map();
 const COURSE_LANGUAGE_KEYWORDS = {
   italian: ["italien", "italian", "italiano", "italiana"],
@@ -1191,18 +1194,37 @@ async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, speci
   });
 }
 
-async function saveMessage({ wa_id, contact_name = null, direction, body, message_type = "text" }) {
+async function saveMessage({
+  wa_id,
+  contact_name = null,
+  direction,
+  body,
+  message_type = "text",
+  original_language = null,
+  translated_text = null,
+  translated_language = null,
+  staff_reply_text = null,
+  staff_reply_language = null,
+  sent_reply_text = null,
+  sent_reply_language = null
+}) {
   const payload = {
     wa_id,
     contact_name,
     direction,
     body,
-    message_type
+    message_type,
+    original_language,
+    translated_text,
+    translated_language,
+    staff_reply_text,
+    staff_reply_language,
+    sent_reply_text,
+    sent_reply_language
   };
-  const { error } = await supabase.from("conversations").insert([payload]);
-
-  if (error) {
-    console.error("Supabase insert error:", error);
+  const result = await insertConversationPayload(payload);
+  if (!result.ok) {
+    console.error("Supabase insert error:", result.error);
   }
 }
 
@@ -1307,7 +1329,14 @@ async function saveMessageWithMetadata({
   media_url = null,
   file_name = null,
   mime_type = null,
-  caption = null
+  caption = null,
+  original_language = null,
+  translated_text = null,
+  translated_language = null,
+  staff_reply_text = null,
+  staff_reply_language = null,
+  sent_reply_text = null,
+  sent_reply_language = null
 }) {
   const payload = {
     wa_id,
@@ -1320,19 +1349,21 @@ async function saveMessageWithMetadata({
     media_url,
     file_name,
     mime_type,
-    caption
+    caption,
+    original_language,
+    translated_text,
+    translated_language,
+    staff_reply_text,
+    staff_reply_language,
+    sent_reply_text,
+    sent_reply_language
   };
 
-  const { error } = await supabase.from("conversations").insert([payload]);
-  if (!error) return;
-
-  const columnMissing = /column .* does not exist/i.test(error.message || "");
-  if (!columnMissing) {
-    console.error("Supabase insert with metadata error:", error);
-    return;
+  const result = await insertConversationPayload(payload);
+  if (!result.ok) {
+    console.error("Supabase insert with metadata error:", result.error);
+    await saveMessage({ wa_id, contact_name, direction, body, message_type });
   }
-
-  await saveMessage({ wa_id, contact_name, direction, body, message_type });
 }
 
 function sleep(ms) {
@@ -1471,6 +1502,117 @@ function detectMessageLanguage(text) {
   if (/\b(hei|takk|kurs|oversett)\b/.test(value)) return "no";
 
   return "en";
+}
+
+function extractMissingColumnName(error) {
+  const errorMessage = String(error?.message || "");
+  const match = errorMessage.match(/column ["']?([a-zA-Z0-9_]+)["']? does not exist/i);
+  return match ? match[1] : "";
+}
+
+async function insertConversationPayload(payload) {
+  const safePayload = { ...payload };
+  const removedColumns = new Set();
+
+  while (true) {
+    const { error } = await supabase.from("conversations").insert([safePayload]);
+    if (!error) return { ok: true, removedColumns: Array.from(removedColumns) };
+
+    const missingColumn = extractMissingColumnName(error);
+    if (!missingColumn || !(missingColumn in safePayload)) {
+      return { ok: false, error, removedColumns: Array.from(removedColumns) };
+    }
+
+    removedColumns.add(missingColumn);
+    delete safePayload[missingColumn];
+  }
+}
+
+function shouldTranslateText(text) {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (/^\[[^\]]+\]$/.test(value)) return false;
+  return true;
+}
+
+async function translateTextViaOpenAi({ text, sourceLanguage, targetLanguage, purpose = "translation" }) {
+  const safeText = String(text || "").trim();
+  if (!safeText) return "";
+  if (!OPENAI_API_KEY) return safeText;
+  if (sourceLanguage === targetLanguage) return safeText;
+
+  const response = await openai.responses.create({
+    model: "gpt-5-mini",
+    input: [
+      {
+        role: "system",
+        content: [
+          {
+            type: "input_text",
+            text: "You are a deterministic translation engine for customer support mediation. Preserve meaning, names, numbers, links, and intent."
+          }
+        ]
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: `Task: ${purpose}\nSource language code: ${sourceLanguage}\nTarget language code: ${targetLanguage}\n\nText:\n${safeText}`
+          }
+        ]
+      }
+    ]
+  });
+
+  return String(response.output_text || "").trim() || safeText;
+}
+
+async function detectAndTranslateInboundMessage({ text, workingLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT }) {
+  const originalText = String(text || "").trim();
+  const fallbackLanguage = detectMessageLanguage(originalText);
+
+  const baseResult = {
+    original_language: fallbackLanguage,
+    translated_text: originalText,
+    translated_language: workingLanguage
+  };
+
+  if (!shouldTranslateText(originalText)) {
+    return baseResult;
+  }
+
+  const detected = SUPPORTED_LIVE_MODE_LANGUAGES.includes(fallbackLanguage) ? fallbackLanguage : "en";
+  const translated = await translateTextViaOpenAi({
+    text: originalText,
+    sourceLanguage: detected,
+    targetLanguage: workingLanguage,
+    purpose: "Translate incoming customer message for internal staff readability."
+  });
+
+  return {
+    original_language: detected,
+    translated_text: translated || originalText,
+    translated_language: workingLanguage
+  };
+}
+
+async function getLatestCustomerLanguage(waId) {
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("direction, original_language, body")
+    .eq("wa_id", waId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error || !Array.isArray(data)) {
+    return "en";
+  }
+
+  const inbound = data.find((row) => row.direction === "in");
+  const fromStored = String(inbound?.original_language || "").toLowerCase();
+  if (SUPPORTED_LIVE_MODE_LANGUAGES.includes(fromStored)) return fromStored;
+  return detectMessageLanguage(inbound?.body || "");
 }
 
 function getLocalizedAck(language) {
@@ -1838,6 +1980,10 @@ app.post("/webhook", async (req, res) => {
     markMessageProcessed(inboundMessageId);
 
     console.log("Message received from:", from, "| text:", inboundBody);
+    const inboundMediation = await detectAndTranslateInboundMessage({
+      text: inboundBody,
+      workingLanguage: INTERNAL_WORKING_LANGUAGE_DEFAULT
+    });
 
     await saveMessageWithMetadata({
       wa_id: from,
@@ -1850,7 +1996,10 @@ app.post("/webhook", async (req, res) => {
       media_url: downloadedAttachment?.media_url || null,
       file_name: attachment?.file_name || null,
       mime_type: downloadedAttachment?.mime_type || attachment?.mime_type || null,
-      caption: attachment?.caption || null
+      caption: attachment?.caption || null,
+      original_language: inboundMediation.original_language,
+      translated_text: inboundMediation.translated_text,
+      translated_language: inboundMediation.translated_language
     });
 
     if (hasAttachment && !text) {
@@ -2388,16 +2537,41 @@ app.post("/api/send", async (req, res) => {
       return res.status(400).json({ error: "wa_id and body are required" });
     }
 
-    const sendResult = await sendWhatsAppText(wa_id, body);
+    const staffReplyText = String(body || "").trim();
+    const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
+    const customerLanguage = await getLatestCustomerLanguage(wa_id);
+    const sentReplyText = shouldTranslateText(staffReplyText)
+      ? await translateTextViaOpenAi({
+        text: staffReplyText,
+        sourceLanguage: staffReplyLanguage,
+        targetLanguage: customerLanguage,
+        purpose: "Translate internal staff reply for customer delivery."
+      })
+      : staffReplyText;
+
+    const sendResult = await sendWhatsAppText(wa_id, sentReplyText);
 
     await saveMessage({
       wa_id,
       direction: "out",
-      body,
-      message_type: "text"
+      body: staffReplyText,
+      message_type: "text",
+      staff_reply_text: staffReplyText,
+      staff_reply_language: staffReplyLanguage,
+      sent_reply_text: sentReplyText,
+      sent_reply_language: customerLanguage
     });
 
-    return res.json({ ok: true, sendResult });
+    return res.json({
+      ok: true,
+      sendResult,
+      mediation: {
+        staff_reply_text: staffReplyText,
+        staff_reply_language: staffReplyLanguage,
+        sent_reply_text: sentReplyText,
+        sent_reply_language: customerLanguage
+      }
+    });
   } catch (error) {
     console.error("Manual send error:", error.response?.data || error.message || error);
     return res.status(500).json({ error: error.response?.data || error.message });
@@ -2430,14 +2604,25 @@ app.post("/api/send-attachment", outboundUpload.single("attachment"), async (req
       return res.status(500).json({ error: "Failed to upload media to WhatsApp" });
     }
 
+    const trimmedCaption = typeof caption === "string" ? caption.trim() : "";
+    const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
+    const customerLanguage = await getLatestCustomerLanguage(wa_id);
+    const sentCaption = trimmedCaption
+      ? await translateTextViaOpenAi({
+        text: trimmedCaption,
+        sourceLanguage: staffReplyLanguage,
+        targetLanguage: customerLanguage,
+        purpose: "Translate internal staff attachment caption for customer delivery."
+      })
+      : "";
+
     const sendResult = await sendWhatsAppMedia({
       to: wa_id,
       mediaType,
       mediaId,
-      caption: typeof caption === "string" ? caption.trim() : ""
+      caption: sentCaption
     });
 
-    const trimmedCaption = typeof caption === "string" ? caption.trim() : "";
     const fallbackBody = trimmedCaption || getAttachmentFallbackBody(mediaType);
 
     await saveMessageWithMetadata({
@@ -2450,7 +2635,11 @@ app.post("/api/send-attachment", outboundUpload.single("attachment"), async (req
       media_url: `/uploads/whatsapp/${path.basename(file.path)}`,
       file_name: file.originalname || path.basename(file.path),
       mime_type: file.mimetype || null,
-      caption: trimmedCaption || null
+      caption: sentCaption || null,
+      staff_reply_text: trimmedCaption || null,
+      staff_reply_language: trimmedCaption ? staffReplyLanguage : null,
+      sent_reply_text: sentCaption || null,
+      sent_reply_language: sentCaption ? customerLanguage : null
     });
 
     return res.json({ ok: true, sendResult });
