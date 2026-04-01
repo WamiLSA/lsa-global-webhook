@@ -908,6 +908,7 @@ async function retrieveInternalKnowledge(query, options = {}) {
     let captureQuery = supabase
       .from("kb_capture_assistant")
       .select("id,title,raw_question,raw_answer,suggested_category,audience,source_channel,status,notes")
+      .eq("status", "approved")
       .limit(120);
     if (terms.length) {
       const orParts = [];
@@ -927,6 +928,7 @@ async function retrieveInternalKnowledge(query, options = {}) {
     let quickCaptureQuery = supabase
       .from("kb_quick_capture")
       .select("id,title,raw_text,source_type,status,notes")
+      .eq("status", "approved")
       .limit(120);
     if (terms.length) {
       const orParts = [];
