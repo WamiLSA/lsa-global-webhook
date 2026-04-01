@@ -418,9 +418,20 @@
       });
     }
 
+    function clearAttachmentSelection() {
+      const fileInput = document.getElementById("attachmentInput");
+      fileInput.value = "";
+      document.getElementById("attachmentName").textContent = "";
+    }
+
     async function loadConversation(wa_id, contactName = "Contact") {
+      const conversationChanged = currentWaId !== wa_id;
       currentWaId = wa_id;
       setThreadActionButtons();
+
+      if (conversationChanged) {
+        clearAttachmentSelection();
+      }
 
       document.getElementById("chatTitle").textContent =
         `${contactName} — ${wa_id}`;
@@ -494,8 +505,7 @@
       }
 
       box.value = "";
-      fileInput.value = "";
-      document.getElementById("attachmentName").textContent = "";
+      clearAttachmentSelection();
       await loadConversation(currentWaId);
       await loadThreads();
     }
