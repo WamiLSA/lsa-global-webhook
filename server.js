@@ -925,10 +925,12 @@ async function retrieveInternalKnowledge(query, options = {}) {
   }
 
   if (requestedSources.includes("kb_quick_capture")) {
+    // Quick-capture entries use pending/reviewed/processed in the KB UI.
+    // Treat reviewed/processed as approved-for-retrieval states.
     let quickCaptureQuery = supabase
       .from("kb_quick_capture")
       .select("id,title,raw_text,source_type,status,notes")
-      .eq("status", "approved")
+      .in("status", ["reviewed", "processed", "approved"])
       .limit(120);
     if (terms.length) {
       const orParts = [];
