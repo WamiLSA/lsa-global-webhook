@@ -39,6 +39,8 @@ const INBOX_USERNAME = process.env.INBOX_USERNAME;
 const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
 const AI_AUTOREPLY_ENABLED = String(process.env.AI_AUTOREPLY_ENABLED || "false").toLowerCase() === "true";
+const APP_ENV = String(process.env.APP_ENV || process.env.NODE_ENV || "production").toLowerCase();
+const AI_EXPERIMENTS_ENABLED = String(process.env.AI_EXPERIMENTS_ENABLED || "false").toLowerCase() === "true";
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
   "image/",
@@ -78,7 +80,20 @@ const outboundUpload = multer({
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-console.log(`[safety] AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"}`);
+const TEST_LIKE_ENVS = new Set(["test", "testing", "staging", "development", "dev"]);
+const IS_TEST_MODE = TEST_LIKE_ENVS.has(APP_ENV);
+const AI_EXPERIMENT_MODE = IS_TEST_MODE && AI_EXPERIMENTS_ENABLED;
+const AUTONOMOUS_REPLY_ALLOWED = AI_EXPERIMENT_MODE && AI_AUTOREPLY_ENABLED;
+console.log(`[mode] APP_ENV=${APP_ENV} | IS_TEST_MODE=${IS_TEST_MODE ? "true" : "false"}`);
+console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${AUTONOMOUS_REPLY_ALLOWED ? "true" : "false"}`);
+
+function requireAiExperimentMode(res) {
+  if (AI_EXPERIMENT_MODE) return true;
+  res.status(403).json({
+    error: "AI experiment endpoints are disabled in production-safe mode"
+  });
+  return false;
+}
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
@@ -1455,7 +1470,7 @@ app.post("/webhook", async (req, res) => {
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
       suppressAutoAck = true;
-    } else if (!AI_AUTOREPLY_ENABLED) {
+    } else if (!AUTONOMOUS_REPLY_ALLOWED) {
       reply = getLocalizedSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else {
@@ -2201,6 +2216,7 @@ app.delete("/api/kb/articles/:id", async (req, res) => {
 });
 app.post("/api/retrieval-test", requireAuth, async (req, res) => {
   try {
+    if (!requireAiExperimentMode(res)) return;
     const { query = "", options = {} } = req.body || {};
     if (!query || !query.trim()) {
       return res.status(400).json({ error: "query is required" });
@@ -2215,6 +2231,7 @@ app.post("/api/retrieval-test", requireAuth, async (req, res) => {
 
 app.post("/api/ai-reply", async (req, res) => {
   try {
+    if (!requireAiExperimentMode(res)) return;
     const { message, channel = "internal", wa_id = null } = req.body;
 
     if (!message || !message.trim()) {
