@@ -38,6 +38,7 @@ const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const INBOX_USERNAME = process.env.INBOX_USERNAME;
 const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
+const AI_AUTOREPLY_ENABLED = String(process.env.AI_AUTOREPLY_ENABLED || "false").toLowerCase() === "true";
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
   "image/",
@@ -77,6 +78,7 @@ const outboundUpload = multer({
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+console.log(`[safety] AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"}`);
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
@@ -1080,6 +1082,18 @@ function getLocalizedAck(language) {
   }
 }
 
+function getLocalizedSafeHandoffMessage(language) {
+  const byLang = {
+    en: "Thank you. Your request has been received. A member of the LSA GLOBAL team will reply shortly.",
+    fr: "Merci. Votre demande a bien été reçue. Un membre de l’équipe LSA GLOBAL vous répondra sous peu.",
+    es: "Gracias. Su solicitud ha sido recibida. Un miembro del equipo de LSA GLOBAL le responderá en breve.",
+    it: "Grazie. La sua richiesta è stata ricevuta. Un membro del team LSA GLOBAL le risponderà al più presto.",
+    pt: "Obrigado(a). Seu pedido foi recebido. Um membro da equipe LSA GLOBAL responderá em breve.",
+    de: "Danke. Ihre Anfrage wurde erhalten. Ein Mitglied des LSA GLOBAL-Teams wird Ihnen in Kürze antworten."
+  };
+  return byLang[language] || byLang.en;
+}
+
 function getLocalizedClarifyingQuestion(language) {
   switch (language) {
     case "fr":
@@ -1440,6 +1454,9 @@ app.post("/webhook", async (req, res) => {
       suppressAutoAck = true;
     } else if (menuSelection) {
       reply = getLocalizedMenuReply(detectedLanguage, menuSelection);
+      suppressAutoAck = true;
+    } else if (!AI_AUTOREPLY_ENABLED) {
+      reply = getLocalizedSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else {
       const narrowIntent = detectNarrowIntent(text);
