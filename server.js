@@ -559,6 +559,10 @@ function normalizeForIntent(text) {
     .trim();
 }
 
+function normalizeGreetingText(text) {
+  return normalizeForIntent(text);
+}
+
 function detectNarrowIntent(message) {
   const normalized = normalizeForIntent(message);
   if (!normalized) return null;
@@ -1386,7 +1390,7 @@ function isGreetingMessage(text) {
 }
 
 function detectGreetingLanguage(text) {
-  const normalized = normalizeForIntent(text);
+  const normalized = normalizeGreetingText(text);
   if (!normalized) return "";
 
   const words = normalized.split(" ").filter(Boolean);
@@ -1408,7 +1412,7 @@ function detectGreetingLanguage(text) {
 function detectGreetingIntent(text) {
   const language = detectGreetingLanguage(text);
   if (!language) return null;
-  const normalized = normalizeForIntent(text);
+  const normalized = normalizeGreetingText(text);
   const normalizedPhrases = (GREETING_PHRASES[language] || []).map(normalizeForIntent).filter(Boolean);
   const matchedPhrase = normalizedPhrases.find((phrase) => {
     const phrasePattern = phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
@@ -1452,12 +1456,12 @@ function getLocalizedEscalationMessage(language) {
 }
 
 function resolveConversationLanguage({ waId, text, greetingLanguage }) {
-  const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
-  if (stored) return stored;
   if (greetingLanguage && SUPPORTED_LIVE_MODE_LANGUAGES.includes(greetingLanguage)) {
     CONVERSATION_LANGUAGE_BY_CONTACT.set(waId, greetingLanguage);
     return greetingLanguage;
   }
+  const stored = CONVERSATION_LANGUAGE_BY_CONTACT.get(waId);
+  if (stored) return stored;
 
   const normalized = normalizeForIntent(text);
   const detected = detectMessageLanguage(text);
@@ -1726,7 +1730,15 @@ app.post("/webhook", async (req, res) => {
       && normalizedInbound.split(/\s+/).filter(Boolean).length <= 2;
 
     if (greetingIntent || isGreetingMessage(text)) {
-      reply = getGreetingMenu(detectedLanguage);
+      const incomingGreetingText = text || "";
+      const normalizedGreetingText = normalizeGreetingText(incomingGreetingText);
+      const greetingLanguageCode = greetingIntent?.language || detectGreetingLanguage(incomingGreetingText) || detectedLanguage;
+      reply = getGreetingMenu(greetingLanguageCode);
+      const renderedMenuLanguageCode = normalizeLanguageCode(greetingLanguageCode);
+      console.log("[greeting-debug] incoming greeting text:", incomingGreetingText);
+      console.log("[greeting-debug] normalized greeting text:", normalizedGreetingText);
+      console.log("[greeting-debug] detected language code:", greetingLanguageCode || "none");
+      console.log("[greeting-debug] rendered menu language code:", renderedMenuLanguageCode);
       suppressAutoAck = true;
     } else if (menuSelection) {
       reply = getOptionReply(menuSelection, detectedLanguage);
