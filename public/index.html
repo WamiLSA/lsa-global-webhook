@@ -183,26 +183,74 @@
     }
     .attachment {
       margin-top: 8px;
-      border-radius: 8px;
+      width: min(320px, 100%);
+      border-radius: 12px;
       overflow: hidden;
       border: 1px solid var(--lsa-border);
       background: var(--lsa-surface);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
     }
-    .attachment img,
-    .attachment video {
-      max-width: 280px;
+    .attachment-media {
       display: block;
+      width: 100%;
+      max-height: 240px;
+      object-fit: cover;
+      background: var(--lsa-surface-muted);
     }
     .attachment audio {
-      width: 280px;
+      width: 100%;
       display: block;
       background: var(--lsa-surface-muted);
     }
+    .attachment-details {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+    }
+    .attachment-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      background: var(--lsa-surface-muted);
+    }
+    .attachment-meta {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .attachment-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--lsa-text);
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attachment-subtitle {
+      font-size: 12px;
+      color: var(--lsa-text-muted);
+      text-transform: uppercase;
+    }
     .attachment-link {
-      display: inline-block;
-      padding: 8px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 8px;
+      padding: 6px 8px;
       text-decoration: none;
       color: var(--lsa-blue);
+      background: var(--lsa-bg);
+      font-size: 12px;
+      white-space: nowrap;
     }
     .caption {
       margin-top: 6px;
@@ -254,7 +302,7 @@
       <textarea id="replyBox" placeholder="Type your reply..."></textarea>
       <div class="composer-tools">
         <label class="attach-label" for="attachmentInput">📎 Attach file</label>
-        <input id="attachmentInput" type="file" accept="image/*,application/pdf" />
+        <input id="attachmentInput" type="file" accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.txt,.rtf,.odt,.xls,.xlsx,.ppt,.pptx,.zip" />
         <div id="attachmentName"></div>
         <button onclick="sendReply()">Send</button>
       </div>
@@ -329,49 +377,129 @@
         .replace(/'/g, "&#039;");
     }
 
+    function extensionFromFileName(fileName = "") {
+      const match = String(fileName).toLowerCase().match(/\.([a-z0-9]+)$/);
+      return match ? match[1] : "";
+    }
+
+    function getAttachmentKind(msg) {
+      const mimeType = String(msg.mime_type || "").toLowerCase();
+      const ext = extensionFromFileName(msg.file_name || "");
+
+      if (msg.media_type === "image" || mimeType.startsWith("image/")) return "image";
+      if (msg.media_type === "video" || mimeType.startsWith("video/")) return "video";
+      if (msg.media_type === "audio" || mimeType.startsWith("audio/")) return "audio";
+      if (mimeType === "application/pdf" || ext === "pdf") return "pdf";
+
+      const docExtensions = new Set(["doc", "docx", "txt", "rtf", "odt", "xls", "xlsx", "ppt", "pptx", "csv"]);
+      if (msg.media_type === "document" || mimeType.startsWith("application/") || docExtensions.has(ext)) return "document";
+
+      return "file";
+    }
+
+    function getAttachmentBadge(kind, mimeType, ext) {
+      if (kind === "pdf") return "PDF";
+      if (kind === "image") return "IMAGE";
+      if (kind === "audio") return "AUDIO";
+      if (kind === "video") return "VIDEO";
+      return (mimeType || ext || "FILE").replace(/[^a-z0-9/+.-]/gi, "").slice(0, 16).toUpperCase();
+    }
+
+    function renderAttachmentCard({ url, fileName, kind, mimeType, ext }) {
+      const iconByKind = {
+        pdf: "📄",
+        document: "🗂️",
+        audio: "🎵",
+        video: "🎬",
+        image: "🖼️",
+        file: "📎"
+      };
+
+      const badge = getAttachmentBadge(kind, mimeType, ext);
+
+      return `
+        <div class="attachment">
+          <div class="attachment-details">
+            <div class="attachment-icon">${iconByKind[kind] || iconByKind.file}</div>
+            <div class="attachment-meta">
+              <div class="attachment-title" title="${fileName}">${fileName}</div>
+              <div class="attachment-subtitle">${badge}</div>
+            </div>
+            <a class="attachment-link" href="${url}" target="_blank" rel="noopener noreferrer" download>Open</a>
+          </div>
+        </div>
+      `;
+    }
+
     function renderAttachment(msg) {
       if (!MEDIA_TYPES.has(msg.media_type) || !msg.media_url) return "";
       const safeUrl = encodeURI(msg.media_url);
       const safeName = escapeHtml(msg.file_name || `${msg.media_type} attachment`);
       const safeMimeType = escapeHtml(msg.mime_type || "");
+      const ext = extensionFromFileName(msg.file_name || "");
+      const kind = getAttachmentKind(msg);
 
-      if (msg.media_type === "image") {
+      if (kind === "image") {
         return `
           <div class="attachment">
             <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">
-              <img src="${safeUrl}" alt="${safeName}" loading="lazy" />
+              <img class="attachment-media" src="${safeUrl}" alt="${safeName}" loading="lazy" />
             </a>
+            <div class="attachment-details">
+              <div class="attachment-icon">🖼️</div>
+              <div class="attachment-meta">
+                <div class="attachment-title" title="${safeName}">${safeName}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+              </div>
+              <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">View</a>
+            </div>
           </div>
         `;
       }
 
-      if (msg.media_type === "video") {
+      if (kind === "video") {
         return `
           <div class="attachment">
-            <video controls preload="metadata">
+            <video class="attachment-media" controls preload="metadata">
               <source src="${safeUrl}" type="${safeMimeType}" />
             </video>
+            <div class="attachment-details">
+              <div class="attachment-icon">🎬</div>
+              <div class="attachment-meta">
+                <div class="attachment-title" title="${safeName}">${safeName}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+              </div>
+              <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open</a>
+            </div>
           </div>
         `;
       }
 
-      if (msg.media_type === "audio") {
+      if (kind === "audio") {
         return `
           <div class="attachment">
             <audio controls preload="metadata">
               <source src="${safeUrl}" type="${safeMimeType}" />
             </audio>
+            <div class="attachment-details">
+              <div class="attachment-icon">🎵</div>
+              <div class="attachment-meta">
+                <div class="attachment-title" title="${safeName}">${safeName}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+              </div>
+              <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open</a>
+            </div>
           </div>
         `;
       }
 
-      return `
-        <div class="attachment">
-          <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer" download>
-            📎 ${safeName}
-          </a>
-        </div>
-      `;
+      return renderAttachmentCard({
+        url: safeUrl,
+        fileName: safeName,
+        kind,
+        mimeType: safeMimeType,
+        ext
+      });
     }
 
     function renderMessageBody(msg) {
