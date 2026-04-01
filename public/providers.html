@@ -110,7 +110,9 @@
 
       <label class="small" for="capture_attachments"><strong>Attached Documents</strong></label>
       <input id="capture_attachments" type="file" multiple onchange="uploadProviderCaptureAttachments()" />
+      <div class="small">Supported formats: PDF, DOC, DOCX, TXT, RTF, JPG, JPEG, PNG, WEBP, ODT, HTML, CSV, XLSX (provider info sheets).</div>
       <ul id="captureAttachmentList" class="attachment-list"></ul>
+      <div id="captureExtractionStatus" class="small"></div>
 
       <button onclick="generateStructuredProvider()">Generate Structured Provider</button>
 
@@ -297,7 +299,7 @@
       providerCaptureAttachments.forEach((file, index) => {
         const li = document.createElement("li");
         li.className = "small";
-        li.innerHTML = `${file.originalName || file.filename} <button style="width:auto; margin-left:8px; padding:4px 8px;" onclick="removeCaptureAttachment(${index})">Remove</button>`;
+        li.innerHTML = `${file.originalName || file.filename} (${file.fileType || "unknown"}) <button style="width:auto; margin-left:8px; padding:4px 8px;" onclick="removeCaptureAttachment(${index})">Remove</button>`;
         list.appendChild(li);
       });
     }
@@ -338,6 +340,24 @@
       applyDraftToForm(providerDraft);
       document.getElementById("providerDraftSummary").textContent = result.summary || "Draft generated. Review the fields before sending.";
       document.getElementById("providerDraftCard").style.display = "block";
+      renderExtractionStatus(result.extraction_report || []);
+    }
+
+    function renderExtractionStatus(report) {
+      const el = document.getElementById("captureExtractionStatus");
+      if (!report.length) {
+        el.textContent = "";
+        return;
+      }
+      const failed = report.filter(item => item.status !== "success");
+      const parts = report.map(item => {
+        const base = `${item.filename}: ${item.status === "success" ? "text extraction succeeded" : "text extraction failed"}`;
+        return item.warning ? `${base} (${item.warning})` : base;
+      });
+      const noTextWarning = failed.length
+        ? "No readable text could be extracted from one or more files. Please paste the text manually or upload a clearer file."
+        : "";
+      el.textContent = [noTextWarning, ...parts].filter(Boolean).join(" | ");
     }
 
     function applyDraftToForm(data) {

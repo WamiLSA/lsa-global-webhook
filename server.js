@@ -90,8 +90,29 @@ const PROVIDER_CAPTURE_ALLOWED_MIME_TYPES = new Set([
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
+  "text/rtf",
+  "application/rtf",
+  "application/vnd.oasis.opendocument.text",
+  "text/html",
   "text/csv",
-  "application/json"
+  "application/json",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+]);
+const PROVIDER_CAPTURE_ALLOWED_EXTENSIONS = new Set([
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".txt",
+  ".rtf",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".odt",
+  ".html",
+  ".htm",
+  ".csv",
+  ".xlsx"
 ]);
 
 const providerCaptureUploadStorage = multer.diskStorage({
@@ -117,14 +138,140 @@ const providerCaptureUpload = multer({
   },
   fileFilter: (req, file, cb) => {
     const mimeType = (file.mimetype || "").toLowerCase();
-    const isAllowed = PROVIDER_CAPTURE_ALLOWED_MIME_TYPES.has(mimeType) || mimeType.startsWith("image/");
+    const extension = path.extname(String(file.originalname || "")).toLowerCase();
+    const isAllowed = PROVIDER_CAPTURE_ALLOWED_MIME_TYPES.has(mimeType)
+      || mimeType.startsWith("image/")
+      || PROVIDER_CAPTURE_ALLOWED_EXTENSIONS.has(extension);
     if (!isAllowed) {
-      cb(new Error("Unsupported file type for Provider Capture Assistant."));
+      cb(new Error("Unsupported file type for Provider Capture Assistant. Supported: PDF, DOC, DOCX, TXT, RTF, JPG, JPEG, PNG, WEBP, ODT, HTML, CSV, and XLSX."));
       return;
     }
     cb(null, true);
   }
 });
+
+function getProviderCaptureFileType(fileName = "", mimeType = "") {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  const mime = String(mimeType || "").toLowerCase();
+  if ([".jpg", ".jpeg", ".png", ".webp"].includes(extension) || mime.startsWith("image/")) return "image";
+  if (extension === ".pdf" || mime === "application/pdf") return "pdf";
+  if (extension === ".doc" || mime === "application/msword") return "doc";
+  if (extension === ".docx" || mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "docx";
+  if (extension === ".txt" || mime === "text/plain") return "txt";
+  if (extension === ".rtf" || mime === "text/rtf" || mime === "application/rtf") return "rtf";
+  if (extension === ".odt" || mime === "application/vnd.oasis.opendocument.text") return "odt";
+  if (extension === ".html" || extension === ".htm" || mime === "text/html") return "html";
+  if (extension === ".csv" || mime === "text/csv") return "csv";
+  if (extension === ".xlsx" || mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+  return "unknown";
+}
+
+function stripHtmlTags(value = "") {
+  return String(value || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTextFromRtf(value = "") {
+  return String(value || "")
+    .replace(/\\par[d]?/g, "\n")
+    .replace(/\\'[0-9a-fA-F]{2}/g, " ")
+    .replace(/\\[a-z]+-?\d*\s?/g, " ")
+    .replace(/[{}]/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractTextFromCsv(value = "") {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map(line => line.split(",").map(cell => cell.trim()).join(" | "))
+    .join("\n")
+    .trim();
+}
+
+async function extractTextWithAiFromFile({ safePath, mimeType, originalName, maxChars = 12000 }) {
+  const buffer = await fs.readFile(safePath);
+  const bytes = buffer.byteLength;
+  if (!bytes) return { text: "", warning: "File is empty." };
+  if (bytes > 6 * 1024 * 1024) {
+    return { text: "", warning: "File is too large for AI extraction. Please upload a smaller file or paste text manually." };
+  }
+
+  const mime = String(mimeType || "application/octet-stream").toLowerCase();
+  const base64 = buffer.toString("base64");
+  const aiInputContent = [{
+    type: "input_text",
+    text: "Extract all readable text from this provider document. Preserve paragraph structure where possible. Return plain text only."
+  }];
+
+  if (mime.startsWith("image/")) {
+    aiInputContent.push({
+      type: "input_image",
+      image_url: `data:${mime};base64,${base64}`
+    });
+  } else {
+    aiInputContent.push({
+      type: "input_file",
+      filename: originalName || path.basename(safePath),
+      file_data: `data:${mime};base64,${base64}`
+    });
+  }
+
+  const response = await openai.responses.create({
+    model: "gpt-5-mini",
+    input: [{ role: "user", content: aiInputContent }]
+  });
+
+  const extracted = String(response.output_text || "").trim();
+  return {
+    text: extracted.slice(0, maxChars),
+    warning: extracted ? "" : "No readable text was extracted by AI."
+  };
+}
+
+async function extractProviderAttachmentText({ safePath, mimeType, originalName }) {
+  const fileType = getProviderCaptureFileType(originalName, mimeType);
+  const extraction = {
+    fileType,
+    text: "",
+    status: "failed",
+    warning: ""
+  };
+
+  try {
+    if (["txt", "html", "csv", "rtf"].includes(fileType)) {
+      const raw = await fs.readFile(safePath, "utf-8");
+      if (fileType === "html") extraction.text = stripHtmlTags(raw);
+      else if (fileType === "csv") extraction.text = extractTextFromCsv(raw);
+      else if (fileType === "rtf") extraction.text = extractTextFromRtf(raw);
+      else extraction.text = raw.trim();
+    } else if (["pdf", "doc", "docx", "odt", "xlsx", "image"].includes(fileType)) {
+      const aiExtracted = await extractTextWithAiFromFile({ safePath, mimeType, originalName });
+      extraction.text = aiExtracted.text;
+      extraction.warning = aiExtracted.warning || "";
+    } else {
+      extraction.warning = "Unsupported file type.";
+    }
+
+    extraction.text = String(extraction.text || "").trim().slice(0, 12000);
+    if (extraction.text) {
+      extraction.status = "success";
+    } else {
+      extraction.status = "failed";
+      if (!extraction.warning) extraction.warning = "No readable text could be extracted.";
+    }
+    return extraction;
+  } catch (error) {
+    extraction.status = "failed";
+    extraction.warning = `Extraction error: ${error.message || "Unknown error"}`;
+    return extraction;
+  }
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -2722,6 +2869,7 @@ app.post("/api/provider-capture/upload", requireAuth, providerCaptureUpload.arra
       filename: file.filename,
       originalName: file.originalname,
       mimeType: file.mimetype,
+      fileType: getProviderCaptureFileType(file.originalname, file.mimetype),
       size: file.size,
       url: `/uploads/provider-capture/${file.filename}`
     }));
@@ -2747,31 +2895,63 @@ app.post("/api/provider-capture/generate", requireAuth, async (req, res) => {
     }
 
     const attachmentLines = [];
+    const extractionReport = [];
+    const extractedBlocks = [];
     for (const item of (attachments || []).slice(0, 10)) {
       const fileName = path.basename(String(item.filename || ""));
       if (!fileName) continue;
       const safePath = path.join(PROVIDER_CAPTURE_STORAGE_DIR, fileName);
       if (!safePath.startsWith(PROVIDER_CAPTURE_STORAGE_DIR)) continue;
       const exists = fsSync.existsSync(safePath);
-      if (!exists) continue;
-
-      let extractedText = "";
-      const mimeType = String(item.mimeType || "").toLowerCase();
-      if (mimeType.startsWith("text/") || mimeType === "application/json") {
-        try {
-          extractedText = await fs.readFile(safePath, "utf-8");
-          extractedText = extractedText.slice(0, 4000);
-        } catch (_error) {
-          extractedText = "";
-        }
+      if (!exists) {
+        extractionReport.push({
+          filename: item.originalName || fileName,
+          mimeType: item.mimeType || "unknown",
+          status: "failed",
+          warning: "File was not found on server."
+        });
+        continue;
       }
+
+      const mimeType = String(item.mimeType || "").toLowerCase();
+      const extracted = await extractProviderAttachmentText({
+        safePath,
+        mimeType,
+        originalName: item.originalName || fileName
+      });
+      const extractedText = String(extracted.text || "").slice(0, 4000);
 
       attachmentLines.push(`- File: ${item.originalName || fileName} (${mimeType || "unknown mime"})`);
       if (extractedText) {
         attachmentLines.push(`  Extracted text snippet: ${extractedText.replace(/\s+/g, " ").trim()}`);
+        extractedBlocks.push(`[${item.originalName || fileName}]\n${extracted.text}`);
       } else {
-        attachmentLines.push("  Extracted text snippet: [No direct text extracted. Use file metadata and other source inputs.] ");
+        attachmentLines.push("  Extracted text snippet: [No readable text extracted.]");
       }
+
+      extractionReport.push({
+        filename: item.originalName || fileName,
+        mimeType: mimeType || "unknown",
+        fileType: extracted.fileType,
+        status: extracted.status,
+        warning: extracted.warning || ""
+      });
+      if (extracted.warning) {
+        console.warn(`[provider-capture] extraction warning for ${item.originalName || fileName}: ${extracted.warning}`);
+      }
+    }
+    const combinedExtractedText = extractedBlocks.join("\n\n").trim();
+    const hasAttachmentFailures = extractionReport.some(file => file.status !== "success");
+    const hasAnyReadableText = Boolean(
+      String(raw_text || "").trim()
+      || String(manual_notes || "").trim()
+      || combinedExtractedText
+    );
+    if (!hasAnyReadableText) {
+      return res.status(400).json({
+        error: "No readable text could be extracted from one or more files. Please paste the text manually or upload a clearer file.",
+        extraction_report: extractionReport
+      });
     }
 
     const prompt = `
@@ -2815,6 +2995,9 @@ ${raw_text || ""}
 Manual notes:
 ${manual_notes || ""}
 
+Extracted attachment text:
+${combinedExtractedText || "[No readable text extracted from attachments]"}
+
 Source channel:
 ${source_channel || "manual"}
 
@@ -2842,7 +3025,10 @@ ${attachmentLines.join("\n") || "No attachments."}
     return res.json({
       ok: true,
       result: parsed,
-      summary: "Structured draft generated. Review and edit before sending to Official Providers."
+      summary: hasAttachmentFailures
+        ? "Structured draft generated with warnings. Review extraction details before sending to Official Providers."
+        : "Structured draft generated. Review and edit before sending to Official Providers.",
+      extraction_report: extractionReport
     });
   } catch (error) {
     console.error("Provider capture generate error:", error.response?.data || error.message || error);
