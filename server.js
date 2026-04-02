@@ -3352,6 +3352,263 @@ app.get("/api/providers", async (req, res) => {
   }
 });
 
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeEmail(value) {
+  return normalizeText(value);
+}
+
+function normalizePhone(value) {
+  return String(value || "").replace(/[^\d+]/g, "");
+}
+
+function normalizeToken(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function tokenizeList(value) {
+  return normalizeToken(value)
+    .split(/[\n,;|/]+/g)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function tokenizeWords(value) {
+  return normalizeToken(value)
+    .split(/\s+/g)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function jaccardSimilarity(aTokens, bTokens) {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  let intersection = 0;
+  for (const token of aSet) {
+    if (bSet.has(token)) intersection += 1;
+  }
+  const union = new Set([...aSet, ...bSet]).size;
+  return union ? intersection / union : 0;
+}
+
+function getOverlap(a, b) {
+  const aTokens = tokenizeList(a);
+  const bTokens = tokenizeList(b);
+  if (!aTokens.length || !bTokens.length) return [];
+  const bSet = new Set(bTokens);
+  return [...new Set(aTokens.filter(token => bSet.has(token)))];
+}
+
+function getConfidenceLabel(score) {
+  if (score >= 80) return "very_high";
+  if (score >= 60) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+}
+
+function scoreProviderDuplicate(draft, existing) {
+  const reasons = [];
+  const matchedFields = new Set();
+  let score = 0;
+
+  const draftEmail = normalizeEmail(draft.email);
+  const existingEmail = normalizeEmail(existing.email);
+  if (draftEmail && existingEmail && draftEmail === existingEmail) {
+    score += 50;
+    matchedFields.add("email");
+    reasons.push("Exact email match");
+  }
+
+  const draftPhone = normalizePhone(draft.phone);
+  const existingPhone = normalizePhone(existing.phone);
+  if (draftPhone && existingPhone && draftPhone === existingPhone) {
+    score += 45;
+    matchedFields.add("phone");
+    reasons.push("Exact phone match");
+  }
+
+  const draftWhatsapp = normalizePhone(draft.whatsapp);
+  const existingWhatsapp = normalizePhone(existing.whatsapp);
+  if (draftWhatsapp && existingWhatsapp && draftWhatsapp === existingWhatsapp) {
+    score += 45;
+    matchedFields.add("whatsapp");
+    reasons.push("Exact WhatsApp match");
+  }
+
+  const draftFullName = normalizeToken(draft.full_name);
+  const existingFullName = normalizeToken(existing.full_name);
+  if (draftFullName && existingFullName) {
+    if (draftFullName === existingFullName) {
+      score += 35;
+      matchedFields.add("full_name");
+      reasons.push("Exact full name match");
+    } else {
+      const similarity = jaccardSimilarity(tokenizeWords(draftFullName), tokenizeWords(existingFullName));
+      if (similarity >= 0.75) {
+        score += 20;
+        matchedFields.add("full_name");
+        reasons.push("Highly similar full name");
+      }
+    }
+  }
+
+  const draftOrg = normalizeToken(draft.organization_name);
+  const existingOrg = normalizeToken(existing.organization_name);
+  if (draftOrg && existingOrg) {
+    if (draftOrg === existingOrg) {
+      score += 30;
+      matchedFields.add("organization_name");
+      reasons.push("Exact organization match");
+    } else {
+      const similarity = jaccardSimilarity(tokenizeWords(draftOrg), tokenizeWords(existingOrg));
+      if (similarity >= 0.7) {
+        score += 18;
+        matchedFields.add("organization_name");
+        reasons.push("Similar organization name");
+      }
+    }
+  }
+
+  const draftContact = normalizeToken(draft.contact_person);
+  const existingContact = normalizeToken(existing.contact_person);
+  if (draftContact && existingContact && draftContact === existingContact) {
+    score += 15;
+    matchedFields.add("contact_person");
+    reasons.push("Exact contact person match");
+  }
+
+  const countryMatch = normalizeToken(draft.country) && normalizeToken(draft.country) === normalizeToken(existing.country);
+  const cityMatch = normalizeToken(draft.city) && normalizeToken(draft.city) === normalizeToken(existing.city);
+  if (countryMatch) {
+    score += 8;
+    matchedFields.add("country");
+    reasons.push("Same country");
+  }
+  if (cityMatch) {
+    score += 7;
+    matchedFields.add("city");
+    reasons.push("Same city");
+  }
+
+  const draftNameTokens = tokenizeWords(draftFullName || draftOrg || "");
+  const existingNameTokens = tokenizeWords(existingFullName || existingOrg || "");
+  const partialNameSimilarity = jaccardSimilarity(draftNameTokens, existingNameTokens);
+  if (partialNameSimilarity >= 0.5 && (countryMatch || cityMatch)) {
+    score += 12;
+    matchedFields.add("name_location");
+    reasons.push("Partial name similarity with matching location");
+  }
+
+  const languageOverlap = getOverlap(draft.working_languages, existing.working_languages);
+  if (languageOverlap.length) {
+    score += Math.min(6, languageOverlap.length * 2);
+    matchedFields.add("working_languages");
+    reasons.push(`Shared working languages: ${languageOverlap.join(", ")}`);
+  }
+
+  const pairOverlap = getOverlap(draft.language_pairs, existing.language_pairs);
+  if (pairOverlap.length) {
+    score += Math.min(8, pairOverlap.length * 2);
+    matchedFields.add("language_pairs");
+    reasons.push(`Shared language pairs: ${pairOverlap.join(", ")}`);
+  }
+
+  const servicesOverlap = getOverlap(draft.services, existing.services);
+  if (servicesOverlap.length) {
+    score += Math.min(6, servicesOverlap.length * 2);
+    matchedFields.add("services");
+    reasons.push(`Shared services: ${servicesOverlap.join(", ")}`);
+  }
+
+  const specOverlap = getOverlap(draft.specializations, existing.specializations);
+  if (specOverlap.length) {
+    score += Math.min(5, specOverlap.length * 2);
+    matchedFields.add("specializations");
+    reasons.push(`Shared specializations: ${specOverlap.join(", ")}`);
+  }
+
+  return {
+    score,
+    reasons,
+    matchedFields: [...matchedFields]
+  };
+}
+
+// ===== PROVIDER API: DUPLICATE CHECK =====
+app.post("/api/providers/duplicate-check", async (req, res) => {
+  try {
+    const draft = req.body?.draft || req.body || {};
+    const excludeId = req.body?.exclude_id || null;
+
+    const keyFields = [
+      draft.full_name,
+      draft.organization_name,
+      draft.contact_person,
+      draft.email,
+      draft.phone,
+      draft.whatsapp,
+      draft.country,
+      draft.city
+    ].map(value => String(value || "").trim()).filter(Boolean);
+
+    if (!keyFields.length) {
+      return res.json({
+        ok: true,
+        duplicates: [],
+        summary: "No candidate data provided for duplicate detection."
+      });
+    }
+
+    const { data, error } = await supabase
+      .from("providers")
+      .select("id, full_name, organization_name, contact_person, email, phone, whatsapp, country, city, working_languages, language_pairs, services, specializations, provider_type, status")
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const ranked = (data || [])
+      .filter(item => !excludeId || String(item.id) !== String(excludeId))
+      .map(item => {
+        const result = scoreProviderDuplicate(draft, item);
+        return {
+          provider_id: item.id,
+          provider_name: item.full_name || "Unnamed Provider",
+          organization_name: item.organization_name || "",
+          contact: {
+            email: item.email || "",
+            phone: item.phone || "",
+            whatsapp: item.whatsapp || ""
+          },
+          country: item.country || "",
+          city: item.city || "",
+          matched_fields: result.matchedFields,
+          reasons: result.reasons,
+          confidence_score: result.score,
+          confidence_level: getConfidenceLabel(result.score)
+        };
+      })
+      .filter(item => item.confidence_score >= 35 || item.matched_fields.includes("email") || item.matched_fields.includes("phone") || item.matched_fields.includes("whatsapp"))
+      .sort((a, b) => b.confidence_score - a.confidence_score)
+      .slice(0, 8);
+
+    return res.json({
+      ok: true,
+      duplicates: ranked,
+      summary: ranked.length
+        ? `Found ${ranked.length} possible duplicate provider(s).`
+        : "No likely duplicates found."
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ===== PROVIDER API: CREATE =====
 app.post("/api/providers", async (req, res) => {
   try {
