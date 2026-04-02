@@ -95,46 +95,6 @@
       margin-top: 8px;
       background: var(--lsa-bg-soft);
     }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-size: 12px;
-      border: 1px solid var(--lsa-border);
-      margin-left: 6px;
-    }
-
-    .dup-status {
-      padding: 8px 10px;
-      border-radius: 8px;
-      margin-bottom: 10px;
-      border: 1px solid var(--lsa-border);
-      background: var(--lsa-surface);
-    }
-
-    .dup-status.ok {
-      border-color: #2e7d32;
-      background: rgba(46, 125, 50, 0.1);
-    }
-
-    .dup-status.warn {
-      border-color: #f57f17;
-      background: rgba(245, 127, 23, 0.12);
-    }
-
-    .dup-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-
-    .dup-actions button {
-      width: auto;
-      margin: 0;
-      padding: 8px 12px;
-    }
   </style>
 </head>
 <body data-page="providers">
@@ -169,7 +129,7 @@
         <div class="small" id="providerDraftSummary"></div>
         <button onclick="checkProviderDuplicates()">Check Duplicates</button>
         <div id="duplicateReviewState" class="small" style="display:none;"></div>
-        <div id="duplicateCheckPanel" class="small" style="display:none;"></div>
+        <div id="duplicateCheckPanel" style="display:none;"></div>
         <button onclick="applyDraftToProviderForm()">Send to Official Providers</button>
       </div>
     </div>
@@ -483,61 +443,40 @@
       renderDuplicatePanel(result);
     }
 
-    function markUpdateLater(providerId, providerName) {
-      const notesEl = document.getElementById("notes");
-      const line = `Potential duplicate review target: provider #${providerId} (${providerName || "Unnamed Provider"}).`;
-      if (!notesEl.value.includes(line)) {
-        notesEl.value = notesEl.value.trim() ? `${notesEl.value.trim()}\n${line}` : line;
-      }
-      alert("Marked in notes. You can create a new provider now and update the existing record later.");
-    }
-
-    function stopAndReview() {
-      alert("Stopped before sending to Official Providers. Review duplicate candidates and decide next step.");
-    }
-
     function renderDuplicatePanel(result) {
       const panel = document.getElementById("duplicateCheckPanel");
       const duplicates = Array.isArray(result.duplicates) ? result.duplicates : [];
 
+      panel.style.display = "block";
+
       if (!duplicates.length) {
         panel.innerHTML = `
-          <div class="dup-status ok"><strong>No likely duplicates found.</strong> You can continue creating a new official provider.</div>
-          <div class="dup-actions">
-            <button onclick="applyDraftToProviderForm()">Create New Official Provider</button>
+          <div class="card">
+            <div class="title">Duplicate Check Results</div>
+            <div class="small">No likely duplicates found.</div>
           </div>
         `;
         return;
       }
 
       panel.innerHTML = `
-        <div class="dup-status warn"><strong>Possible duplicates found (${duplicates.length})</strong></div>
-        <div class="small" style="margin-bottom:8px;">Review-first flow: decide whether to create a new provider anyway, update an existing provider later, or stop and review manually.</div>
+        <div class="card">
+          <div class="title">Duplicate Check Results</div>
+          <div class="small">Possible duplicates found (${duplicates.length}).</div>
+        </div>
       `;
 
       duplicates.forEach(item => {
         const div = document.createElement("div");
-        div.className = "dup-result";
+        div.className = "card";
         div.innerHTML = `
-          <div><strong>${item.provider_name || "Unnamed Provider"}</strong> <span class="badge">${item.confidence_level || "low"} (${item.confidence_score || 0})</span></div>
+          <div class="title">${item.provider_name || "Unnamed Provider"}</div>
           <div class="small">Organization: ${item.organization_name || "-"}</div>
-          <div class="small">Contact: ${item.contact?.email || "-"} | ${item.contact?.phone || "-"} | ${item.contact?.whatsapp || "-"}</div>
-          <div class="small">Location: ${item.country || "-"} / ${item.city || "-"}</div>
-          <div class="small">Primary match signal: ${item.similarity_reason || "-"}</div>
           <div class="small">Matched fields: ${(item.matched_fields || []).join(", ") || "-"}</div>
-          <div class="small">Why matched: ${(item.reasons || []).join(" · ") || "-"}</div>
-          <div class="dup-actions">
-            <button onclick="markUpdateLater('${item.provider_id}', ${JSON.stringify(item.provider_name || "")})">Update Existing Later</button>
-            <button onclick="stopAndReview()">Stop & Review</button>
-          </div>
+          <div class="small">Reason: ${(item.reasons || []).join(" · ") || item.similarity_reason || "-"}</div>
         `;
         panel.appendChild(div);
       });
-
-      const footer = document.createElement("div");
-      footer.className = "dup-actions";
-      footer.innerHTML = `<button onclick="applyDraftToProviderForm()">Create New Provider Anyway</button>`;
-      panel.appendChild(footer);
     }
 
     function renderExtractionStatus(report) {
