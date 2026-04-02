@@ -275,6 +275,36 @@
       font-weight: 600;
       color: var(--lsa-text);
     }
+    .mediation-panel {
+      margin-top: 8px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--lsa-surface-muted);
+    }
+    .mediation-row {
+      padding: 8px 10px;
+      border-top: 1px solid var(--lsa-border);
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--lsa-text);
+      white-space: pre-wrap;
+    }
+    .mediation-row:first-child {
+      border-top: none;
+    }
+    .mediation-row--highlight {
+      background: color-mix(in srgb, var(--lsa-hover) 60%, transparent);
+    }
+    .mediation-row-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      color: var(--lsa-text-muted);
+    }
   </style>
 </head>
 <body data-page="inbox">
@@ -528,39 +558,48 @@
       const staffReplyText = String(msg.staff_reply_text || "").trim();
       const sentReplyText = String(msg.sent_reply_text || "").trim();
       const translatedText = String(msg.translated_text || "").trim();
-      const hasInboundTranslation = !isOutbound && translatedText && translatedText !== textBody;
-      const hasOutboundSentVersion = isOutbound && sentReplyText && sentReplyText !== (staffReplyText || textBody);
+      const originalLanguage = String(msg.original_language || "").trim() || "unknown";
+      const translatedLanguage = String(msg.translated_language || "").trim() || "en";
+      const staffReplyLanguage = String(msg.staff_reply_language || "").trim() || "en";
+      const sentReplyLanguage = String(msg.sent_reply_language || "").trim() || "unknown";
 
       let metadataHtml = "";
-      if (!isOutbound && hasInboundTranslation) {
+      if (!isOutbound) {
+        const inboundOriginal = textBody;
+        const inboundStaffTranslation = translatedText || textBody;
         metadataHtml = `
-          <div class="msg-meta">
-            <div class="meta-block">
-              <span class="meta-label">Staff translation (${escapeHtml(msg.translated_language || "en")}):</span>
-              ${escapeHtml(translatedText)}
+          <div class="mediation-panel">
+            <div class="mediation-row">
+              <span class="mediation-row-label">Original (${escapeHtml(originalLanguage)})</span>
+              ${escapeHtml(inboundOriginal)}
+            </div>
+            <div class="mediation-row mediation-row--highlight">
+              <span class="mediation-row-label">Staff Translation (${escapeHtml(translatedLanguage)})</span>
+              ${escapeHtml(inboundStaffTranslation)}
             </div>
           </div>
         `;
       } else if (isOutbound) {
         const blocks = [];
-        const staffTextToShow = staffReplyText || textBody;
+        const staffTextToShow = staffReplyText || textBody || "";
+        const sentTextToShow = sentReplyText || textBody || "";
         if (staffTextToShow) {
           blocks.push(`
-            <div class="meta-block">
-              <span class="meta-label">Staff typed (${escapeHtml(msg.staff_reply_language || "en")}):</span>
+            <div class="mediation-row">
+              <span class="mediation-row-label">Staff Reply (${escapeHtml(staffReplyLanguage)})</span>
               ${escapeHtml(staffTextToShow)}
             </div>
           `);
         }
-        if (hasOutboundSentVersion) {
+        if (sentTextToShow) {
           blocks.push(`
-            <div class="meta-block">
-              <span class="meta-label">Sent to customer (${escapeHtml(msg.sent_reply_language || "")}):</span>
-              ${escapeHtml(sentReplyText)}
+            <div class="mediation-row mediation-row--highlight">
+              <span class="mediation-row-label">Sent to Customer (${escapeHtml(sentReplyLanguage)})</span>
+              ${escapeHtml(sentTextToShow)}
             </div>
           `);
         }
-        metadataHtml = blocks.length ? `<div class="msg-meta">${blocks.join("")}</div>` : "";
+        metadataHtml = blocks.length ? `<div class="mediation-panel">${blocks.join("")}</div>` : "";
       }
 
       if (attachmentHtml) {
