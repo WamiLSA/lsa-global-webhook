@@ -1513,13 +1513,37 @@ function extractMissingColumnName(error) {
 async function insertConversationPayload(payload) {
   const safePayload = { ...payload };
   const removedColumns = new Set();
+  const direction = String(payload?.direction || "unknown");
+  const waId = String(payload?.wa_id || "");
+  const messageType = String(payload?.message_type || "text");
 
   while (true) {
+    console.log("[inbound-db] insert attempted", {
+      wa_id: waId,
+      direction,
+      message_type: messageType,
+      payload_keys: Object.keys(safePayload)
+    });
     const { error } = await supabase.from("conversations").insert([safePayload]);
-    if (!error) return { ok: true, removedColumns: Array.from(removedColumns) };
+    if (!error) {
+      console.log("[inbound-db] insert success", {
+        wa_id: waId,
+        direction,
+        message_type: messageType,
+        removed_columns: Array.from(removedColumns)
+      });
+      return { ok: true, removedColumns: Array.from(removedColumns) };
+    }
 
     const missingColumn = extractMissingColumnName(error);
     if (!missingColumn || !(missingColumn in safePayload)) {
+      console.error("[inbound-db] insert failure", {
+        wa_id: waId,
+        direction,
+        message_type: messageType,
+        removed_columns: Array.from(removedColumns),
+        error_message: error.message || String(error)
+      });
       return { ok: false, error, removedColumns: Array.from(removedColumns) };
     }
 
@@ -1583,12 +1607,21 @@ async function detectAndTranslateInboundMessage({ text, workingLanguage = INTERN
   }
 
   const detected = SUPPORTED_LIVE_MODE_LANGUAGES.includes(fallbackLanguage) ? fallbackLanguage : "en";
-  const translated = await translateTextViaOpenAi({
-    text: originalText,
-    sourceLanguage: detected,
-    targetLanguage: workingLanguage,
-    purpose: "Translate incoming customer message for internal staff readability."
-  });
+  let translated = originalText;
+  try {
+    translated = await translateTextViaOpenAi({
+      text: originalText,
+      sourceLanguage: detected,
+      targetLanguage: workingLanguage,
+      purpose: "Translate incoming customer message for internal staff readability."
+    });
+  } catch (error) {
+    console.warn("[inbound-translation] fallback to original text after translation failure", {
+      source_language: detected,
+      target_language: workingLanguage,
+      error_message: error?.message || String(error)
+    });
+  }
 
   return {
     original_language: detected,
@@ -1935,6 +1968,10 @@ ${kbContext}
 app.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
+    console.log("[inbound-webhook] received", {
+      object: body?.object || null,
+      has_entry: Boolean(body?.entry?.length)
+    });
 
     if (body.object !== "whatsapp_business_account") {
       return res.sendStatus(404);
@@ -1970,6 +2007,13 @@ app.post("/webhook", async (req, res) => {
       ? getAttachmentFallbackBody(attachment.media_type)
       : "";
     const inboundBody = text || attachment?.caption || attachmentFallbackBody;
+    console.log("[inbound-webhook] normalized message", {
+      wa_id: from || null,
+      message_id: inboundMessageId,
+      message_type: message?.type || "text",
+      has_attachment: hasAttachment,
+      normalized_text_preview: String(inboundBody || "").slice(0, 120)
+    });
 
     if (!inboundBody) {
       return res.sendStatus(200);
@@ -2318,7 +2362,7 @@ app.get("/api/conversations", async (req, res) => {
     const activeOnlyResponse = await supabase
       .from("conversations")
       .select("wa_id, contact_name, body, created_at, direction, label")
-      .eq("is_archived", false)
+      .or("is_archived.is.false,is_archived.is.null")
       .order("created_at", { ascending: false });
 
     data = activeOnlyResponse.data;
@@ -2336,6 +2380,7 @@ app.get("/api/conversations", async (req, res) => {
     if (error) {
       return res.status(500).json({ error });
     }
+    console.log("[inbox-api] /api/conversations rows returned", Array.isArray(data) ? data.length : 0);
 
     const map = new Map();
 
@@ -2405,6 +2450,10 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
     if (error) {
       return res.status(500).json({ error });
     }
+    console.log("[inbox-api] /api/conversations/:wa_id rows returned", {
+      wa_id,
+      count: Array.isArray(data) ? data.length : 0
+    });
 
     return res.json(data);
   } catch (err) {
