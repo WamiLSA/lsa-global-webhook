@@ -95,6 +95,35 @@
       margin-top: 8px;
       background: var(--lsa-bg-soft);
     }
+
+    .provider-documents-toolbar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .provider-documents-toolbar textarea,
+    .provider-documents-toolbar input,
+    .provider-documents-toolbar select,
+    .provider-documents-toolbar button {
+      margin-bottom: 0;
+    }
+
+    .provider-documents-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+
+    .provider-documents-table th,
+    .provider-documents-table td {
+      border: 1px solid var(--lsa-border);
+      padding: 6px;
+      vertical-align: top;
+      text-align: left;
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -207,6 +236,8 @@
     let providerDraft = null;
     let duplicateCheckResult = null;
     let duplicateCheckFingerprint = "";
+    const providerDocumentsByProvider = {};
+    const providerDocumentTypeOptions = ["CV", "Certificate", "Company Profile", "Contract", "Portfolio", "Reference", "Other"];
 
     async function loadProviders() {
       const res = await fetch("/api/providers");
@@ -261,6 +292,19 @@
           <div class="small">Experience: ${provider.years_experience || ""}</div>
           <div class="small">Source: ${provider.source_channel || ""}</div>
           <div style="margin-top:8px; white-space:pre-wrap;">${provider.notes || ""}</div>
+          <div class="card" style="margin-top:10px;">
+            <div class="title">Provider Documents</div>
+            <div class="small">Upload Document</div>
+            <div class="provider-documents-toolbar">
+              <input id="providerDocFile_${provider.id}" type="file" />
+              <select id="providerDocType_${provider.id}">
+                ${providerDocumentTypeOptions.map(option => `<option value="${option}">${option}</option>`).join("")}
+              </select>
+            </div>
+            <textarea id="providerDocNotes_${provider.id}" class="small" placeholder="Optional notes"></textarea>
+            <button onclick="uploadProviderDocument(${provider.id})">Upload Document</button>
+            <div id="providerDocsList_${provider.id}" class="small">Loading document list...</div>
+          </div>
           <div class="actions">
             <button onclick="editProvider(${provider.id})">Edit</button>
             <button onclick="deleteProvider(${provider.id})">Delete</button>
@@ -268,7 +312,111 @@
         `;
 
         container.appendChild(div);
+        loadProviderDocuments(provider.id);
       });
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "-";
+      return date.toLocaleString();
+    }
+
+    async function loadProviderDocuments(providerId) {
+      const listEl = document.getElementById(`providerDocsList_${providerId}`);
+      if (!listEl) return;
+      listEl.textContent = "Loading document list...";
+
+      const res = await fetch(`/api/providers/${providerId}/documents`);
+      const result = await res.json();
+      if (!res.ok) {
+        listEl.textContent = `Failed to load documents: ${JSON.stringify(result)}`;
+        return;
+      }
+
+      providerDocumentsByProvider[providerId] = Array.isArray(result.data) ? result.data : [];
+      renderProviderDocumentList(providerId);
+    }
+
+    function renderProviderDocumentList(providerId) {
+      const listEl = document.getElementById(`providerDocsList_${providerId}`);
+      if (!listEl) return;
+      const docs = providerDocumentsByProvider[providerId] || [];
+
+      if (!docs.length) {
+        listEl.innerHTML = "<div class='small'>Document List: no files uploaded yet.</div>";
+        return;
+      }
+
+      listEl.innerHTML = `
+        <table class="provider-documents-table">
+          <thead>
+            <tr>
+              <th>File Name</th>
+              <th>Document Type</th>
+              <th>Upload Date</th>
+              <th>Notes</th>
+              <th>Open/Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${docs.map(doc => `
+              <tr>
+                <td>${escapeHtml(doc.original_name || doc.file_name || "file")}</td>
+                <td>${escapeHtml(doc.document_type || "Other")}</td>
+                <td>${escapeHtml(formatDateTime(doc.created_at))}</td>
+                <td>${escapeHtml(doc.notes || "-")}</td>
+                <td><a href="${escapeHtml(doc.file_url || "#")}" target="_blank" rel="noopener noreferrer">Open / Download</a></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function uploadProviderDocument(providerId) {
+      const fileInput = document.getElementById(`providerDocFile_${providerId}`);
+      const typeInput = document.getElementById(`providerDocType_${providerId}`);
+      const notesInput = document.getElementById(`providerDocNotes_${providerId}`);
+      const listEl = document.getElementById(`providerDocsList_${providerId}`);
+      const selectedFile = fileInput?.files?.[0];
+
+      if (!selectedFile) {
+        alert("Please select a file to upload.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("document", selectedFile);
+      formData.append("document_type", typeInput?.value || "Other");
+      formData.append("notes", notesInput?.value?.trim() || "");
+      listEl.textContent = "Uploading document...";
+
+      const res = await fetch(`/api/providers/${providerId}/documents`, {
+        method: "POST",
+        body: formData
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        listEl.textContent = "";
+        alert("Upload failed: " + JSON.stringify(result));
+        return;
+      }
+
+      fileInput.value = "";
+      notesInput.value = "";
+      await loadProviderDocuments(providerId);
     }
 
     async function uploadProviderCaptureAttachments() {
