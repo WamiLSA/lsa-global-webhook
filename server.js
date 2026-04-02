@@ -150,6 +150,91 @@ const providerCaptureUpload = multer({
   }
 });
 
+const PROVIDER_DOCUMENTS_STORAGE_DIR = path.join(__dirname, "uploads", "provider-documents");
+const PROVIDER_DOCUMENT_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/rtf",
+  "text/rtf",
+  "text/plain",
+  "application/zip"
+]);
+const PROVIDER_DOCUMENT_ALLOWED_EXTENSIONS = new Set([
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".ppt",
+  ".pptx",
+  ".xls",
+  ".xlsx",
+  ".rtf",
+  ".txt",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".zip"
+]);
+const PROVIDER_DOCUMENT_TYPES = new Set([
+  "CV",
+  "Certificate",
+  "Company Profile",
+  "Contract",
+  "Portfolio",
+  "Reference",
+  "Other"
+]);
+
+function sanitizeProviderFolder(providerId) {
+  return String(providerId || "").replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+const providerDocumentUploadStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      const providerFolder = sanitizeProviderFolder(req.params.providerId);
+      if (!providerFolder) {
+        cb(new Error("Provider id is required for document upload."));
+        return;
+      }
+      const providerPath = path.join(PROVIDER_DOCUMENTS_STORAGE_DIR, providerFolder);
+      await fs.mkdir(providerPath, { recursive: true });
+      cb(null, providerPath);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const originalName = (file.originalname || "provider_document").replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}_${originalName.slice(0, 120)}`);
+  }
+});
+
+const providerDocumentUpload = multer({
+  storage: providerDocumentUploadStorage,
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const mimeType = String(file.mimetype || "").toLowerCase();
+    const extension = path.extname(String(file.originalname || "")).toLowerCase();
+    const isAllowed = PROVIDER_DOCUMENT_ALLOWED_MIME_TYPES.has(mimeType)
+      || mimeType.startsWith("image/")
+      || PROVIDER_DOCUMENT_ALLOWED_EXTENSIONS.has(extension);
+    if (!isAllowed) {
+      cb(new Error("Unsupported file type for Provider Documents."));
+      return;
+    }
+    cb(null, true);
+  }
+});
+
 function getProviderCaptureFileType(fileName = "", mimeType = "") {
   const extension = path.extname(String(fileName || "")).toLowerCase();
   const mime = String(mimeType || "").toLowerCase();
@@ -3331,6 +3416,87 @@ ${attachmentLines.join("\n") || "No attachments."}
   } catch (error) {
     console.error("Provider capture generate error:", error.response?.data || error.message || error);
     return res.status(500).json({ error: "Provider generation failed" });
+  }
+});
+
+app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) => {
+  try {
+    const providerId = req.params.providerId;
+    const { data, error } = await supabase
+      .from("provider_documents")
+      .select("id, provider_id, original_name, file_name, mime_type, file_size, document_type, notes, file_url, created_at")
+      .eq("provider_id", providerId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const rows = (data || []).map(item => ({
+      ...item,
+      file_url: item.file_url || `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${item.file_name}`
+    }));
+
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUpload.single("document"), async (req, res) => {
+  try {
+    const providerId = String(req.params.providerId || "").trim();
+    const file = req.file;
+    const rawDocumentType = String(req.body?.document_type || "").trim();
+    const notes = String(req.body?.notes || "").trim();
+
+    if (!providerId) {
+      return res.status(400).json({ error: "providerId is required" });
+    }
+    if (!file) {
+      return res.status(400).json({ error: "document file is required" });
+    }
+
+    const { data: providerRecord, error: providerError } = await supabase
+      .from("providers")
+      .select("id")
+      .eq("id", providerId)
+      .maybeSingle();
+
+    if (providerError) {
+      return res.status(500).json({ error: providerError });
+    }
+
+    if (!providerRecord) {
+      return res.status(404).json({ error: "Provider not found." });
+    }
+
+    const documentType = PROVIDER_DOCUMENT_TYPES.has(rawDocumentType) ? rawDocumentType : "Other";
+    const safeProviderFolder = sanitizeProviderFolder(providerId);
+    const fileUrl = `/uploads/provider-documents/${safeProviderFolder}/${file.filename}`;
+
+    const { data, error } = await supabase
+      .from("provider_documents")
+      .insert([{
+        provider_id: providerId,
+        original_name: file.originalname || file.filename,
+        file_name: file.filename,
+        mime_type: file.mimetype || null,
+        file_size: file.size || null,
+        document_type: documentType,
+        notes: notes || null,
+        file_url: fileUrl
+      }])
+      .select("id, provider_id, original_name, file_name, mime_type, file_size, document_type, notes, file_url, created_at")
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
