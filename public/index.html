@@ -618,6 +618,10 @@
       const endpoint = currentView === "archived" ? "/api/conversations/archived" : "/api/conversations";
       const res = await fetch(endpoint);
       const threads = await res.json();
+      console.log("[inbox-frontend] threads fetched", {
+        endpoint,
+        count: Array.isArray(threads) ? threads.length : 0
+      });
 
       const container = document.getElementById("threads");
       container.innerHTML = "";
@@ -661,6 +665,10 @@
 
       const res = await fetch(`/api/conversations/${encodeURIComponent(wa_id)}`);
       const messages = await res.json();
+      console.log("[inbox-frontend] thread messages fetched", {
+        wa_id,
+        count: Array.isArray(messages) ? messages.length : 0
+      });
 
       const container = document.getElementById("messages");
       container.innerHTML = "";
