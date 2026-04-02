@@ -1505,9 +1505,27 @@ function detectMessageLanguage(text) {
 }
 
 function extractMissingColumnName(error) {
-  const errorMessage = String(error?.message || "");
-  const match = errorMessage.match(/column ["']?([a-zA-Z0-9_]+)["']? does not exist/i);
-  return match ? match[1] : "";
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const hint = String(error?.hint || "");
+  const combined = [message, details, hint].filter(Boolean).join(" | ");
+  const patterns = [
+    /column ["']?([a-zA-Z0-9_]+)["']? does not exist/i,
+    /Could not find the ['"]([a-zA-Z0-9_]+)['"] column of ['"][a-zA-Z0-9_]+['"] in the schema cache/i,
+    /["']([a-zA-Z0-9_]+)["']\s+column/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = combined.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+function isSchemaCacheMissingColumnError(error) {
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "");
+  return code === "PGRST204" || /schema cache/i.test(message);
 }
 
 async function insertConversationPayload(payload) {
@@ -1537,6 +1555,31 @@ async function insertConversationPayload(payload) {
 
     const missingColumn = extractMissingColumnName(error);
     if (!missingColumn || !(missingColumn in safePayload)) {
+      if (isSchemaCacheMissingColumnError(error)) {
+        console.warn("[inbound-db] schema cache mismatch; retrying core-safe insert", {
+          wa_id: waId,
+          direction,
+          message_type: messageType,
+          removed_columns: Array.from(removedColumns),
+          error_code: error?.code || null,
+          error_message: error?.message || String(error)
+        });
+        const corePayload = {
+          wa_id: payload.wa_id,
+          contact_name: payload.contact_name ?? null,
+          direction: payload.direction,
+          body: payload.body,
+          message_type: payload.message_type || "text"
+        };
+        const { error: coreError } = await supabase.from("conversations").insert([corePayload]);
+        if (!coreError) {
+          return {
+            ok: true,
+            removedColumns: Array.from(new Set([...removedColumns, ...Object.keys(payload).filter((key) => !(key in corePayload))])),
+            degradedToCorePayload: true
+          };
+        }
+      }
       console.error("[inbound-db] insert failure", {
         wa_id: waId,
         direction,
@@ -1631,12 +1674,29 @@ async function detectAndTranslateInboundMessage({ text, workingLanguage = INTERN
 }
 
 async function getLatestCustomerLanguage(waId) {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("conversations")
     .select("direction, original_language, body")
     .eq("wa_id", waId)
     .order("created_at", { ascending: false })
     .limit(20);
+
+  const missingColumn = extractMissingColumnName(error);
+  if (error && missingColumn === "original_language") {
+    console.warn("[language-detection] original_language missing; retrying with body-only query", {
+      wa_id: waId,
+      error_code: error?.code || null,
+      error_message: error?.message || String(error)
+    });
+    const retry = await supabase
+      .from("conversations")
+      .select("direction, body")
+      .eq("wa_id", waId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error || !Array.isArray(data)) {
     return "en";
