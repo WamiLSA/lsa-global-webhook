@@ -3530,8 +3530,10 @@ function scoreProviderDuplicate(draft, existing) {
     reasons.push(`Shared specializations: ${specOverlap.join(", ")}`);
   }
 
+  const boundedScore = Math.min(100, score);
+
   return {
-    score,
+    score: boundedScore,
     reasons,
     matchedFields: [...matchedFields]
   };
@@ -3590,7 +3592,8 @@ app.post("/api/providers/duplicate-check", async (req, res) => {
           matched_fields: result.matchedFields,
           reasons: result.reasons,
           confidence_score: result.score,
-          confidence_level: getConfidenceLabel(result.score)
+          confidence_level: getConfidenceLabel(result.score),
+          similarity_reason: result.reasons[0] || "Multiple weak supporting signals"
         };
       })
       .filter(item => item.confidence_score >= 35 || item.matched_fields.includes("email") || item.matched_fields.includes("phone") || item.matched_fields.includes("whatsapp"))
