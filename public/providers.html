@@ -104,6 +104,37 @@
       border: 1px solid var(--lsa-border);
       margin-left: 6px;
     }
+
+    .dup-status {
+      padding: 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border: 1px solid var(--lsa-border);
+      background: var(--lsa-surface);
+    }
+
+    .dup-status.ok {
+      border-color: #2e7d32;
+      background: rgba(46, 125, 50, 0.1);
+    }
+
+    .dup-status.warn {
+      border-color: #f57f17;
+      background: rgba(245, 127, 23, 0.12);
+    }
+
+    .dup-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .dup-actions button {
+      width: auto;
+      margin: 0;
+      padding: 8px 12px;
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -137,6 +168,7 @@
         <h3>Provider Draft Preview</h3>
         <div class="small" id="providerDraftSummary"></div>
         <button onclick="checkProviderDuplicates()">Check Duplicates</button>
+        <div id="duplicateReviewState" class="small" style="display:none;"></div>
         <div id="duplicateCheckPanel" class="small" style="display:none;"></div>
         <button onclick="applyDraftToProviderForm()">Send to Official Providers</button>
       </div>
@@ -214,6 +246,7 @@
     let providerCaptureAttachments = [];
     let providerDraft = null;
     let duplicateCheckResult = null;
+    let duplicateCheckFingerprint = "";
 
     async function loadProviders() {
       const res = await fetch("/api/providers");
@@ -358,9 +391,12 @@
 
       providerDraft = result.result || {};
       duplicateCheckResult = null;
+      duplicateCheckFingerprint = "";
       applyDraftToForm(providerDraft);
       document.getElementById("providerDraftSummary").textContent = result.summary || "Draft generated. Review the fields before sending.";
       document.getElementById("providerDraftCard").style.display = "block";
+      document.getElementById("duplicateReviewState").style.display = "none";
+      document.getElementById("duplicateReviewState").textContent = "";
       document.getElementById("duplicateCheckPanel").style.display = "none";
       document.getElementById("duplicateCheckPanel").innerHTML = "";
       renderExtractionStatus(result.extraction_report || []);
@@ -390,16 +426,48 @@
       };
     }
 
+    function getDuplicateFingerprint(payload) {
+      return JSON.stringify({
+        full_name: payload.full_name || "",
+        organization_name: payload.organization_name || "",
+        contact_person: payload.contact_person || "",
+        email: payload.email || "",
+        phone: payload.phone || "",
+        whatsapp: payload.whatsapp || "",
+        country: payload.country || "",
+        city: payload.city || "",
+        working_languages: payload.working_languages || "",
+        language_pairs: payload.language_pairs || "",
+        services: payload.services || "",
+        specializations: payload.specializations || ""
+      });
+    }
+
+    function markDuplicateCheckOutdated() {
+      const reviewEl = document.getElementById("duplicateReviewState");
+      if (!duplicateCheckResult) {
+        reviewEl.style.display = "none";
+        reviewEl.textContent = "";
+        return;
+      }
+      reviewEl.style.display = "block";
+      reviewEl.textContent = "Provider fields changed after duplicate check. Please run duplicate detection again before sending to Official Providers.";
+    }
+
     async function checkProviderDuplicates() {
+      const payload = getCurrentProviderPayload();
       const panel = document.getElementById("duplicateCheckPanel");
+      const reviewEl = document.getElementById("duplicateReviewState");
       panel.style.display = "block";
       panel.textContent = "Running duplicate detection...";
+      reviewEl.style.display = "none";
+      reviewEl.textContent = "";
 
       const res = await fetch("/api/providers/duplicate-check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          draft: getCurrentProviderPayload(),
+          draft: payload,
           exclude_id: editingProviderId
         })
       });
@@ -411,7 +479,21 @@
       }
 
       duplicateCheckResult = result;
+      duplicateCheckFingerprint = getDuplicateFingerprint(payload);
       renderDuplicatePanel(result);
+    }
+
+    function markUpdateLater(providerId, providerName) {
+      const notesEl = document.getElementById("notes");
+      const line = `Potential duplicate review target: provider #${providerId} (${providerName || "Unnamed Provider"}).`;
+      if (!notesEl.value.includes(line)) {
+        notesEl.value = notesEl.value.trim() ? `${notesEl.value.trim()}\n${line}` : line;
+      }
+      alert("Marked in notes. You can create a new provider now and update the existing record later.");
+    }
+
+    function stopAndReview() {
+      alert("Stopped before sending to Official Providers. Review duplicate candidates and decide next step.");
     }
 
     function renderDuplicatePanel(result) {
@@ -419,12 +501,17 @@
       const duplicates = Array.isArray(result.duplicates) ? result.duplicates : [];
 
       if (!duplicates.length) {
-        panel.innerHTML = `<div><strong>No likely duplicates found.</strong></div><div class="small">You can continue creating a new official provider.</div>`;
+        panel.innerHTML = `
+          <div class="dup-status ok"><strong>No likely duplicates found.</strong> You can continue creating a new official provider.</div>
+          <div class="dup-actions">
+            <button onclick="applyDraftToProviderForm()">Create New Official Provider</button>
+          </div>
+        `;
         return;
       }
 
       panel.innerHTML = `
-        <div><strong>Possible duplicates found (${duplicates.length})</strong></div>
+        <div class="dup-status warn"><strong>Possible duplicates found (${duplicates.length})</strong></div>
         <div class="small" style="margin-bottom:8px;">Review-first flow: decide whether to create a new provider anyway, update an existing provider later, or stop and review manually.</div>
       `;
 
@@ -436,11 +523,21 @@
           <div class="small">Organization: ${item.organization_name || "-"}</div>
           <div class="small">Contact: ${item.contact?.email || "-"} | ${item.contact?.phone || "-"} | ${item.contact?.whatsapp || "-"}</div>
           <div class="small">Location: ${item.country || "-"} / ${item.city || "-"}</div>
+          <div class="small">Primary match signal: ${item.similarity_reason || "-"}</div>
           <div class="small">Matched fields: ${(item.matched_fields || []).join(", ") || "-"}</div>
           <div class="small">Why matched: ${(item.reasons || []).join(" · ") || "-"}</div>
+          <div class="dup-actions">
+            <button onclick="markUpdateLater('${item.provider_id}', ${JSON.stringify(item.provider_name || "")})">Update Existing Later</button>
+            <button onclick="stopAndReview()">Stop & Review</button>
+          </div>
         `;
         panel.appendChild(div);
       });
+
+      const footer = document.createElement("div");
+      footer.className = "dup-actions";
+      footer.innerHTML = `<button onclick="applyDraftToProviderForm()">Create New Provider Anyway</button>`;
+      panel.appendChild(footer);
     }
 
     function renderExtractionStatus(report) {
@@ -507,8 +604,13 @@ ${sourceLine}` : sourceLine;
       }
 
       if (!duplicateCheckResult) {
-        const continueWithoutCheck = confirm("Duplicate check has not been run yet. Continue sending to Official Providers anyway?");
-        if (!continueWithoutCheck) return;
+        alert("Run duplicate detection first before sending to Official Providers.");
+        return;
+      }
+
+      if (duplicateCheckFingerprint !== getDuplicateFingerprint(getCurrentProviderPayload())) {
+        markDuplicateCheckOutdated();
+        return;
       }
 
       const confirmed = confirm("Send reviewed provider draft to Official Providers?");
@@ -612,11 +714,41 @@ ${sourceLine}` : sourceLine;
       document.getElementById("notes").value = "";
       providerDraft = null;
       duplicateCheckResult = null;
+      duplicateCheckFingerprint = "";
       providerCaptureAttachments = [];
       renderCaptureAttachmentList();
       document.getElementById("providerDraftCard").style.display = "none";
+      document.getElementById("duplicateReviewState").style.display = "none";
+      document.getElementById("duplicateReviewState").textContent = "";
       document.getElementById("duplicateCheckPanel").style.display = "none";
       document.getElementById("duplicateCheckPanel").innerHTML = "";
+    }
+
+    function setupDuplicateCheckInvalidation() {
+      const watchedIds = [
+        "full_name",
+        "organization_name",
+        "contact_person",
+        "email",
+        "phone",
+        "whatsapp",
+        "country",
+        "city",
+        "working_languages",
+        "language_pairs",
+        "services",
+        "specializations"
+      ];
+      watchedIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("input", () => {
+          if (!duplicateCheckResult) return;
+          if (duplicateCheckFingerprint !== getDuplicateFingerprint(getCurrentProviderPayload())) {
+            markDuplicateCheckOutdated();
+          }
+        });
+      });
     }
 
     async function deleteProvider(id) {
@@ -641,6 +773,7 @@ ${sourceLine}` : sourceLine;
       await loadProviders();
     }
 
+    setupDuplicateCheckInvalidation();
     renderCaptureAttachmentList();
     loadProviders();
   </script>
