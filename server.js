@@ -3810,6 +3810,151 @@ function getConfidenceLabel(score) {
   return "low";
 }
 
+function parseFlexibleList(value) {
+  return String(value || "")
+    .split(/[\n,;|]+/g)
+    .map(item => normalizeToken(item))
+    .filter(Boolean);
+}
+
+function parseLanguagePairs(value) {
+  const rawItems = String(value || "")
+    .split(/[\n,;|]+/g)
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  const parsed = [];
+
+  for (const item of rawItems) {
+    const normalizedItem = normalizeToken(item);
+    if (!normalizedItem) continue;
+
+    let source = "";
+    let target = "";
+
+    if (normalizedItem.includes(">")) {
+      [source, target] = normalizedItem.split(">").map(part => normalizeToken(part));
+    } else if (normalizedItem.includes(" to ")) {
+      [source, target] = normalizedItem.split(" to ").map(part => normalizeToken(part));
+    } else if (normalizedItem.includes(" - ")) {
+      [source, target] = normalizedItem.split(" - ").map(part => normalizeToken(part));
+    } else if (normalizedItem.includes("→")) {
+      [source, target] = normalizedItem.split("→").map(part => normalizeToken(part));
+    }
+
+    if (source && target) {
+      parsed.push(`${source}>${target}`);
+    }
+  }
+
+  return [...new Set(parsed)];
+}
+
+function parseExperienceYears(value) {
+  const numeric = Number(String(value || "").replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, numeric);
+}
+
+function getProviderMatchScore(criteria, provider) {
+  const reasons = [];
+  let score = 0;
+
+  const queryPairs = parseLanguagePairs(criteria.language_pair);
+  const providerPairs = parseLanguagePairs(provider.language_pairs);
+  const providerWorkingLanguages = parseFlexibleList(provider.working_languages);
+
+  if (queryPairs.length) {
+    const providerPairSet = new Set(providerPairs);
+    const pairMatches = queryPairs.filter(pair => providerPairSet.has(pair));
+
+    if (pairMatches.length) {
+      score += 38;
+      reasons.push(`Language pair match: ${pairMatches.join(", ")}`);
+    } else {
+      const queryPairPieces = queryPairs[0].split(">");
+      if (
+        queryPairPieces.length === 2
+        && providerWorkingLanguages.includes(queryPairPieces[0])
+        && providerWorkingLanguages.includes(queryPairPieces[1])
+      ) {
+        score += 20;
+        reasons.push("Working languages cover requested pair");
+      }
+    }
+  }
+
+  const requestedServices = parseFlexibleList(criteria.service_type);
+  if (requestedServices.length) {
+    const providerServices = parseFlexibleList(provider.services);
+    const providerType = normalizeToken(provider.provider_type);
+    const serviceMatches = requestedServices.filter(service =>
+      providerServices.includes(service)
+      || providerType.includes(service)
+      || service.includes(providerType)
+    );
+    if (serviceMatches.length) {
+      score += 24;
+      reasons.push(`Service match: ${serviceMatches.join(", ")}`);
+    }
+  }
+
+  const requestedSpecializations = parseFlexibleList(criteria.specialization);
+  if (requestedSpecializations.length) {
+    const providerSpecializations = parseFlexibleList(provider.specializations);
+    const specializationMatches = requestedSpecializations.filter(spec => providerSpecializations.includes(spec));
+    if (specializationMatches.length) {
+      score += 22;
+      reasons.push(`Specialization match: ${specializationMatches.join(", ")}`);
+    }
+  }
+
+  const availabilityNeed = normalizeToken(criteria.availability_need);
+  const providerAvailability = normalizeToken(provider.availability_status);
+  if (providerAvailability === "available") {
+    score += 20;
+    reasons.push("Availability: available");
+  } else if (availabilityNeed && providerAvailability && availabilityNeed === providerAvailability) {
+    score += 10;
+    reasons.push(`Availability aligns with request: ${providerAvailability}`);
+  }
+
+  const requestedCountry = normalizeToken(criteria.country);
+  const requestedCity = normalizeToken(criteria.city);
+  const providerCountry = normalizeToken(provider.country);
+  const providerCity = normalizeToken(provider.city);
+
+  if (requestedCountry && providerCountry && requestedCountry === providerCountry) {
+    score += 8;
+    reasons.push(`Country match: ${provider.country}`);
+  }
+  if (requestedCity && providerCity && requestedCity === providerCity) {
+    score += 6;
+    reasons.push(`City match: ${provider.city}`);
+  }
+
+  const experienceYears = parseExperienceYears(provider.years_experience);
+  if (experienceYears > 0) {
+    const experiencePoints = Math.min(10, Math.floor(experienceYears / 2));
+    score += experiencePoints;
+    reasons.push(`Experience: ${experienceYears} year(s)`);
+  }
+
+  const providerStatus = normalizeToken(provider.status);
+  if (providerStatus === "active") {
+    score += 6;
+  } else if (providerStatus === "archived") {
+    score -= 20;
+  } else if (providerStatus && providerStatus !== "active") {
+    score -= 6;
+  }
+
+  return {
+    score: Math.max(0, Math.min(100, score)),
+    reasons
+  };
+}
+
 function scoreProviderDuplicate(draft, existing) {
   const reasons = [];
   const matchedFields = new Set();
@@ -4007,6 +4152,70 @@ app.post("/api/providers/duplicate-check", async (req, res) => {
       summary: ranked.length
         ? `Found ${ranked.length} possible duplicate provider(s).`
         : "No likely duplicates found."
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== PROVIDER API: MATCHING ENGINE (PHASE 1) =====
+app.post("/api/providers/match", async (req, res) => {
+  try {
+    const criteria = {
+      request_type: req.body?.request_type || "general",
+      language_pair: req.body?.language_pair || "",
+      service_type: req.body?.service_type || "",
+      specialization: req.body?.specialization || "",
+      country: req.body?.country || "",
+      city: req.body?.city || "",
+      availability_need: req.body?.availability_need || "",
+      notes: req.body?.notes || ""
+    };
+
+    const { data, error } = await supabase
+      .from("providers")
+      .select("id, provider_type, full_name, organization_name, contact_person, email, phone, whatsapp, working_languages, language_pairs, services, specializations, country, city, availability_status, years_experience, status")
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (error) {
+      return res.status(500).json({ error });
+    }
+
+    const ranked = (data || [])
+      .map(provider => {
+        const scored = getProviderMatchScore(criteria, provider);
+        return {
+          provider_id: provider.id,
+          provider_name: provider.full_name || "Unnamed Provider",
+          organization_name: provider.organization_name || "",
+          contact_summary: {
+            contact_person: provider.contact_person || "",
+            email: provider.email || "",
+            phone: provider.phone || "",
+            whatsapp: provider.whatsapp || ""
+          },
+          provider_type: provider.provider_type || "",
+          country: provider.country || "",
+          city: provider.city || "",
+          availability_status: provider.availability_status || "",
+          years_experience: provider.years_experience || "",
+          score: scored.score,
+          confidence_level: getConfidenceLabel(scored.score),
+          why_matched: scored.reasons
+        };
+      })
+      .filter(item => item.score >= 20)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 12);
+
+    return res.json({
+      ok: true,
+      summary: ranked.length
+        ? `Found ${ranked.length} provider match(es) for staff review.`
+        : "No strong provider matches found. Try broadening the criteria.",
+      criteria,
+      matches: ranked
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });

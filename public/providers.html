@@ -124,6 +124,25 @@
       vertical-align: top;
       text-align: left;
     }
+
+    .match-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .match-grid textarea {
+      grid-column: 1 / -1;
+      min-height: 70px;
+    }
+
+    .match-result-card {
+      border: 1px solid var(--lsa-border);
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 8px;
+      background: var(--lsa-bg-soft);
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -222,6 +241,28 @@
 
   <div id="right">
     <h2>Providers</h2>
+    <div class="card" id="matchingEngineCard">
+      <h3>Provider Matching Engine (Phase 1)</h3>
+      <div class="small">Use for translation, interpreting, language-teaching/course assignments, and general provider search.</div>
+      <div class="match-grid">
+        <select id="match_request_type">
+          <option value="translation">translation assignment</option>
+          <option value="interpreting">interpreting assignment</option>
+          <option value="language_teaching">language-teaching/course assignment</option>
+          <option value="general">general provider search</option>
+        </select>
+        <input id="match_service_type" placeholder="Service type (translation, interpreting, teaching...)" />
+        <input id="match_language_pair" placeholder="Language pair (e.g. English > French)" />
+        <input id="match_specialization" placeholder="Specialization / domain (e.g. legal, medical)" />
+        <input id="match_country" placeholder="Country" />
+        <input id="match_city" placeholder="City" />
+        <input id="match_availability_need" placeholder="Availability need (e.g. available, urgent)" />
+        <textarea id="match_notes" placeholder="Request brief / notes"></textarea>
+      </div>
+      <button onclick="matchProviders()">Find Best Matches</button>
+      <div id="matchSummary" class="small"></div>
+      <div id="matchResults"></div>
+    </div>
     <input id="searchBox" placeholder="Search by name, organization, services, language pairs..." oninput="renderProviders()" />
     <div id="providers"></div>
   </div>
@@ -314,6 +355,78 @@
         container.appendChild(div);
         loadProviderDocuments(provider.id);
       });
+    }
+
+    function getMatchPayload() {
+      return {
+        request_type: document.getElementById("match_request_type").value,
+        service_type: document.getElementById("match_service_type").value.trim(),
+        language_pair: document.getElementById("match_language_pair").value.trim(),
+        specialization: document.getElementById("match_specialization").value.trim(),
+        country: document.getElementById("match_country").value.trim(),
+        city: document.getElementById("match_city").value.trim(),
+        availability_need: document.getElementById("match_availability_need").value.trim(),
+        notes: document.getElementById("match_notes").value.trim()
+      };
+    }
+
+    function openProviderProfile(providerId) {
+      const provider = providers.find(item => String(item.id) === String(providerId));
+      if (!provider) {
+        alert("Provider not found in the current list.");
+        return;
+      }
+      editProvider(provider.id);
+    }
+
+    function renderMatchResults(result) {
+      const summaryEl = document.getElementById("matchSummary");
+      const container = document.getElementById("matchResults");
+      const matches = Array.isArray(result.matches) ? result.matches : [];
+      summaryEl.textContent = result.summary || "";
+      container.innerHTML = "";
+
+      if (!matches.length) {
+        container.innerHTML = "<div class='small'>No shortlist yet. Refine or broaden your request details.</div>";
+        return;
+      }
+
+      matches.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "match-result-card";
+        div.innerHTML = `
+          <div class="title">${item.provider_name || "Unnamed Provider"} <span class="small">(score: ${item.score || 0})</span></div>
+          <div class="small">Organization: ${item.organization_name || "-"}</div>
+          <div class="small">Contact: ${item.contact_summary?.contact_person || "-"} | ${item.contact_summary?.email || "-"} | ${item.contact_summary?.phone || item.contact_summary?.whatsapp || "-"}</div>
+          <div class="small">Location: ${item.country || "-"}, ${item.city || "-"}</div>
+          <div class="small">Availability: ${item.availability_status || "-"}</div>
+          <div class="small">Why matched: ${(item.why_matched || []).join(" · ") || "General profile relevance"}</div>
+          <button style="margin-top:8px;" onclick="openProviderProfile(${item.provider_id})">Open Provider Profile</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    async function matchProviders() {
+      const summaryEl = document.getElementById("matchSummary");
+      const container = document.getElementById("matchResults");
+      summaryEl.textContent = "Matching official providers...";
+      container.innerHTML = "";
+
+      const res = await fetch("/api/providers/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(getMatchPayload())
+      });
+      const result = await res.json();
+
+      if (!res.ok) {
+        summaryEl.textContent = "";
+        container.innerHTML = `<div class="small">Matching failed: ${escapeHtml(JSON.stringify(result))}</div>`;
+        return;
+      }
+
+      renderMatchResults(result);
     }
 
     function escapeHtml(value) {
