@@ -235,6 +235,93 @@ const providerDocumentUpload = multer({
   }
 });
 
+const PROVIDER_DOCUMENTS_PREFERRED_COLUMNS = [
+  "id",
+  "provider_id",
+  "file_name",
+  "original_name",
+  "file_path",
+  "file_url",
+  "mime_type",
+  "file_size",
+  "document_type",
+  "notes",
+  "uploaded_at",
+  "uploaded_by",
+  "created_at"
+];
+let providerDocumentsColumnsCache = null;
+let providerDocumentsColumnsCachedAt = 0;
+const PROVIDER_DOCUMENTS_COLUMNS_CACHE_TTL_MS = 60 * 1000;
+
+async function getProviderDocumentsColumnSet() {
+  const now = Date.now();
+  if (
+    providerDocumentsColumnsCache
+    && (now - providerDocumentsColumnsCachedAt) < PROVIDER_DOCUMENTS_COLUMNS_CACHE_TTL_MS
+  ) {
+    return providerDocumentsColumnsCache;
+  }
+
+  const { data, error } = await supabase
+    .from("information_schema.columns")
+    .select("column_name")
+    .eq("table_schema", "public")
+    .eq("table_name", "provider_documents");
+
+  if (error) {
+    return null;
+  }
+
+  providerDocumentsColumnsCache = new Set((data || []).map(row => row.column_name));
+  providerDocumentsColumnsCachedAt = now;
+  return providerDocumentsColumnsCache;
+}
+
+function providerDocumentsSelectColumns(columnSet) {
+  if (!(columnSet instanceof Set)) {
+    return [
+      "id",
+      "provider_id",
+      "file_name",
+      "original_name",
+      "mime_type",
+      "file_size",
+      "document_type",
+      "notes",
+      "file_url",
+      "created_at"
+    ];
+  }
+  const selected = PROVIDER_DOCUMENTS_PREFERRED_COLUMNS.filter(column => columnSet.has(column));
+  if (!selected.length) {
+    return ["id", "provider_id", "file_name"];
+  }
+  return selected;
+}
+
+function normalizeProviderDocumentRow(row, providerId) {
+  const fileName = row.file_name || row.file_path || "file";
+  const fileUrl = row.file_url
+    || (row.file_path ? `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${row.file_path}` : null)
+    || `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${fileName}`;
+  return {
+    id: row.id,
+    provider_id: row.provider_id,
+    file_name: fileName,
+    original_name: row.original_name || fileName,
+    file_path: row.file_path || fileName,
+    file_url: fileUrl,
+    mime_type: row.mime_type || null,
+    file_size: row.file_size || null,
+    document_type: row.document_type || "Other",
+    notes: row.notes || null,
+    uploaded_at: row.uploaded_at || row.created_at || null,
+    uploaded_by: row.uploaded_by || null,
+    created_at: row.created_at || row.uploaded_at || null
+  };
+}
+
 function getProviderCaptureFileType(fileName = "", mimeType = "") {
   const extension = path.extname(String(fileName || "")).toLowerCase();
   const mime = String(mimeType || "").toLowerCase();
@@ -3422,20 +3509,28 @@ ${attachmentLines.join("\n") || "No attachments."}
 app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) => {
   try {
     const providerId = req.params.providerId;
-    const { data, error } = await supabase
+    const columnSet = await getProviderDocumentsColumnSet();
+    const selectColumns = providerDocumentsSelectColumns(columnSet);
+    const orderColumn = columnSet?.has("uploaded_at")
+      ? "uploaded_at"
+      : (columnSet?.has("created_at") ? "created_at" : null);
+
+    let query = supabase
       .from("provider_documents")
-      .select("id, provider_id, original_name, file_name, mime_type, file_size, document_type, notes, file_url, created_at")
-      .eq("provider_id", providerId)
-      .order("created_at", { ascending: false });
+      .select(selectColumns.join(", "))
+      .eq("provider_id", providerId);
+
+    if (orderColumn) {
+      query = query.order(orderColumn, { ascending: false });
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return res.status(500).json({ error });
     }
 
-    const rows = (data || []).map(item => ({
-      ...item,
-      file_url: item.file_url || `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${item.file_name}`
-    }));
+    const rows = (data || []).map(item => normalizeProviderDocumentRow(item, providerId));
 
     return res.json({ ok: true, data: rows });
   } catch (err) {
@@ -3474,27 +3569,53 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
     const documentType = PROVIDER_DOCUMENT_TYPES.has(rawDocumentType) ? rawDocumentType : "Other";
     const safeProviderFolder = sanitizeProviderFolder(providerId);
     const fileUrl = `/uploads/provider-documents/${safeProviderFolder}/${file.filename}`;
+    const columnSet = await getProviderDocumentsColumnSet();
+
+    const insertPayload = {
+      provider_id: providerId,
+      file_name: file.filename
+    };
+    if (!columnSet || columnSet.has("original_name")) {
+      insertPayload.original_name = file.originalname || file.filename;
+    }
+    if (columnSet?.has("file_path")) {
+      insertPayload.file_path = file.filename;
+    }
+    if (!columnSet || columnSet.has("file_url")) {
+      insertPayload.file_url = fileUrl;
+    }
+    if (!columnSet || columnSet.has("mime_type")) {
+      insertPayload.mime_type = file.mimetype || null;
+    }
+    if (!columnSet || columnSet.has("file_size")) {
+      insertPayload.file_size = file.size || null;
+    }
+    if (!columnSet || columnSet.has("document_type")) {
+      insertPayload.document_type = documentType;
+    }
+    if (!columnSet || columnSet.has("notes")) {
+      insertPayload.notes = notes || null;
+    }
+    if (columnSet?.has("uploaded_at")) {
+      insertPayload.uploaded_at = new Date().toISOString();
+    }
+    if (columnSet?.has("uploaded_by")) {
+      insertPayload.uploaded_by = req.session?.username || null;
+    }
+
+    const selectColumns = providerDocumentsSelectColumns(columnSet);
 
     const { data, error } = await supabase
       .from("provider_documents")
-      .insert([{
-        provider_id: providerId,
-        original_name: file.originalname || file.filename,
-        file_name: file.filename,
-        mime_type: file.mimetype || null,
-        file_size: file.size || null,
-        document_type: documentType,
-        notes: notes || null,
-        file_url: fileUrl
-      }])
-      .select("id, provider_id, original_name, file_name, mime_type, file_size, document_type, notes, file_url, created_at")
+      .insert([insertPayload])
+      .select(selectColumns.join(", "))
       .single();
 
     if (error) {
       return res.status(500).json({ error });
     }
 
-    return res.json({ ok: true, data });
+    return res.json({ ok: true, data: normalizeProviderDocumentRow(data, providerId) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

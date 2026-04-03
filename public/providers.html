@@ -337,15 +337,21 @@
       if (!listEl) return;
       listEl.textContent = "Loading document list...";
 
-      const res = await fetch(`/api/providers/${providerId}/documents`);
-      const result = await res.json();
-      if (!res.ok) {
-        listEl.textContent = `Failed to load documents: ${JSON.stringify(result)}`;
-        return;
-      }
+      try {
+        const res = await fetch(`/api/providers/${providerId}/documents`);
+        const result = await res.json();
+        if (!res.ok) {
+          providerDocumentsByProvider[providerId] = [];
+          listEl.innerHTML = "<div class='small'>Document List temporarily unavailable.</div>";
+          return;
+        }
 
-      providerDocumentsByProvider[providerId] = Array.isArray(result.data) ? result.data : [];
-      renderProviderDocumentList(providerId);
+        providerDocumentsByProvider[providerId] = Array.isArray(result.data) ? result.data : [];
+        renderProviderDocumentList(providerId);
+      } catch (_error) {
+        providerDocumentsByProvider[providerId] = [];
+        listEl.innerHTML = "<div class='small'>Document List temporarily unavailable.</div>";
+      }
     }
 
     function renderProviderDocumentList(providerId) {
@@ -374,7 +380,7 @@
               <tr>
                 <td>${escapeHtml(doc.original_name || doc.file_name || "file")}</td>
                 <td>${escapeHtml(doc.document_type || "Other")}</td>
-                <td>${escapeHtml(formatDateTime(doc.created_at))}</td>
+                <td>${escapeHtml(formatDateTime(doc.uploaded_at || doc.created_at))}</td>
                 <td>${escapeHtml(doc.notes || "-")}</td>
                 <td><a href="${escapeHtml(doc.file_url || "#")}" target="_blank" rel="noopener noreferrer">Open / Download</a></td>
               </tr>
