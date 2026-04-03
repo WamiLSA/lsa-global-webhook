@@ -300,6 +300,65 @@ function providerDocumentsSelectColumns(columnSet) {
   return selected;
 }
 
+function getProviderDocumentsOrderColumn(columnSet, blockedColumns = new Set()) {
+  if (!(columnSet instanceof Set)) return null;
+  if (columnSet.has("uploaded_at") && !blockedColumns.has("uploaded_at")) return "uploaded_at";
+  if (columnSet.has("created_at") && !blockedColumns.has("created_at")) return "created_at";
+  return null;
+}
+
+async function queryProviderDocumentsWithSchemaFallback({
+  providerId,
+  columnSet,
+  filterId = null,
+  maxAttempts = 3
+}) {
+  const blockedColumns = new Set();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let selectColumns = providerDocumentsSelectColumns(columnSet).filter(column => !blockedColumns.has(column));
+    if (!selectColumns.length) {
+      selectColumns = ["id", "provider_id", "file_name"];
+    }
+
+    const orderColumn = getProviderDocumentsOrderColumn(columnSet, blockedColumns);
+    let query = supabase
+      .from("provider_documents")
+      .select(selectColumns.join(", "))
+      .eq("provider_id", providerId);
+
+    if (filterId) {
+      query = query.eq("id", filterId);
+    }
+
+    if (orderColumn && !filterId) {
+      query = query.order(orderColumn, { ascending: false });
+    }
+
+    const { data, error } = await query;
+    if (!error) {
+      return { data, error: null, blockedColumns };
+    }
+
+    const missingColumn = extractMissingColumnName(error);
+    const missingSelectable = missingColumn && selectColumns.includes(missingColumn);
+    const missingOrdered = missingColumn && orderColumn === missingColumn;
+    if (!missingSelectable && !missingOrdered) {
+      return { data: null, error, blockedColumns };
+    }
+
+    blockedColumns.add(missingColumn);
+  }
+
+  return {
+    data: null,
+    error: {
+      message: "Provider documents query failed due to repeated schema mismatch on metadata columns."
+    },
+    blockedColumns
+  };
+}
+
 function normalizeProviderDocumentRow(row, providerId) {
   const fileName = row.file_name || row.file_path || "file";
   const fileUrl = row.file_url
@@ -3510,24 +3569,16 @@ app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) =>
   try {
     const providerId = req.params.providerId;
     const columnSet = await getProviderDocumentsColumnSet();
-    const selectColumns = providerDocumentsSelectColumns(columnSet);
-    const orderColumn = columnSet?.has("uploaded_at")
-      ? "uploaded_at"
-      : (columnSet?.has("created_at") ? "created_at" : null);
-
-    let query = supabase
-      .from("provider_documents")
-      .select(selectColumns.join(", "))
-      .eq("provider_id", providerId);
-
-    if (orderColumn) {
-      query = query.order(orderColumn, { ascending: false });
-    }
-
-    const { data, error } = await query;
+    const { data, error } = await queryProviderDocumentsWithSchemaFallback({
+      providerId,
+      columnSet
+    });
 
     if (error) {
-      return res.status(500).json({ error });
+      return res.status(500).json({
+        error: "Unable to load provider documents due to a temporary schema mismatch.",
+        details: error
+      });
     }
 
     const rows = (data || []).map(item => normalizeProviderDocumentRow(item, providerId));
@@ -3603,19 +3654,82 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       insertPayload.uploaded_by = req.session?.username || null;
     }
 
-    const selectColumns = providerDocumentsSelectColumns(columnSet);
-
-    const { data, error } = await supabase
+    const { data: insertResult, error: insertError } = await supabase
       .from("provider_documents")
       .insert([insertPayload])
-      .select(selectColumns.join(", "))
+      .select("id")
       .single();
 
-    if (error) {
-      return res.status(500).json({ error });
+    if (insertError) {
+      const missingColumn = extractMissingColumnName(insertError);
+      if (missingColumn) {
+        return res.status(500).json({
+          error: `Provider document upload failed due to schema mismatch: missing column '${missingColumn}'.`,
+          details: insertError
+        });
+      }
+      return res.status(500).json({ error: insertError });
     }
 
-    return res.json({ ok: true, data: normalizeProviderDocumentRow(data, providerId) });
+    const insertedId = insertResult?.id;
+    if (!insertedId) {
+      return res.status(500).json({
+        error: "Provider document upload succeeded but the inserted record id was not returned."
+      });
+    }
+
+    const { data: fetchedRows, error: fetchError } = await queryProviderDocumentsWithSchemaFallback({
+      providerId,
+      columnSet,
+      filterId: insertedId
+    });
+
+    if (fetchError) {
+      return res.status(201).json({
+        ok: true,
+        warning: "Document uploaded, but metadata query failed due to schema mismatch.",
+        data: {
+          id: insertedId,
+          provider_id: providerId,
+          file_name: file.filename,
+          original_name: file.originalname || file.filename,
+          file_path: file.filename,
+          file_url: fileUrl,
+          mime_type: file.mimetype || null,
+          file_size: file.size || null,
+          document_type: documentType,
+          notes: notes || null,
+          uploaded_at: null,
+          uploaded_by: req.session?.username || null,
+          created_at: null
+        }
+      });
+    }
+
+    const insertedRow = Array.isArray(fetchedRows) ? fetchedRows[0] : null;
+    if (!insertedRow) {
+      return res.status(201).json({
+        ok: true,
+        warning: "Document uploaded, but inserted metadata row was not found immediately.",
+        data: {
+          id: insertedId,
+          provider_id: providerId,
+          file_name: file.filename,
+          original_name: file.originalname || file.filename,
+          file_path: file.filename,
+          file_url: fileUrl,
+          mime_type: file.mimetype || null,
+          file_size: file.size || null,
+          document_type: documentType,
+          notes: notes || null,
+          uploaded_at: null,
+          uploaded_by: req.session?.username || null,
+          created_at: null
+        }
+      });
+    }
+
+    return res.json({ ok: true, data: normalizeProviderDocumentRow(insertedRow, providerId) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
