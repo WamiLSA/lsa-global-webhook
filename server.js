@@ -620,7 +620,7 @@ async function isTestRetrievalEnabled() {
 }
 
 async function canRunTestRetrievalExperiments() {
-  return (await isTestRetrievalEnabled()) && AI_EXPERIMENTS_ENABLED;
+  return await isTestRetrievalEnabled();
 }
 
 function formatRoutingBranchForModeLog(branch) {
@@ -631,11 +631,13 @@ function formatRoutingBranchForModeLog(branch) {
   return branch;
 }
 
-function logInboundRoutingDecision({ mode, branch, text }) {
+function logInboundRoutingDecision({ mode, branch, text, testRetrievalEnabled, reason }) {
   const resolvedMode = String(mode || "live").toLowerCase() === "test" ? "TEST" : "LIVE";
   const resolvedBranch = formatRoutingBranchForModeLog(branch);
   const safeText = String(text || "").replace(/"/g, '\\"').slice(0, 160);
-  console.log(`[routing-runtime] mode=${resolvedMode} branch=${resolvedBranch} text="${safeText}" mode_source=app_config`);
+  const testRetrievalState = testRetrievalEnabled ? "true" : "false";
+  const reasonTag = reason ? ` reason=${reason}` : "";
+  console.log(`[routing-runtime] mode=${resolvedMode} text="${safeText}" test_retrieval_enabled=${testRetrievalState} branch=${resolvedBranch}${reasonTag} mode_source=app_config`);
 }
 
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
@@ -658,7 +660,7 @@ async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
 function getModeCapabilities() {
   return {
     autonomous_ai_answering: runtimeSystemState.mode === "test" && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED,
-    ai_experimentation: (runtimeSystemState.mode === "test" || TEST_RETRIEVAL_FORCE_ENABLE) && AI_EXPERIMENTS_ENABLED
+    ai_experimentation: runtimeSystemState.mode === "test" || TEST_RETRIEVAL_FORCE_ENABLE
   };
 }
 
@@ -2501,6 +2503,7 @@ app.post("/webhook", async (req, res) => {
     const autonomousReplyAllowed = await isAutonomousReplyAllowed();
     const canUseTestRetrievalRouting = await canRunTestRetrievalExperiments();
     let selectedRoutingBranch = "unresolved";
+    let routingReason = "";
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -2510,6 +2513,8 @@ app.post("/webhook", async (req, res) => {
     });
     const menuSelection = detectMenuSelection(text);
     const normalizedInbound = normalizeForIntent(text);
+    const isEligibleFreeTextQuery = Boolean(normalizedInbound) && !menuSelection && !greetingIntent;
+    const testRetrievalEnabledForMessage = canUseTestRetrievalRouting && isEligibleFreeTextQuery;
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
     const fallbackEligible = hasStoredLanguage
       && !menuSelection
@@ -2519,6 +2524,7 @@ app.post("/webhook", async (req, res) => {
 
     if (greetingIntent || isGreetingMessage(text)) {
       selectedRoutingBranch = "greeting_menu";
+      routingReason = "greeting_input";
       const incomingGreetingText = text || "";
       const normalizedGreetingText = normalizeGreetingText(incomingGreetingText);
       const greetingLanguageCode = greetingIntent?.language || detectGreetingLanguage(incomingGreetingText) || detectedLanguage;
@@ -2531,18 +2537,22 @@ app.post("/webhook", async (req, res) => {
       suppressAutoAck = true;
     } else if (menuSelection) {
       selectedRoutingBranch = "menu_option";
+      routingReason = "menu_input";
       reply = getOptionReply(menuSelection, detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed && fallbackEligible) {
+    } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
+      routingReason = "safe_fallback_short_followup";
       reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed) {
+    } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
+      routingReason = canUseTestRetrievalRouting ? "not_eligible_free_text" : "retrieval_disabled";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
-    } else if (canUseTestRetrievalRouting) {
+    } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
+      routingReason = "eligible_free_text";
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
@@ -2728,19 +2738,23 @@ app.post("/webhook", async (req, res) => {
       }
     } else {
       selectedRoutingBranch = "live_safe_handoff";
+      routingReason = "default_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     }
     console.log("[routing-debug] inbound branch selected", {
       mode: activeMode.toUpperCase(),
-      message_text: String(text || "").slice(0, 160),
+      normalized_text: String(normalizedInbound || "").slice(0, 160),
       branch: selectedRoutingBranch,
-      test_retrieval_enabled: canUseTestRetrievalRouting
+      test_retrieval_enabled: testRetrievalEnabledForMessage,
+      reason: routingReason || null
     });
     logInboundRoutingDecision({
       mode: activeMode,
       branch: selectedRoutingBranch,
-      text: inboundBody
+      text: normalizedInbound,
+      testRetrievalEnabled: testRetrievalEnabledForMessage,
+      reason: routingReason
     });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
