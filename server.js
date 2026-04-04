@@ -559,6 +559,17 @@ function canRunTestRetrievalExperiments() {
   return isTestRetrievalEnabled() && AI_EXPERIMENTS_ENABLED;
 }
 
+function getCurrentSystemModeLabel() {
+  return isTestModeEnabled() ? "TEST" : "LIVE";
+}
+
+function logWebhookRouting({ modeLabel, branch, text }) {
+  const safeMode = modeLabel || getCurrentSystemModeLabel();
+  const safeBranch = branch || "unknown";
+  const safeText = String(text || "").replace(/"/g, '\\"');
+  console.log(`mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
+}
+
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
   if (!canRunTestRetrievalExperiments()) {
     return {
