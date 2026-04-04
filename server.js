@@ -48,6 +48,8 @@ const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS |
   .filter(Boolean);
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
+const SYSTEM_MODE_CONFIG_KEY = "system_mode";
+const SYSTEM_MODE_REFRESH_MS = Number(process.env.SYSTEM_MODE_REFRESH_MS || 5000);
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
   "image/",
   "application/pdf"
@@ -532,7 +534,8 @@ function readPersistedSystemMode() {
 
 const runtimeSystemState = {
   mode: readPersistedSystemMode() || resolveDefaultSystemMode(),
-  updatedAt: new Date().toISOString()
+  updatedAt: new Date().toISOString(),
+  lastRefreshedAt: new Date(0).toISOString()
 };
 
 async function persistSystemMode(mode) {
@@ -544,23 +547,84 @@ async function persistSystemMode(mode) {
   );
 }
 
-function isTestModeEnabled() {
-  return runtimeSystemState.mode === "test";
+async function readPersistedSystemModeFromDatabase() {
+  try {
+    const { data, error } = await supabase
+      .from("app_config")
+      .select("value, updated_at")
+      .eq("key", SYSTEM_MODE_CONFIG_KEY)
+      .maybeSingle();
+    if (error) {
+      console.warn("[mode] Failed to read mode from app_config:", error.message);
+      return null;
+    }
+    const dbMode = String(data?.value || "").toLowerCase();
+    if (dbMode !== "test" && dbMode !== "live") {
+      return null;
+    }
+    return {
+      mode: dbMode,
+      updatedAt: data?.updated_at || new Date().toISOString()
+    };
+  } catch (error) {
+    console.warn("[mode] Unexpected DB mode read failure:", error.message || error);
+    return null;
+  }
 }
 
-function isAutonomousReplyAllowed() {
-  return isTestModeEnabled() && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED;
-}
-function isTestRetrievalEnabled() {
-  return isTestModeEnabled() || TEST_RETRIEVAL_FORCE_ENABLE;
+async function persistSystemModeToDatabase(mode) {
+  const payload = {
+    key: SYSTEM_MODE_CONFIG_KEY,
+    value: mode,
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabase
+    .from("app_config")
+    .upsert(payload, { onConflict: "key" });
+  if (error) {
+    throw new Error(`Unable to persist mode in app_config: ${error.message}`);
+  }
 }
 
-function canRunTestRetrievalExperiments() {
-  return isTestRetrievalEnabled() && AI_EXPERIMENTS_ENABLED;
+async function refreshRuntimeSystemMode() {
+  const now = Date.now();
+  const lastRefreshedAt = Date.parse(runtimeSystemState.lastRefreshedAt || 0) || 0;
+  if (now - lastRefreshedAt < SYSTEM_MODE_REFRESH_MS) {
+    return runtimeSystemState.mode;
+  }
+  const persisted = await readPersistedSystemModeFromDatabase();
+  runtimeSystemState.lastRefreshedAt = new Date(now).toISOString();
+  if (persisted && persisted.mode !== runtimeSystemState.mode) {
+    runtimeSystemState.mode = persisted.mode;
+    runtimeSystemState.updatedAt = persisted.updatedAt;
+    console.log(`[mode] Runtime mode refreshed from DB: ${persisted.mode.toUpperCase()}`);
+  }
+  return runtimeSystemState.mode;
+}
+
+async function getCurrentSystemMode() {
+  await refreshRuntimeSystemMode();
+  return runtimeSystemState.mode;
+}
+
+async function isTestModeEnabled() {
+  const mode = await getCurrentSystemMode();
+  return mode === "test";
+}
+
+async function isAutonomousReplyAllowed() {
+  return (await isTestModeEnabled()) && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED;
+}
+async function isTestRetrievalEnabled() {
+  return (await isTestModeEnabled()) || TEST_RETRIEVAL_FORCE_ENABLE;
+}
+
+async function canRunTestRetrievalExperiments() {
+  return (await isTestRetrievalEnabled()) && AI_EXPERIMENTS_ENABLED;
 }
 
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
-  if (!canRunTestRetrievalExperiments()) {
+  if (!(await canRunTestRetrievalExperiments())) {
     return {
       normalized_query: "",
       detected_language: detectMessageLanguage(query || ""),
@@ -578,16 +642,16 @@ async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
 
 function getModeCapabilities() {
   return {
-    autonomous_ai_answering: isAutonomousReplyAllowed(),
-    ai_experimentation: canRunTestRetrievalExperiments()
+    autonomous_ai_answering: runtimeSystemState.mode === "test" && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED,
+    ai_experimentation: (runtimeSystemState.mode === "test" || TEST_RETRIEVAL_FORCE_ENABLE) && AI_EXPERIMENTS_ENABLED
   };
 }
 
 console.log(`[mode] APP_ENV=${APP_ENV} | IS_TEST_ENV=${IS_TEST_MODE ? "true" : "false"} | START_MODE=${runtimeSystemState.mode.toUpperCase()}`);
-console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | TEST_RETRIEVAL_FORCE_ENABLE=${TEST_RETRIEVAL_FORCE_ENABLE ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${isAutonomousReplyAllowed() ? "true" : "false"}`);
+console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | TEST_RETRIEVAL_FORCE_ENABLE=${TEST_RETRIEVAL_FORCE_ENABLE ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${runtimeSystemState.mode === "test" && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED ? "true" : "false"}`);
 
-function requireAiExperimentMode(res) {
-  if (canRunTestRetrievalExperiments()) return true;
+async function requireAiExperimentMode(res) {
+  if (await canRunTestRetrievalExperiments()) return true;
   res.status(403).json({
     error: "AI experiment endpoints are disabled while Live Mode is active"
   });
@@ -2402,8 +2466,9 @@ app.post("/webhook", async (req, res) => {
     let reply = "";
     let suppressAutoAck = false;
     let allowIntermediateAck = false;
-    const activeMode = isTestModeEnabled() ? "test" : "live";
-    const canUseTestRetrievalRouting = canRunTestRetrievalExperiments();
+    const activeMode = await getCurrentSystemMode();
+    const autonomousReplyAllowed = await isAutonomousReplyAllowed();
+    const canUseTestRetrievalRouting = await canRunTestRetrievalExperiments();
     let selectedRoutingBranch = "unresolved";
 
     const greetingIntent = detectGreetingIntent(text);
@@ -2437,11 +2502,11 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = "menu_option";
       reply = getOptionReply(menuSelection, detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !isAutonomousReplyAllowed() && fallbackEligible) {
+    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !isAutonomousReplyAllowed()) {
+    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
@@ -2641,6 +2706,7 @@ app.post("/webhook", async (req, res) => {
       branch: selectedRoutingBranch,
       test_retrieval_enabled: canUseTestRetrievalRouting
     });
+    console.log(`[routing-runtime] mode=${activeMode.toUpperCase()} branch=${selectedRoutingBranch} text=${JSON.stringify(String(text || "").slice(0, 160))}`);
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
     const ack = getLocalizedAck(detectedLanguage);
@@ -2698,11 +2764,12 @@ app.get("/archived", requireAuth, (req, res) => {
 
 app.use("/api", requireAuth);
 
-app.get("/api/system/mode", (req, res) => {
+app.get("/api/system/mode", async (req, res) => {
+  const mode = await getCurrentSystemMode();
   return res.json({
     ok: true,
-    mode: runtimeSystemState.mode,
-    label: runtimeSystemState.mode === "test" ? "TEST MODE" : "LIVE MODE",
+    mode,
+    label: mode === "test" ? "TEST MODE" : "LIVE MODE",
     can_change: canChangeMode(req),
     capabilities: getModeCapabilities(),
     updated_at: runtimeSystemState.updatedAt
@@ -2722,6 +2789,8 @@ app.post("/api/system/mode", async (req, res) => {
     runtimeSystemState.mode = nextMode;
     runtimeSystemState.updatedAt = new Date().toISOString();
     await persistSystemMode(nextMode);
+    await persistSystemModeToDatabase(nextMode);
+    runtimeSystemState.lastRefreshedAt = new Date().toISOString();
 
     return res.json({
       ok: true,
@@ -3297,7 +3366,7 @@ app.delete("/api/kb/articles/:id", async (req, res) => {
 });
 app.post("/api/retrieval-test", requireAuth, async (req, res) => {
   try {
-    if (!requireAiExperimentMode(res)) return;
+    if (!(await requireAiExperimentMode(res))) return;
     const { query = "", options = {} } = req.body || {};
     if (!query || !query.trim()) {
       return res.status(400).json({ error: "query is required" });
@@ -3312,7 +3381,7 @@ app.post("/api/retrieval-test", requireAuth, async (req, res) => {
 
 app.post("/api/ai-reply", async (req, res) => {
   try {
-    if (!requireAiExperimentMode(res)) return;
+    if (!(await requireAiExperimentMode(res))) return;
     const { message, channel = "internal", wa_id = null } = req.body;
 
     if (!message || !message.trim()) {
@@ -4994,6 +5063,19 @@ app.post("/api/kb-capture/convert-to-kb", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-app.listen(process.env.PORT || 10000, () => {
-  console.log("Server running");
+async function bootstrapSystemMode() {
+  const persisted = await readPersistedSystemModeFromDatabase();
+  if (!persisted) {
+    return;
+  }
+  runtimeSystemState.mode = persisted.mode;
+  runtimeSystemState.updatedAt = persisted.updatedAt;
+  runtimeSystemState.lastRefreshedAt = new Date().toISOString();
+  console.log(`[mode] Bootstrapped mode from DB: ${persisted.mode.toUpperCase()}`);
+}
+
+bootstrapSystemMode().finally(() => {
+  app.listen(process.env.PORT || 10000, () => {
+    console.log("Server running");
+  });
 });
