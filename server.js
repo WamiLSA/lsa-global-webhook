@@ -41,6 +41,7 @@ const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
 const AI_AUTOREPLY_ENABLED = String(process.env.AI_AUTOREPLY_ENABLED || "false").toLowerCase() === "true";
 const APP_ENV = String(process.env.APP_ENV || process.env.NODE_ENV || "production").toLowerCase();
 const AI_EXPERIMENTS_ENABLED = String(process.env.AI_EXPERIMENTS_ENABLED || "false").toLowerCase() === "true";
+const TEST_RETRIEVAL_FORCE_ENABLE = String(process.env.TEST_RETRIEVAL_FORCE_ENABLE || "false").toLowerCase() === "true";
 const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS || "")
   .split(",")
   .map(item => item.trim().toLowerCase())
@@ -550,19 +551,43 @@ function isTestModeEnabled() {
 function isAutonomousReplyAllowed() {
   return isTestModeEnabled() && AI_EXPERIMENTS_ENABLED && AI_AUTOREPLY_ENABLED;
 }
+function isTestRetrievalEnabled() {
+  return isTestModeEnabled() || TEST_RETRIEVAL_FORCE_ENABLE;
+}
+
+function canRunTestRetrievalExperiments() {
+  return isTestRetrievalEnabled() && AI_EXPERIMENTS_ENABLED;
+}
+
+async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
+  if (!canRunTestRetrievalExperiments()) {
+    return {
+      normalized_query: "",
+      detected_language: detectMessageLanguage(query || ""),
+      intent: "general",
+      requested_field: null,
+      entity: null,
+      entity_domain: null,
+      matches: [],
+      debug: options.debug ? { fallback_reason: "test_retrieval_disabled" } : undefined
+    };
+  }
+  return retrieveInternalKnowledge(query, options);
+}
+
 
 function getModeCapabilities() {
   return {
     autonomous_ai_answering: isAutonomousReplyAllowed(),
-    ai_experimentation: isTestModeEnabled() && AI_EXPERIMENTS_ENABLED
+    ai_experimentation: canRunTestRetrievalExperiments()
   };
 }
 
 console.log(`[mode] APP_ENV=${APP_ENV} | IS_TEST_ENV=${IS_TEST_MODE ? "true" : "false"} | START_MODE=${runtimeSystemState.mode.toUpperCase()}`);
-console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${isAutonomousReplyAllowed() ? "true" : "false"}`);
+console.log(`[safety] AI_EXPERIMENTS_ENABLED=${AI_EXPERIMENTS_ENABLED ? "true" : "false"} | AI_AUTOREPLY_ENABLED=${AI_AUTOREPLY_ENABLED ? "true" : "false"} | TEST_RETRIEVAL_FORCE_ENABLE=${TEST_RETRIEVAL_FORCE_ENABLE ? "true" : "false"} | AUTONOMOUS_REPLY_ALLOWED=${isAutonomousReplyAllowed() ? "true" : "false"}`);
 
 function requireAiExperimentMode(res) {
-  if (isTestModeEnabled() && AI_EXPERIMENTS_ENABLED) return true;
+  if (canRunTestRetrievalExperiments()) return true;
   res.status(403).json({
     error: "AI experiment endpoints are disabled while Live Mode is active"
   });
@@ -1209,8 +1234,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null };
 }
 
 function setCustomerState(waId, state) {
@@ -1221,7 +1246,8 @@ function setCustomerState(waId, state) {
     preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null,
     topicType: state?.topicType || current.topicType || null,
     topicLanguage: state?.topicLanguage || current.topicLanguage || null,
-    topicEntity: state?.topicEntity || current.topicEntity || null
+    topicEntity: state?.topicEntity || current.topicEntity || null,
+    topicIntent: state?.topicIntent || current.topicIntent || null
   });
 }
 
@@ -1371,6 +1397,21 @@ async function localizeNarrowAnswer({ text, language, preserveCompleteness = fal
   }
 }
 
+function buildCompactStructuredSummary(match, language = "en") {
+  if (!match) return "";
+  const title = String(match.title || "Internal knowledge").trim();
+  const category = String(match.category || match.source || "knowledge").trim();
+  const snippet = String(match.snippet || "").trim();
+  const lines = [];
+  lines.push(`• Topic: ${title}`);
+  lines.push(`• Source: ${category}`);
+  if (snippet) lines.push(`• Summary: ${snippet}`);
+  if (language === "fr") {
+    lines.push("Souhaitez-vous un point précis (tarifs, durée, horaires, niveaux, localisation, inscription) ?");
+  }
+  return finalizeCourseMessage(lines.join("\n"), 520);
+}
+
 function extractAnswerTextFromRetrievalMatch(match) {
   if (!match || !match.raw_reference) return "";
   const source = match.source;
@@ -1416,10 +1457,27 @@ async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, speci
 
   const resolvedIntent = resolveNarrowIntent(specificIntent);
   const intentFocused = resolvedIntent ? extractRelevantKbSection(directText, resolvedIntent) : null;
-  const replySource = intentFocused || directText;
+
+  if (resolvedIntent && intentFocused) {
+    return localizeNarrowAnswer({
+      text: intentFocused,
+      language,
+      preserveCompleteness: resolvedIntent === "fees"
+    });
+  }
+
+  const compactSummary = buildCompactStructuredSummary(topMatch, language);
+  if (compactSummary) {
+    return localizeNarrowAnswer({
+      text: compactSummary,
+      language,
+      preserveCompleteness: false,
+      applyStyle: false
+    });
+  }
 
   return localizeNarrowAnswer({
-    text: replySource,
+    text: directText,
     language,
     preserveCompleteness: resolvedIntent === "fees"
   });
@@ -1689,7 +1747,7 @@ async function sendWhatsAppMedia({ to, mediaType, mediaId, caption = "" }) {
 async function searchKnowledgeBase(userMessage) {
   const rawMessage = (userMessage || "").trim();
   if (!rawMessage) return [];
-  const retrieval = await retrieveInternalKnowledge(rawMessage, {
+  const retrieval = await retrieveInternalKnowledgeForTestMode(rawMessage, {
     maxMatches: 12,
     sources: ["kb_articles"]
   });
@@ -2392,12 +2450,14 @@ app.post("/webhook", async (req, res) => {
       const courseTopicActive = userState.topicType === "language_course" || Boolean(explicitCourseLanguage);
       const courseQueryActive = isLanguageCourseQuery(text, userState);
       console.log("[course-debug] detected requested course language:", currentCourseLanguage || "none");
-      const retrievalResult = await retrieveInternalKnowledge(text, {
+      const retrievalResult = await retrieveInternalKnowledgeForTestMode(text, {
+        debug: true,
         maxMatches: 10,
         preferredCourseLanguage: currentCourseLanguage,
         courseTopicActive,
         contextMemory: {
-          entity: userState.topicEntity || null
+          entity: userState.topicEntity || null,
+          intent: userState.topicIntent || null
         }
       });
       const kbMatches = filterMismatchedCourseArticles(
@@ -2442,7 +2502,8 @@ app.post("/webhook", async (req, res) => {
             preferredCourseLanguage: currentCourseLanguage,
             topicType: "language_course",
             topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
-            topicEntity: retrievalResult.entity || userState.topicEntity || null
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
         } else if (resolvedIntent && retrievalResult.matches.length) {
           const extractedSection = await extractNarrowAnswerFromMatches({
@@ -2470,7 +2531,8 @@ app.post("/webhook", async (req, res) => {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : null,
-            topicLanguage: currentCourseLanguage
+            topicLanguage: currentCourseLanguage,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
@@ -2478,7 +2540,8 @@ app.post("/webhook", async (req, res) => {
             clarifyingAsked: true,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
-            topicLanguage: currentCourseLanguage || userState.topicLanguage
+            topicLanguage: currentCourseLanguage || userState.topicLanguage,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
         } else if (broadMessage && !kbMatches.length) {
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
@@ -2486,7 +2549,8 @@ app.post("/webhook", async (req, res) => {
             clarifyingAsked: true,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
-            topicLanguage: currentCourseLanguage || userState.topicLanguage
+            topicLanguage: currentCourseLanguage || userState.topicLanguage,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
         } else if (retrievalResult.matches.length && !vagueMessage) {
           const safeMatches = currentCourseLanguage
@@ -2515,7 +2579,8 @@ app.post("/webhook", async (req, res) => {
             preferredCourseLanguage: currentCourseLanguage,
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
             topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
-            topicEntity: retrievalResult.entity || userState.topicEntity || null
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
           console.log("[course-debug] course memory context set:", JSON.stringify({
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
@@ -3212,7 +3277,7 @@ app.post("/api/retrieval-test", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "query is required" });
     }
 
-    const result = await retrieveInternalKnowledge(query, options);
+    const result = await retrieveInternalKnowledgeForTestMode(query, { ...options, debug: true });
     return res.json({ ok: true, retrieval: result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -3228,7 +3293,7 @@ app.post("/api/ai-reply", async (req, res) => {
       return res.status(400).json({ error: "message is required" });
     }
 
-    const retrievalResult = await retrieveInternalKnowledge(message, { maxMatches: 10 });
+    const retrievalResult = await retrieveInternalKnowledgeForTestMode(message, { maxMatches: 10, debug: true });
     const kbMatches = retrievalResult.matches
       .filter(match => match.source === "kb_articles")
       .map(match => match.raw_reference)
