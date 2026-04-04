@@ -623,26 +623,15 @@ async function canRunTestRetrievalExperiments() {
   return (await isTestRetrievalEnabled()) && AI_EXPERIMENTS_ENABLED;
 }
 
-function normalizeRuntimeRoutingBranch(branch) {
-  if (!branch) return "unknown";
-  if (branch === "live_safe_handoff") return "safe_handoff";
-  return branch;
-}
-
-function logWebhookRouting({ mode, branch, text }) {
-  const safeMode = String(mode || "live").toUpperCase() === "TEST" ? "TEST" : "LIVE";
-  const safeBranch = normalizeRuntimeRoutingBranch(branch);
-  const safeText = String(text || "").replace(/"/g, '\\"');
-  console.log(`[routing-runtime] mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
-}
-
 function formatRoutingBranchForModeLog(branch) {
   if (!branch) return "unknown";
+  if (String(branch).startsWith("test_retrieval")) return "test_retrieval";
+  if (branch === "live_menu_fallback") return "safe_handoff";
   if (branch === "live_safe_handoff") return "safe_handoff";
   return branch;
 }
 
-function logInboundModeResolution({ mode, branch, text }) {
+function logInboundRoutingDecision({ mode, branch, text }) {
   const resolvedMode = String(mode || "live").toLowerCase() === "test" ? "TEST" : "LIVE";
   const resolvedBranch = formatRoutingBranchForModeLog(branch);
   const safeText = String(text || "").replace(/"/g, '\\"').slice(0, 160);
@@ -2457,7 +2446,7 @@ app.post("/webhook", async (req, res) => {
     const activeMode = await getCurrentSystemMode();
 
     if (!inboundBody) {
-      logWebhookRouting({
+      logInboundRoutingDecision({
         mode: activeMode,
         branch: "ignored_empty",
         text: text || attachment?.caption || ""
@@ -2465,7 +2454,7 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
     if (hasProcessedMessage(inboundMessageId)) {
-      logWebhookRouting({
+      logInboundRoutingDecision({
         mode: activeMode,
         branch: "ignored_duplicate",
         text: inboundBody
@@ -2498,7 +2487,7 @@ app.post("/webhook", async (req, res) => {
     });
 
     if (hasAttachment && !text) {
-      logWebhookRouting({
+      logInboundRoutingDecision({
         mode: activeMode,
         branch: "attachment_only",
         text: inboundBody
@@ -2748,10 +2737,10 @@ app.post("/webhook", async (req, res) => {
       branch: selectedRoutingBranch,
       test_retrieval_enabled: canUseTestRetrievalRouting
     });
-    logInboundModeResolution({
+    logInboundRoutingDecision({
       mode: activeMode,
       branch: selectedRoutingBranch,
-      text
+      text: inboundBody
     });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
