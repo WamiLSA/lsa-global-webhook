@@ -634,6 +634,19 @@ function logWebhookRouting({ modeLabel, branch, text }) {
   console.log(`mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
 }
 
+function formatRoutingBranchForModeLog(branch) {
+  if (!branch) return "unknown";
+  if (branch === "live_safe_handoff") return "safe_handoff";
+  return branch;
+}
+
+function logInboundModeResolution({ mode, branch, text }) {
+  const resolvedMode = String(mode || "live").toLowerCase() === "test" ? "TEST" : "LIVE";
+  const resolvedBranch = formatRoutingBranchForModeLog(branch);
+  const safeText = String(text || "").replace(/"/g, '\\"').slice(0, 160);
+  console.log(`[routing-runtime] mode=${resolvedMode} branch=${resolvedBranch} text="${safeText}" mode_source=app_config`);
+}
+
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
   if (!(await canRunTestRetrievalExperiments())) {
     return {
@@ -2717,7 +2730,11 @@ app.post("/webhook", async (req, res) => {
       branch: selectedRoutingBranch,
       test_retrieval_enabled: canUseTestRetrievalRouting
     });
-    console.log(`[routing-runtime] mode=${activeMode.toUpperCase()} branch=${selectedRoutingBranch} text=${JSON.stringify(String(text || "").slice(0, 160))}`);
+    logInboundModeResolution({
+      mode: activeMode,
+      branch: selectedRoutingBranch,
+      text
+    });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
     const ack = getLocalizedAck(detectedLanguage);
