@@ -559,6 +559,17 @@ function canRunTestRetrievalExperiments() {
   return isTestRetrievalEnabled() && AI_EXPERIMENTS_ENABLED;
 }
 
+function getCurrentSystemModeLabel() {
+  return isTestModeEnabled() ? "TEST" : "LIVE";
+}
+
+function logWebhookRouting({ modeLabel, branch, text }) {
+  const safeMode = modeLabel || getCurrentSystemModeLabel();
+  const safeBranch = branch || "unknown";
+  const safeText = String(text || "").replace(/"/g, '\\"');
+  console.log(`mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
+}
+
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
   if (!canRunTestRetrievalExperiments()) {
     return {
@@ -2402,6 +2413,8 @@ app.post("/webhook", async (req, res) => {
     let reply = "";
     let suppressAutoAck = false;
     let allowIntermediateAck = false;
+    let routingBranch = "unclassified";
+    const modeLabel = getCurrentSystemModeLabel();
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -2419,6 +2432,7 @@ app.post("/webhook", async (req, res) => {
       && normalizedInbound.split(/\s+/).filter(Boolean).length <= 2;
 
     if (greetingIntent || isGreetingMessage(text)) {
+      routingBranch = "greeting_menu";
       const incomingGreetingText = text || "";
       const normalizedGreetingText = normalizeGreetingText(incomingGreetingText);
       const greetingLanguageCode = greetingIntent?.language || detectGreetingLanguage(incomingGreetingText) || detectedLanguage;
@@ -2430,15 +2444,19 @@ app.post("/webhook", async (req, res) => {
       console.log("[greeting-debug] rendered menu language code:", renderedMenuLanguageCode);
       suppressAutoAck = true;
     } else if (menuSelection) {
+      routingBranch = "menu_selection";
       reply = getOptionReply(menuSelection, detectedLanguage);
       suppressAutoAck = true;
     } else if (!isAutonomousReplyAllowed() && fallbackEligible) {
+      routingBranch = "controlled_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
     } else if (!isAutonomousReplyAllowed()) {
+      routingBranch = "safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else {
+      routingBranch = "test_retrieval";
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
@@ -2615,6 +2633,11 @@ app.post("/webhook", async (req, res) => {
         reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
       }
     }
+    logWebhookRouting({
+      modeLabel,
+      branch: routingBranch,
+      text: inboundBody
+    });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
     const ack = getLocalizedAck(detectedLanguage);
