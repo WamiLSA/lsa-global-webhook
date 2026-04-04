@@ -3856,9 +3856,84 @@ function parseExperienceYears(value) {
   return Math.max(0, numeric);
 }
 
+function parseBoolean(value) {
+  if (typeof value === "boolean") return value;
+  const normalized = normalizeToken(value);
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function valueMentionsOnline(value) {
+  const text = normalizeToken(value);
+  if (!text) return false;
+  return /(online|remote|virtual|zoom|teams|google meet)/.test(text);
+}
+
+function includesAnyToken(tokens, candidate) {
+  if (!tokens.length) return false;
+  const normalizedCandidate = normalizeToken(candidate);
+  if (!normalizedCandidate) return false;
+  return tokens.some(token => normalizedCandidate.includes(token) || token.includes(normalizedCandidate));
+}
+
+function getModeWeights(requestType) {
+  const mode = normalizeToken(requestType || "general");
+  if (mode === "translation") {
+    return {
+      languagePair: 42,
+      service: 32,
+      specialization: 26,
+      availability: 18,
+      providerType: 12,
+      locationCountry: 8,
+      locationCity: 8,
+      experience: 10,
+      languageOverlap: 10
+    };
+  }
+  if (mode === "interpreting") {
+    return {
+      languagePair: 24,
+      service: 36,
+      specialization: 26,
+      availability: 20,
+      providerType: 14,
+      locationCountry: 12,
+      locationCity: 14,
+      experience: 10,
+      languageOverlap: 12
+    };
+  }
+  if (mode === "language_teaching") {
+    return {
+      languagePair: 30,
+      service: 36,
+      specialization: 20,
+      availability: 18,
+      providerType: 18,
+      locationCountry: 10,
+      locationCity: 12,
+      experience: 12,
+      languageOverlap: 12
+    };
+  }
+  return {
+    languagePair: 30,
+    service: 28,
+    specialization: 24,
+    availability: 16,
+    providerType: 14,
+    locationCountry: 10,
+    locationCity: 10,
+    experience: 10,
+    languageOverlap: 10
+  };
+}
+
 function getProviderMatchScore(criteria, provider) {
   const reasons = [];
+  const matchSignals = [];
   let score = 0;
+  const weights = getModeWeights(criteria.request_type);
 
   const queryPairs = parseLanguagePairs(criteria.language_pair);
   const providerPairs = parseLanguagePairs(provider.language_pairs);
@@ -3869,8 +3944,9 @@ function getProviderMatchScore(criteria, provider) {
     const pairMatches = queryPairs.filter(pair => providerPairSet.has(pair));
 
     if (pairMatches.length) {
-      score += 38;
-      reasons.push(`Language pair match: ${pairMatches.join(", ")}`);
+      score += weights.languagePair;
+      reasons.push(`Exact language pair match: ${pairMatches.join(", ")}`);
+      matchSignals.push("language_pair_exact");
     } else {
       const queryPairPieces = queryPairs[0].split(">");
       if (
@@ -3878,8 +3954,9 @@ function getProviderMatchScore(criteria, provider) {
         && providerWorkingLanguages.includes(queryPairPieces[0])
         && providerWorkingLanguages.includes(queryPairPieces[1])
       ) {
-        score += 20;
-        reasons.push("Working languages cover requested pair");
+        score += Math.round(weights.languagePair * 0.55);
+        reasons.push("Working languages overlap with requested pair");
+        matchSignals.push("language_pair_supported");
       }
     }
   }
@@ -3894,8 +3971,30 @@ function getProviderMatchScore(criteria, provider) {
       || service.includes(providerType)
     );
     if (serviceMatches.length) {
-      score += 24;
-      reasons.push(`Service match: ${serviceMatches.join(", ")}`);
+      score += weights.service;
+      reasons.push(`Exact service match: ${serviceMatches.join(", ")}`);
+      matchSignals.push("service_exact");
+    } else if (
+      criteria.request_type === "translation"
+      && includesAnyToken(["translation", "translator"], provider.services)
+    ) {
+      score += Math.round(weights.service * 0.45);
+      reasons.push("Service relevance: translation capability detected");
+      matchSignals.push("service_related");
+    } else if (
+      criteria.request_type === "interpreting"
+      && includesAnyToken(["interpreting", "interpreter"], provider.services)
+    ) {
+      score += Math.round(weights.service * 0.45);
+      reasons.push("Service relevance: interpreting capability detected");
+      matchSignals.push("service_related");
+    } else if (
+      criteria.request_type === "language_teaching"
+      && includesAnyToken(["teaching", "training", "teacher", "course"], provider.services)
+    ) {
+      score += Math.round(weights.service * 0.45);
+      reasons.push("Service relevance: teaching/training capability detected");
+      matchSignals.push("service_related");
     }
   }
 
@@ -3904,19 +4003,22 @@ function getProviderMatchScore(criteria, provider) {
     const providerSpecializations = parseFlexibleList(provider.specializations);
     const specializationMatches = requestedSpecializations.filter(spec => providerSpecializations.includes(spec));
     if (specializationMatches.length) {
-      score += 22;
-      reasons.push(`Specialization match: ${specializationMatches.join(", ")}`);
+      score += weights.specialization;
+      reasons.push(`Specialization/domain matched: ${specializationMatches.join(", ")}`);
+      matchSignals.push("specialization_exact");
     }
   }
 
   const availabilityNeed = normalizeToken(criteria.availability_need);
   const providerAvailability = normalizeToken(provider.availability_status);
   if (providerAvailability === "available") {
-    score += 20;
-    reasons.push("Availability: available");
+    score += weights.availability;
+    reasons.push("Available now");
+    matchSignals.push("availability");
   } else if (availabilityNeed && providerAvailability && availabilityNeed === providerAvailability) {
-    score += 10;
+    score += Math.round(weights.availability * 0.55);
     reasons.push(`Availability aligns with request: ${providerAvailability}`);
+    matchSignals.push("availability");
   }
 
   const requestedCountry = normalizeToken(criteria.country);
@@ -3925,19 +4027,38 @@ function getProviderMatchScore(criteria, provider) {
   const providerCity = normalizeToken(provider.city);
 
   if (requestedCountry && providerCountry && requestedCountry === providerCountry) {
-    score += 8;
+    score += weights.locationCountry;
     reasons.push(`Country match: ${provider.country}`);
+    matchSignals.push("country");
   }
   if (requestedCity && providerCity && requestedCity === providerCity) {
-    score += 6;
+    score += weights.locationCity;
     reasons.push(`City match: ${provider.city}`);
+    matchSignals.push("city");
+  }
+
+  if (criteria.online_only && (valueMentionsOnline(provider.services) || valueMentionsOnline(provider.notes))) {
+    score += Math.round(weights.locationCity * 0.5);
+    reasons.push("Online/remote suitability detected");
+    matchSignals.push("online");
   }
 
   const experienceYears = parseExperienceYears(provider.years_experience);
   if (experienceYears > 0) {
-    const experiencePoints = Math.min(10, Math.floor(experienceYears / 2));
+    const experiencePoints = Math.min(weights.experience, Math.floor(experienceYears / 2));
     score += experiencePoints;
     reasons.push(`Experience: ${experienceYears} year(s)`);
+    matchSignals.push("experience");
+  }
+
+  if (queryPairs.length) {
+    const [sourceLang, targetLang] = queryPairs[0].split(">");
+    const overlapCount = [sourceLang, targetLang].filter(lang => providerWorkingLanguages.includes(lang)).length;
+    if (overlapCount === 1) {
+      score += Math.round(weights.languageOverlap * 0.5);
+      reasons.push("Partial working-language overlap");
+      matchSignals.push("language_overlap");
+    }
   }
 
   const providerStatus = normalizeToken(provider.status);
@@ -3951,7 +4072,8 @@ function getProviderMatchScore(criteria, provider) {
 
   return {
     score: Math.max(0, Math.min(100, score)),
-    reasons
+    reasons,
+    matchSignals
   };
 }
 
@@ -4166,15 +4288,19 @@ app.post("/api/providers/match", async (req, res) => {
       language_pair: req.body?.language_pair || "",
       service_type: req.body?.service_type || "",
       specialization: req.body?.specialization || "",
+      provider_type: req.body?.provider_type || "",
       country: req.body?.country || "",
       city: req.body?.city || "",
+      online_only: parseBoolean(req.body?.online_only),
+      availability_only: parseBoolean(req.body?.availability_only),
+      min_years_experience: Number(req.body?.min_years_experience || 0) || 0,
       availability_need: req.body?.availability_need || "",
       notes: req.body?.notes || ""
     };
 
     const { data, error } = await supabase
       .from("providers")
-      .select("id, provider_type, full_name, organization_name, contact_person, email, phone, whatsapp, working_languages, language_pairs, services, specializations, country, city, availability_status, years_experience, status")
+      .select("id, provider_type, full_name, organization_name, contact_person, email, phone, whatsapp, working_languages, language_pairs, services, specializations, country, city, availability_status, years_experience, status, notes")
       .order("created_at", { ascending: false })
       .limit(500);
 
@@ -4182,7 +4308,28 @@ app.post("/api/providers/match", async (req, res) => {
       return res.status(500).json({ error });
     }
 
+    const requestedProviderTypes = parseFlexibleList(criteria.provider_type);
     const ranked = (data || [])
+      .filter(provider => {
+        const providerAvailability = normalizeToken(provider.availability_status);
+        if (criteria.availability_only && providerAvailability !== "available") return false;
+
+        const experienceYears = parseExperienceYears(provider.years_experience);
+        if (criteria.min_years_experience > 0 && experienceYears < criteria.min_years_experience) return false;
+
+        if (requestedProviderTypes.length) {
+          const providerType = normalizeToken(provider.provider_type);
+          if (!requestedProviderTypes.some(type => providerType.includes(type) || type.includes(providerType))) {
+            return false;
+          }
+        }
+
+        if (criteria.online_only && !(valueMentionsOnline(provider.services) || valueMentionsOnline(provider.notes))) {
+          return false;
+        }
+
+        return true;
+      })
       .map(provider => {
         const scored = getProviderMatchScore(criteria, provider);
         return {
@@ -4196,13 +4343,18 @@ app.post("/api/providers/match", async (req, res) => {
             whatsapp: provider.whatsapp || ""
           },
           provider_type: provider.provider_type || "",
+          service_summary: provider.services || "",
+          working_languages: provider.working_languages || "",
+          language_pairs: provider.language_pairs || "",
+          specialization_summary: provider.specializations || "",
           country: provider.country || "",
           city: provider.city || "",
           availability_status: provider.availability_status || "",
           years_experience: provider.years_experience || "",
           score: scored.score,
           confidence_level: getConfidenceLabel(scored.score),
-          why_matched: scored.reasons
+          why_matched: scored.reasons,
+          match_signals: scored.matchSignals
         };
       })
       .filter(item => item.score >= 20)
@@ -4215,7 +4367,16 @@ app.post("/api/providers/match", async (req, res) => {
         ? `Found ${ranked.length} provider match(es) for staff review.`
         : "No strong provider matches found. Try broadening the criteria.",
       criteria,
-      matches: ranked
+      matches: ranked,
+      comparison: ranked.slice(0, 3).map(item => ({
+        provider_id: item.provider_id,
+        provider_name: item.provider_name,
+        score: item.score,
+        service_summary: item.service_summary,
+        language_pairs: item.language_pairs,
+        availability_status: item.availability_status,
+        location: [item.city, item.country].filter(Boolean).join(", ")
+      }))
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });

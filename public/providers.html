@@ -143,6 +143,28 @@
       margin-top: 8px;
       background: var(--lsa-bg-soft);
     }
+
+    .match-compare-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .match-compare-cell {
+      border: 1px solid var(--lsa-border);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--lsa-surface);
+    }
+
+    .match-compare-label {
+      font-size: 11px;
+      color: var(--lsa-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-bottom: 4px;
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -242,8 +264,8 @@
   <div id="right">
     <h2>Providers</h2>
     <div class="card" id="matchingEngineCard">
-      <h3>Provider Matching Engine (Phase 1)</h3>
-      <div class="small">Use for translation, interpreting, language-teaching/course assignments, and general provider search.</div>
+      <h3>Provider Matching Engine (Operational Refinement)</h3>
+      <div class="small">Weighted matching + explainable shortlist for translation, interpreting, language-teaching/course assignments, and general provider search.</div>
       <div class="match-grid">
         <select id="match_request_type">
           <option value="translation">translation assignment</option>
@@ -254,13 +276,24 @@
         <input id="match_service_type" placeholder="Service type (translation, interpreting, teaching...)" />
         <input id="match_language_pair" placeholder="Language pair (e.g. English > French)" />
         <input id="match_specialization" placeholder="Specialization / domain (e.g. legal, medical)" />
+        <input id="match_provider_type" placeholder="Provider type filter (Freelancer, Agency...)" />
         <input id="match_country" placeholder="Country" />
         <input id="match_city" placeholder="City" />
+        <input id="match_min_years_experience" type="number" min="0" step="1" placeholder="Minimum years of experience" />
         <input id="match_availability_need" placeholder="Availability need (e.g. available, urgent)" />
+        <select id="match_online_only">
+          <option value="false">online + in-person</option>
+          <option value="true">online only</option>
+        </select>
+        <select id="match_availability_only">
+          <option value="false">all availability statuses</option>
+          <option value="true">available only</option>
+        </select>
         <textarea id="match_notes" placeholder="Request brief / notes"></textarea>
       </div>
       <button onclick="matchProviders()">Find Best Matches</button>
       <div id="matchSummary" class="small"></div>
+      <div id="matchComparison"></div>
       <div id="matchResults"></div>
     </div>
     <input id="searchBox" placeholder="Search by name, organization, services, language pairs..." oninput="renderProviders()" />
@@ -363,9 +396,13 @@
         service_type: document.getElementById("match_service_type").value.trim(),
         language_pair: document.getElementById("match_language_pair").value.trim(),
         specialization: document.getElementById("match_specialization").value.trim(),
+        provider_type: document.getElementById("match_provider_type").value.trim(),
         country: document.getElementById("match_country").value.trim(),
         city: document.getElementById("match_city").value.trim(),
+        min_years_experience: Number(document.getElementById("match_min_years_experience").value || 0),
         availability_need: document.getElementById("match_availability_need").value.trim(),
+        online_only: document.getElementById("match_online_only").value === "true",
+        availability_only: document.getElementById("match_availability_only").value === "true",
         notes: document.getElementById("match_notes").value.trim()
       };
     }
@@ -382,9 +419,32 @@
     function renderMatchResults(result) {
       const summaryEl = document.getElementById("matchSummary");
       const container = document.getElementById("matchResults");
+      const comparisonEl = document.getElementById("matchComparison");
       const matches = Array.isArray(result.matches) ? result.matches : [];
       summaryEl.textContent = result.summary || "";
       container.innerHTML = "";
+      comparisonEl.innerHTML = "";
+
+      const comparisonRows = Array.isArray(result.comparison) ? result.comparison : [];
+      if (comparisonRows.length) {
+        comparisonEl.innerHTML = `
+          <div class="small"><strong>Quick comparison (top ${comparisonRows.length})</strong></div>
+          <div class="match-compare-grid">
+            ${comparisonRows.map(row => `
+              <div class="match-compare-cell">
+                <div class="title">${row.provider_name || "Unnamed Provider"}</div>
+                <div class="small">Score: ${row.score || 0}</div>
+                <div class="match-compare-label">Language pairs</div>
+                <div class="small">${row.language_pairs || "-"}</div>
+                <div class="match-compare-label">Service summary</div>
+                <div class="small">${row.service_summary || "-"}</div>
+                <div class="match-compare-label">Availability / Location</div>
+                <div class="small">${row.availability_status || "-"} | ${row.location || "-"}</div>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }
 
       if (!matches.length) {
         container.innerHTML = "<div class='small'>No shortlist yet. Refine or broaden your request details.</div>";
@@ -397,9 +457,14 @@
         div.innerHTML = `
           <div class="title">${item.provider_name || "Unnamed Provider"} <span class="small">(score: ${item.score || 0})</span></div>
           <div class="small">Organization: ${item.organization_name || "-"}</div>
+          <div class="small">Provider type: ${item.provider_type || "-"}</div>
+          <div class="small">Service summary: ${item.service_summary || "-"}</div>
+          <div class="small">Language pairs / working languages: ${item.language_pairs || "-"} | ${item.working_languages || "-"}</div>
+          <div class="small">Specialization: ${item.specialization_summary || "-"}</div>
           <div class="small">Contact: ${item.contact_summary?.contact_person || "-"} | ${item.contact_summary?.email || "-"} | ${item.contact_summary?.phone || item.contact_summary?.whatsapp || "-"}</div>
           <div class="small">Location: ${item.country || "-"}, ${item.city || "-"}</div>
           <div class="small">Availability: ${item.availability_status || "-"}</div>
+          <div class="small">Experience: ${item.years_experience || "-"}</div>
           <div class="small">Why matched: ${(item.why_matched || []).join(" · ") || "General profile relevance"}</div>
           <button style="margin-top:8px;" onclick="openProviderProfile(${item.provider_id})">Open Provider Profile</button>
         `;
