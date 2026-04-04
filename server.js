@@ -623,15 +623,17 @@ async function canRunTestRetrievalExperiments() {
   return (await isTestRetrievalEnabled()) && AI_EXPERIMENTS_ENABLED;
 }
 
-function getCurrentSystemModeLabel() {
-  return isTestModeEnabled() ? "TEST" : "LIVE";
+function normalizeRuntimeRoutingBranch(branch) {
+  if (!branch) return "unknown";
+  if (branch === "live_safe_handoff") return "safe_handoff";
+  return branch;
 }
 
-function logWebhookRouting({ modeLabel, branch, text }) {
-  const safeMode = modeLabel || getCurrentSystemModeLabel();
-  const safeBranch = branch || "unknown";
+function logWebhookRouting({ mode, branch, text }) {
+  const safeMode = String(mode || "live").toUpperCase() === "TEST" ? "TEST" : "LIVE";
+  const safeBranch = normalizeRuntimeRoutingBranch(branch);
   const safeText = String(text || "").replace(/"/g, '\\"');
-  console.log(`mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
+  console.log(`[routing-runtime] mode=${safeMode} branch=${safeBranch} text="${safeText}"`);
 }
 
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
@@ -2439,10 +2441,22 @@ app.post("/webhook", async (req, res) => {
       normalized_text_preview: String(inboundBody || "").slice(0, 120)
     });
 
+    const activeMode = await getCurrentSystemMode();
+
     if (!inboundBody) {
+      logWebhookRouting({
+        mode: activeMode,
+        branch: "ignored_empty",
+        text: text || attachment?.caption || ""
+      });
       return res.sendStatus(200);
     }
     if (hasProcessedMessage(inboundMessageId)) {
+      logWebhookRouting({
+        mode: activeMode,
+        branch: "ignored_duplicate",
+        text: inboundBody
+      });
       return res.sendStatus(200);
     }
     markMessageProcessed(inboundMessageId);
@@ -2471,13 +2485,17 @@ app.post("/webhook", async (req, res) => {
     });
 
     if (hasAttachment && !text) {
+      logWebhookRouting({
+        mode: activeMode,
+        branch: "attachment_only",
+        text: inboundBody
+      });
       return res.sendStatus(200);
     }
 
     let reply = "";
     let suppressAutoAck = false;
     let allowIntermediateAck = false;
-    const activeMode = await getCurrentSystemMode();
     const autonomousReplyAllowed = await isAutonomousReplyAllowed();
     const canUseTestRetrievalRouting = await canRunTestRetrievalExperiments();
     let selectedRoutingBranch = "unresolved";
@@ -2717,7 +2735,11 @@ app.post("/webhook", async (req, res) => {
       branch: selectedRoutingBranch,
       test_retrieval_enabled: canUseTestRetrievalRouting
     });
-    console.log(`[routing-runtime] mode=${activeMode.toUpperCase()} branch=${selectedRoutingBranch} text=${JSON.stringify(String(text || "").slice(0, 160))}`);
+    logWebhookRouting({
+      mode: activeMode,
+      branch: selectedRoutingBranch,
+      text: inboundBody
+    });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
     const ack = getLocalizedAck(detectedLanguage);
