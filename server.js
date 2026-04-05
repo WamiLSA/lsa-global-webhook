@@ -631,13 +631,13 @@ function formatRoutingBranchForModeLog(branch) {
   return branch;
 }
 
-function logInboundRoutingDecision({ mode, branch, text, testRetrievalEnabled, reason }) {
+function logInboundRoutingDecision({ mode, branch, text, normalizedText = "", testRetrievalEnabled = false, reason = "none" }) {
   const resolvedMode = String(mode || "live").toLowerCase() === "test" ? "TEST" : "LIVE";
   const resolvedBranch = formatRoutingBranchForModeLog(branch);
   const safeText = String(text || "").replace(/"/g, '\\"').slice(0, 160);
-  const testRetrievalState = testRetrievalEnabled ? "true" : "false";
-  const reasonTag = reason ? ` reason=${reason}` : "";
-  console.log(`[routing-runtime] mode=${resolvedMode} text="${safeText}" test_retrieval_enabled=${testRetrievalState} branch=${resolvedBranch}${reasonTag} mode_source=app_config`);
+  const safeNormalizedText = String(normalizedText || "").replace(/"/g, '\\"').slice(0, 160);
+  const safeReason = String(reason || "none").replace(/"/g, '\\"').slice(0, 120);
+  console.log(`[routing-runtime] mode=${resolvedMode} text="${safeText}" normalized_text="${safeNormalizedText}" test_retrieval_enabled=${testRetrievalEnabled ? "true" : "false"} branch=${resolvedBranch} reason=${safeReason} mode_source=app_config`);
 }
 
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
@@ -2502,8 +2502,9 @@ app.post("/webhook", async (req, res) => {
     let allowIntermediateAck = false;
     const autonomousReplyAllowed = await isAutonomousReplyAllowed();
     const canUseTestRetrievalRouting = await canRunTestRetrievalExperiments();
+    const testModeActive = String(activeMode || "").toLowerCase() === "test";
     let selectedRoutingBranch = "unresolved";
-    let routingReason = "";
+    let routingReason = "unresolved";
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -2513,8 +2514,8 @@ app.post("/webhook", async (req, res) => {
     });
     const menuSelection = detectMenuSelection(text);
     const normalizedInbound = normalizeForIntent(text);
-    const isEligibleFreeTextQuery = Boolean(normalizedInbound) && !menuSelection && !greetingIntent;
-    const testRetrievalEnabledForMessage = canUseTestRetrievalRouting && isEligibleFreeTextQuery;
+    const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
+    const testRetrievalEnabledForMessage = Boolean(canUseTestRetrievalRouting && retrievalEligibleFreeText);
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
     const fallbackEligible = hasStoredLanguage
       && !menuSelection
@@ -2542,17 +2543,17 @@ app.post("/webhook", async (req, res) => {
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
-      routingReason = "safe_fallback_short_followup";
+      routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
-      routingReason = canUseTestRetrievalRouting ? "not_eligible_free_text" : "retrieval_disabled";
+      routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
-      routingReason = "eligible_free_text";
+      routingReason = "test_mode_retrieval_enabled";
       const narrowIntent = detectNarrowIntent(text);
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
@@ -2585,6 +2586,7 @@ app.post("/webhook", async (req, res) => {
       try {
         if (shouldEscalateToHuman(text)) {
           selectedRoutingBranch = "test_retrieval_human_escalation";
+          routingReason = "human_escalation_request";
           reply = {
             fr: "Merci. Cette demande nécessite un conseiller LSA GLOBAL. Merci de partager votre nom et numéro WhatsApp, notre équipe vous contacte rapidement.",
             es: "Gracias. Esta solicitud requiere un asesor de LSA GLOBAL. Comparta su nombre y número de WhatsApp y nuestro equipo le contactará pronto.",
@@ -2596,6 +2598,7 @@ app.post("/webhook", async (req, res) => {
           allowIntermediateAck = true;
         } else if (courseQueryActive && !resolvedIntent) {
           selectedRoutingBranch = "test_retrieval_course_context";
+          routingReason = "course_context_query";
           const courseMatchFromRetrieval = currentCourseLanguage
             ? retrievalResult.matches.find((match) => {
               if (match.source !== "kb_articles") return false;
@@ -2623,6 +2626,7 @@ app.post("/webhook", async (req, res) => {
           });
         } else if (resolvedIntent && retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_narrow_intent";
+          routingReason = "narrow_intent_match";
           const extractedSection = await extractNarrowAnswerFromMatches({
             matches: retrievalResult.matches,
             intent: resolvedIntent
@@ -2653,6 +2657,7 @@ app.post("/webhook", async (req, res) => {
           });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           selectedRoutingBranch = "test_retrieval_clarify";
+          routingReason = "broad_query_clarification";
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
           setCustomerState(from, {
             clarifyingAsked: true,
@@ -2663,6 +2668,7 @@ app.post("/webhook", async (req, res) => {
           });
         } else if (broadMessage && !kbMatches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
+          routingReason = "broad_query_no_matches";
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
           setCustomerState(from, {
             clarifyingAsked: true,
@@ -2673,6 +2679,7 @@ app.post("/webhook", async (req, res) => {
           });
         } else if (retrievalResult.matches.length && !vagueMessage) {
           selectedRoutingBranch = "test_retrieval_answer";
+          routingReason = "retrieval_matches_found";
           const safeMatches = currentCourseLanguage
             ? retrievalResult.matches.filter((match) => {
               if (match.source !== "kb_articles") return true;
@@ -2708,6 +2715,7 @@ app.post("/webhook", async (req, res) => {
           }));
         } else {
           selectedRoutingBranch = "test_retrieval_ai_fallback";
+          routingReason = "retrieval_ai_fallback";
           reply = await generateAIAnswerMessage({
             customerMessage: text,
             kbMatches,
@@ -2734,11 +2742,12 @@ app.post("/webhook", async (req, res) => {
       } catch (err) {
         console.error("AI fallback error:", err.message || err);
         selectedRoutingBranch = "test_retrieval_error_fallback";
+        routingReason = "retrieval_exception_fallback";
         reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
       }
     } else {
       selectedRoutingBranch = "live_safe_handoff";
-      routingReason = "default_safe_handoff";
+      routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
     }
@@ -2746,13 +2755,15 @@ app.post("/webhook", async (req, res) => {
       mode: activeMode.toUpperCase(),
       normalized_text: String(normalizedInbound || "").slice(0, 160),
       branch: selectedRoutingBranch,
+      normalized_text: normalizedInbound,
       test_retrieval_enabled: testRetrievalEnabledForMessage,
-      reason: routingReason || null
+      reason: routingReason
     });
     logInboundRoutingDecision({
       mode: activeMode,
       branch: selectedRoutingBranch,
-      text: normalizedInbound,
+      text: inboundBody,
+      normalizedText: normalizedInbound,
       testRetrievalEnabled: testRetrievalEnabledForMessage,
       reason: routingReason
     });
