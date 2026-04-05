@@ -1125,12 +1125,96 @@ function extractFeeOnlySection(answerText) {
   return deduped.join("\n");
 }
 
+const FIELD_EXTRACTION_RULES = {
+  fees: {
+    headingKeywords: ["fee", "fees", "tarif", "tarifs", "prix", "frais", "pricing", "cost", "tuition"],
+    lineSignals: [
+      /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|prix|frais|tuition|montant|amount)\b/i,
+      /\b(a1|a2|b1|b2|c1|c2)\b/i,
+      /\b\d{1,3}(?:[\s.,]\d{3})*(?:\s*(?:frs?\s*cfa|fcfa|xaf|xof|eur|usd|cad|€|\$|£))?\b/i,
+      /\bfees?\s+per\s+level\b/i
+    ]
+  },
+  duration: {
+    headingKeywords: ["duration", "durée", "duree", "longueur", "length"],
+    lineSignals: [/\b(duration|durée|duree|length|weeks?|months?|jours?|semaines?|mois|hours?|heures?)\b/i]
+  },
+  schedule: {
+    headingKeywords: ["schedule", "horaires", "horaire", "timetable", "planning", "orario", "horario"],
+    lineSignals: [/\b(schedule|horaires?|timetable|planning|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|mon|tue|wed|thu|fri|sat|sun|\d{1,2}[:h]\d{0,2})\b/i]
+  },
+  levels: {
+    headingKeywords: ["level", "levels", "niveau", "niveaux", "nivel", "niveles", "livello", "livelli"],
+    lineSignals: [/\b(level|levels|niveau|niveaux|nivel|niveles|livello|livelli|a1|a2|b1|b2|c1|c2|beginner|intermediate|advanced|débutant|debutant)\b/i]
+  },
+  location: {
+    headingKeywords: ["location", "localisation", "lieu", "adresse", "address", "campus", "site"],
+    lineSignals: [/\b(location|localisation|lieu|adresse|address|city|ville|campus|onsite|présentiel|presentiel)\b/i]
+  },
+  registration: {
+    headingKeywords: ["registration", "inscription", "enrollment", "enrolment", "admission", "apply"],
+    lineSignals: [/\b(registration|inscription|register|enrollment|enrolment|deadline|apply|admission|dossier)\b/i]
+  }
+};
+
+function extractByFieldRules(answerText, intent) {
+  const source = (answerText || "").trim();
+  if (!source) return null;
+  const rule = FIELD_EXTRACTION_RULES[intent];
+  if (!rule) return null;
+
+  const lines = source
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+
+  const normalizedHeadingKeywords = (rule.headingKeywords || []).map(normalizeForIntent).filter(Boolean);
+  const selected = [];
+
+  const isHeadingMatch = (line) => {
+    const headingMatch = line.match(/^([^\n:]{2,80})\s*:\s*(.*)$/);
+    if (!headingMatch) return false;
+    const headingLabel = normalizeForIntent(headingMatch[1]);
+    return normalizedHeadingKeywords.some((keyword) => {
+      const escaped = keyword.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      return new RegExp(`\\b${escaped}\\b`, "i").test(headingLabel);
+    });
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (isHeadingMatch(line)) {
+      selected.push(line);
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const nextLine = lines[j];
+        if (/^[^\n:]{2,80}\s*:/.test(nextLine)) break;
+        selected.push(nextLine);
+      }
+    }
+  }
+
+  if (!selected.length) {
+    const signals = rule.lineSignals || [];
+    for (const line of lines) {
+      if (signals.some((signal) => signal.test(line))) {
+        selected.push(line);
+      }
+    }
+  }
+
+  if (!selected.length) return null;
+  return Array.from(new Set(selected)).join("\n");
+}
+
 function extractRelevantKbSection(answerText, intent) {
   if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
   if (intent === "fees") {
     const feeOnlySection = extractFeeOnlySection(answerText);
     if (feeOnlySection) return feeOnlySection;
   }
+  const fieldSpecificSection = extractByFieldRules(answerText, intent);
+  if (fieldSpecificSection) return fieldSpecificSection;
 
   const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
   const normalizedAnswer = normalizeForIntent(answerText);
@@ -1278,10 +1362,35 @@ async function extractNarrowAnswerFromMatches({ matches, intent }) {
   const safeIntent = resolveNarrowIntent(intent);
   if (!safeIntent || !matches?.length) return null;
 
-  for (const match of matches) {
+  let lastFallbackReason = "no_match_candidates";
+  const orderedMatches = [...matches].sort((a, b) => {
+    if (a.source === "kb_articles" && b.source !== "kb_articles") return -1;
+    if (a.source !== "kb_articles" && b.source === "kb_articles") return 1;
+    return 0;
+  });
+
+  console.log("[narrow-extract-debug] start", JSON.stringify({
+    detected_field_intent: safeIntent,
+    matches_count: orderedMatches.length
+  }));
+
+  for (const match of orderedMatches) {
     const text = extractAnswerTextFromRetrievalMatch(match);
     const section = extractRelevantKbSection(text, safeIntent);
+    const snippetLength = section ? section.length : 0;
+    console.log("[narrow-extract-debug] candidate", JSON.stringify({
+      matched_article_title: match?.title || "Untitled",
+      detected_field_intent: safeIntent,
+      source: match?.source || "unknown",
+      target_field_found: Boolean(section),
+      extracted_snippet_length: snippetLength
+    }));
     if (section) return section;
+    if (!text?.trim()) {
+      lastFallbackReason = "empty_match_text";
+    } else {
+      lastFallbackReason = "target_field_not_found_in_candidate";
+    }
   }
 
   const compactKb = matches
@@ -1299,10 +1408,26 @@ async function extractNarrowAnswerFromMatches({ matches, intent }) {
       input: `Field: ${safeIntent}\n\nInternal content:\n${compactKb}`
     });
     const extracted = (extraction.output_text || "").trim();
-    if (!extracted || /^NOT_FOUND$/i.test(extracted)) return null;
+    if (!extracted || /^NOT_FOUND$/i.test(extracted)) {
+      console.log("[narrow-extract-debug] fallback", JSON.stringify({
+        detected_field_intent: safeIntent,
+        fallback_reason: "llm_not_found",
+        previous_reason: lastFallbackReason
+      }));
+      return null;
+    }
+    console.log("[narrow-extract-debug] fallback-success", JSON.stringify({
+      detected_field_intent: safeIntent,
+      extracted_snippet_length: extracted.length
+    }));
     return extracted;
   } catch (error) {
     console.error("Narrow KB extraction error:", error?.message || error);
+    console.log("[narrow-extract-debug] fallback", JSON.stringify({
+      detected_field_intent: safeIntent,
+      fallback_reason: "llm_extraction_error",
+      previous_reason: lastFallbackReason
+    }));
     return null;
   }
 }
@@ -2651,8 +2776,9 @@ app.post("/webhook", async (req, res) => {
           setCustomerState(from, {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
-            topicType: currentCourseLanguage ? "language_course" : null,
-            topicLanguage: currentCourseLanguage,
+            topicType: (currentCourseLanguage || userState.topicType === "language_course") ? "language_course" : null,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null
           });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
