@@ -2541,17 +2541,17 @@ app.post("/webhook", async (req, res) => {
       routingReason = "menu_input";
       reply = getOptionReply(menuSelection, detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed && fallbackEligible) {
+    } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       suppressAutoAck = true;
-    } else if (!canUseTestRetrievalRouting && !autonomousReplyAllowed) {
+    } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       suppressAutoAck = true;
-    } else if (canUseTestRetrievalRouting) {
+    } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
       routingReason = "test_mode_retrieval_enabled";
       const narrowIntent = detectNarrowIntent(text);
@@ -2753,7 +2753,7 @@ app.post("/webhook", async (req, res) => {
     }
     console.log("[routing-debug] inbound branch selected", {
       mode: activeMode.toUpperCase(),
-      message_text: String(text || "").slice(0, 160),
+      normalized_text: String(normalizedInbound || "").slice(0, 160),
       branch: selectedRoutingBranch,
       normalized_text: normalizedInbound,
       test_retrieval_enabled: testRetrievalEnabledForMessage,
