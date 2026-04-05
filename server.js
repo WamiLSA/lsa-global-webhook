@@ -1089,6 +1089,34 @@ function resolveNarrowIntent(intent) {
   return NARROW_INTENT_ALIASES[intent] || null;
 }
 
+function isFeeRelevantLine(text, { allowSupplementOnly = true } = {}) {
+  const normalized = normalizeForIntent(text || "");
+  if (!normalized) return false;
+
+  const currencySymbolPattern = /(?:€|\$|£|fcfa|xaf|xof|usd|eur|cad|frs?\s*cfa)/i;
+  const amountWithUnitPattern = /\b\d{1,3}(?:[\s.,]\d{3})*(?:\s*(?:€|\$|£|fcfa|xaf|xof|usd|eur|cad|frs?\s*cfa))\b/i;
+  const priceTermPattern = /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|tariff|tariffs|tuition|rate|rates|quote|quotation|montant|amount|frais)\b/i;
+  const rateUnitPattern = /\b(per|par)\s+(?:hour|heure|word|mot|page|participant|session|month|mois|week|semaine)\b/i;
+  const supplementPattern = /\b(registration|inscription|enrollment|enrolment|payment|paiement|installment|installments|instalment|instalments|deposit|acompte|advance|versement|tranche|tranches)\b/i;
+  const freeOrInclusionPattern = /\b(free|gratuit|gratuite|gratuits|included|inclus|incluse|sans frais|no additional charge)\b/i;
+  const nonPricingPattern = /\b(duration|durée|duree|schedule|horaire|horaires|level|levels|niveau|niveaux|materials?|support de cours|certificate|certification|location|adresse|address|format|online|onsite|présentiel|presentiel)\b/i;
+
+  const hasAmount = amountWithUnitPattern.test(normalized);
+  const hasCurrency = currencySymbolPattern.test(normalized);
+  const hasPriceTerm = priceTermPattern.test(normalized);
+  const hasRateUnit = rateUnitPattern.test(normalized);
+  const hasSupplement = supplementPattern.test(normalized);
+  const hasFreeOrInclusion = freeOrInclusionPattern.test(normalized);
+  const hasNonPricing = nonPricingPattern.test(normalized);
+
+  if (hasAmount && (hasCurrency || hasPriceTerm || hasRateUnit || hasSupplement)) return true;
+  if (hasPriceTerm && (hasCurrency || hasAmount || hasRateUnit || hasSupplement)) return true;
+  if (allowSupplementOnly && hasSupplement && (hasFreeOrInclusion || hasCurrency || hasAmount || hasPriceTerm)) return true;
+  if ((hasCurrency || hasAmount) && !hasNonPricing) return true;
+
+  return false;
+}
+
 function extractFeeOnlySection(answerText) {
   const source = (answerText || "").trim();
   if (!source) return null;
@@ -1103,85 +1131,16 @@ function extractFeeOnlySection(answerText) {
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 
-  const units = "(?:frs?\\s*cfa|fcfa|xaf|xof|eur|usd|cad|€|\\$|£)";
-  const amountPattern = new RegExp(`\\b\\d{1,3}(?:[\\s.,]\\d{3})*(?:\\s*${units})?\\b`, "i");
-  const levelPattern = /\b(a1|a2|b1|b2|c1|c2)\b/i;
-  const feeSignalPattern = /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|prix|frais|tuition|montant|amount)\b/i;
-  const registrationSignalPattern = /\b(inscription|registration|enrollment|enrolment|register)\b/i;
-  const installmentSignalPattern = /\b(tranche|tranches|installment|installments|instalment|instalments|paiement|payment)\b/i;
-  const registrationOrInstallmentOnlyPattern = /\b(inscription|registration|enrollment|enrolment|tranche|tranches|installment|installments|instalment|instalments|paiement|payment)\b/i;
-
   const candidates = lines.length ? lines : fallbackChunks;
-  const feeLinesByLevel = {
-    a1a2: null,
-    b1: null,
-    b2: null,
-    c1: null
-  };
-  const notes = [];
-
+  const selected = [];
   for (const chunk of candidates) {
-    const normalized = normalizeForIntent(chunk);
-    if (!normalized) continue;
-
-    const isLevelFeeLine = levelPattern.test(normalized) && (amountPattern.test(normalized) || feeSignalPattern.test(normalized));
-    const isGeneralFeeLine = feeSignalPattern.test(normalized) && amountPattern.test(normalized) && !isLevelFeeLine;
-    const isRegistrationLine = registrationSignalPattern.test(normalized) && (feeSignalPattern.test(normalized) || /\bfree|gratuit|gratuits|gratuite\b/i.test(normalized));
-    const isInstallmentLine = installmentSignalPattern.test(normalized);
-
-    if (isLevelFeeLine) {
-      if ((/\ba1\b/i.test(normalized) || /\ba2\b/i.test(normalized)) && !feeLinesByLevel.a1a2) {
-        feeLinesByLevel.a1a2 = chunk;
-        continue;
-      }
-      if (/\bb1\b/i.test(normalized) && !feeLinesByLevel.b1) {
-        feeLinesByLevel.b1 = chunk;
-        continue;
-      }
-      if (/\bb2\b/i.test(normalized) && !feeLinesByLevel.b2) {
-        feeLinesByLevel.b2 = chunk;
-        continue;
-      }
-      if (/\bc1\b/i.test(normalized) && !feeLinesByLevel.c1) {
-        feeLinesByLevel.c1 = chunk;
-        continue;
-      }
-    }
-
-    if (isRegistrationLine || isInstallmentLine) {
-      if (!notes.some((line) => normalizeForIntent(line) === normalized)) {
-        notes.push(chunk);
-      }
-      continue;
-    }
-
-    if (!Object.values(feeLinesByLevel).every(Boolean) && isGeneralFeeLine && registrationOrInstallmentOnlyPattern.test(normalized)) {
-      if (!notes.some((line) => normalizeForIntent(line) === normalized)) {
-        notes.push(chunk);
-      }
+    if (isFeeRelevantLine(chunk, { allowSupplementOnly: true })) {
+      selected.push(chunk);
     }
   }
 
-  const strictFeeBlock = [feeLinesByLevel.a1a2, feeLinesByLevel.b1, feeLinesByLevel.b2, feeLinesByLevel.c1].filter(Boolean);
-  const hasCoreLevels = strictFeeBlock.length >= 3;
-  if (hasCoreLevels) {
-    return Array.from(new Set([...strictFeeBlock, ...notes.slice(0, 2)])).join("\n");
-  }
-
-  const fallbackSelected = [];
-  for (const chunk of candidates) {
-    const normalized = normalizeForIntent(chunk);
-    if (!normalized) continue;
-    const isLevelFeeLine = levelPattern.test(normalized) && (amountPattern.test(normalized) || feeSignalPattern.test(normalized));
-    const isRegistrationLine = registrationSignalPattern.test(normalized) && (feeSignalPattern.test(normalized) || /\bfree|gratuit|gratuits|gratuite\b/i.test(normalized));
-    const isInstallmentLine = installmentSignalPattern.test(normalized);
-    if (isLevelFeeLine || isRegistrationLine || isInstallmentLine) {
-      fallbackSelected.push(chunk);
-    }
-  }
-
-  if (!fallbackSelected.length) return null;
-  return Array.from(new Set(fallbackSelected)).join("\n");
+  if (!selected.length) return null;
+  return Array.from(new Set(selected)).join("\n");
 }
 
 const FIELD_EXTRACTION_RULES = {
@@ -1189,7 +1148,6 @@ const FIELD_EXTRACTION_RULES = {
     headingKeywords: ["fee", "fees", "tarif", "tarifs", "prix", "frais", "pricing", "cost", "tuition"],
     lineSignals: [
       /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|prix|frais|tuition|montant|amount)\b/i,
-      /\b(a1|a2|b1|b2|c1|c2)\b/i,
       /\b\d{1,3}(?:[\s.,]\d{3})*(?:\s*(?:frs?\s*cfa|fcfa|xaf|xof|eur|usd|cad|€|\$|£))?\b/i,
       /\bfees?\s+per\s+level\b/i
     ]
@@ -1264,11 +1222,15 @@ function extractByFieldRules(answerText, intent) {
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (isHeadingMatch(line)) {
-      selected.push(line);
+      if (intent !== "fees" || isFeeRelevantLine(line, { allowSupplementOnly: false })) {
+        selected.push(line);
+      }
       for (let j = i + 1; j < lines.length; j += 1) {
         const nextLine = lines[j];
         if (/^[^\n:]{2,80}\s*:/.test(nextLine)) break;
-        selected.push(nextLine);
+        if (intent !== "fees" || isFeeRelevantLine(nextLine, { allowSupplementOnly: true })) {
+          selected.push(nextLine);
+        }
       }
     }
   }
@@ -1276,6 +1238,9 @@ function extractByFieldRules(answerText, intent) {
   if (!selected.length) {
     const signals = rule.lineSignals || [];
     for (const line of lines) {
+      if (intent === "fees" && !isFeeRelevantLine(line, { allowSupplementOnly: true })) {
+        continue;
+      }
       if (signals.some((signal) => signal.test(line))) {
         selected.push(line);
       }
