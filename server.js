@@ -2459,21 +2459,117 @@ function getControlledFallbackReply(languageCode) {
   return LIVE_MODE_MESSAGES[language]?.fallback || LIVE_MODE_MESSAGES.en.fallback;
 }
 
-function getLocalizedClarifyingQuestion(language) {
-  switch (language) {
-    case "fr":
-      return "Que souhaitez-vous préciser : tarif, durée, horaires, niveau, format ou inscription ?";
-    case "es":
-      return "¿Qué desea precisar: precio, duración, horario, nivel, modalidad o inscripción?";
-    case "de":
-      return "Was möchten Sie genau wissen: Preis, Dauer, Zeitplan, Niveau, Format oder Anmeldung?";
-    case "it":
-      return "Cosa desidera precisare: prezzo, durata, orario, livello, formato o iscrizione?";
-    case "pt":
-      return "O que deseja especificar: preço, duração, horário, nível, formato ou inscrição?";
-    default:
-      return "What would you like to specify: fee, duration, schedule, level, format, or registration?";
-  }
+function detectClarificationTopic({ text = "", retrievalResult = null, userState = null }) {
+  const normalized = normalizeForIntent(text);
+  const hintedDomain = retrievalResult?.entity_domain || userState?.topicDomain || "";
+  if (hintedDomain === "course") return "course";
+  if (/\b(exam|examen|test|ielts|toefl|tef|toeic|certification|certificate)\b/.test(normalized)) return "exam_prep";
+  if (/\b(interpreting|interpretation|interpreter|interpretariat|interpretazione|interprétation)\b/.test(normalized)) return "interpreting";
+  if (/\b(translation|traduction|traduccion|traduzione|translate|certified translation|sworn translation)\b/.test(normalized)) return "translation";
+  if (/\b(registration|register|inscription|enroll|admission)\b/.test(normalized)) return "registration";
+  if (/\b(certificate|certification|attestation|proof|verification)\b/.test(normalized)) return "certificates";
+  if (/\b(location|branch|office|centre|center|campus|city|adresse|address)\b/.test(normalized)) return "location";
+  if (/\b(policy|policies|refund|terms|condition|privacy)\b/.test(normalized)) return "policy";
+  if (/\b(help|support|issue|problem|bug|error)\b/.test(normalized)) return "support";
+  return "general";
+}
+
+function getLocalizedClarifyingQuestion(language, { topic = "general", intent = null } = {}) {
+  const feeClarify = {
+    en: "Which option do you mean for pricing: standard, intensive, online, or private?",
+    fr: "Pour le tarif, quel format voulez-vous : standard, intensif, en ligne ou privé ?",
+    es: "Para el precio, ¿qué modalidad desea: estándar, intensiva, online o privada?",
+    de: "Für den Preis: Welche Option meinen Sie – Standard, Intensiv, Online oder Privat?",
+    it: "Per il prezzo, quale opzione intende: standard, intensivo, online o privato?",
+    pt: "Para o preço, qual opção deseja: padrão, intensivo, online ou privado?"
+  };
+
+  const byTopic = {
+    course: {
+      en: "Which point do you want exactly: fee, duration, schedule, level, format, or registration?",
+      fr: "Quel point voulez-vous précisément : tarif, durée, horaires, niveau, format ou inscription ?",
+      es: "¿Qué punto desea exactamente: precio, duración, horario, nivel, modalidad o inscripción?",
+      de: "Welchen Punkt möchten Sie genau: Preis, Dauer, Zeitplan, Niveau, Format oder Anmeldung?",
+      it: "Quale punto desidera esattamente: prezzo, durata, orario, livello, formato o iscrizione?",
+      pt: "Qual ponto deseja exatamente: preço, duração, horário, nível, formato ou inscrição?"
+    },
+    exam_prep: {
+      en: "For exam prep, do you need pricing, schedule, format, or registration details?",
+      fr: "Pour la préparation d’examen, voulez-vous le tarif, le planning, le format ou l’inscription ?",
+      es: "Para preparación de exámenes, ¿necesita precio, horario, modalidad o inscripción?",
+      de: "Für Prüfungsvorbereitung: Brauchen Sie Preis, Zeitplan, Format oder Anmeldung?",
+      it: "Per la preparazione esami, le serve prezzo, orario, formato o iscrizione?",
+      pt: "Para preparação para exames, precisa de preço, horário, formato ou inscrição?"
+    },
+    translation: {
+      en: "For translation, which language pair do you need?",
+      fr: "Pour la traduction, quelle combinaison de langues souhaitez-vous ?",
+      es: "Para traducción, ¿qué combinación de idiomas necesita?",
+      de: "Für Übersetzungen: Welche Sprachkombination benötigen Sie?",
+      it: "Per la traduzione, quale combinazione linguistica le serve?",
+      pt: "Para tradução, qual combinação de idiomas precisa?"
+    },
+    interpreting: {
+      en: "For interpreting, do you need on-site or online service?",
+      fr: "Pour l’interprétation, avez-vous besoin d’un service sur site ou en ligne ?",
+      es: "Para interpretación, ¿necesita servicio presencial o en línea?",
+      de: "Für Dolmetschen: Benötigen Sie vor Ort oder online?",
+      it: "Per l’interpretariato, le serve un servizio in presenza o online?",
+      pt: "Para interpretação, precisa de serviço presencial ou online?"
+    },
+    registration: {
+      en: "Which program or service are you trying to register for?",
+      fr: "Pour quel programme ou service souhaitez-vous vous inscrire ?",
+      es: "¿Para qué programa o servicio quiere inscribirse?",
+      de: "Für welches Programm oder welchen Service möchten Sie sich anmelden?",
+      it: "Per quale programma o servizio desidera registrarsi?",
+      pt: "Para qual programa ou serviço deseja se inscrever?"
+    },
+    certificates: {
+      en: "Which certificate do you mean?",
+      fr: "De quel certificat s’agit-il ?",
+      es: "¿A qué certificado se refiere?",
+      de: "Welches Zertifikat meinen Sie?",
+      it: "A quale certificato si riferisce?",
+      pt: "A que certificado se refere?"
+    },
+    location: {
+      en: "Which branch/location are you asking about?",
+      fr: "De quelle agence/localisation parlez-vous ?",
+      es: "¿Sobre qué sede/ubicación consulta?",
+      de: "Zu welchem Standort haben Sie eine Frage?",
+      it: "Di quale sede/località sta parlando?",
+      pt: "Sobre qual filial/localização está a perguntar?"
+    },
+    policy: {
+      en: "Which policy do you mean: refund, payment, registration, or another one?",
+      fr: "Quelle politique souhaitez-vous : remboursement, paiement, inscription ou autre ?",
+      es: "¿Qué política desea: reembolso, pago, inscripción u otra?",
+      de: "Welche Richtlinie meinen Sie: Erstattung, Zahlung, Anmeldung oder eine andere?",
+      it: "Quale policy intende: rimborso, pagamento, iscrizione o altro?",
+      pt: "Qual política deseja: reembolso, pagamento, inscrição ou outra?"
+    },
+    support: {
+      en: "Which support topic do you need help with?",
+      fr: "Sur quel sujet d’assistance avez-vous besoin d’aide ?",
+      es: "¿Con qué tema de soporte necesita ayuda?",
+      de: "Bei welchem Support-Thema benötigen Sie Hilfe?",
+      it: "Per quale argomento di supporto ha bisogno di aiuto?",
+      pt: "Com qual tema de suporte precisa de ajuda?"
+    },
+    general: {
+      en: "Do you want pricing, duration, schedule, location, or registration details?",
+      fr: "Souhaitez-vous le tarif, la durée, les horaires, le lieu ou l’inscription ?",
+      es: "¿Desea precio, duración, horario, ubicación o inscripción?",
+      de: "Möchten Sie Preis, Dauer, Zeitplan, Ort oder Anmeldung?",
+      it: "Desidera prezzo, durata, orario, sede o iscrizione?",
+      pt: "Deseja preço, duração, horário, local ou inscrição?"
+    }
+  };
+
+  const safeLanguage = byTopic.general[language] ? language : "en";
+  if (intent === "fees" && topic === "course") return feeClarify[safeLanguage] || feeClarify.en;
+  return byTopic[topic]?.[safeLanguage] || byTopic.general[safeLanguage];
 }
 
 function isGreetingMessage(text) {
@@ -2743,6 +2839,7 @@ Core behavior:
 4) If customer asks for fee, provide only fee answer from KB.
 5) If customer asks for discount, negotiation, exception, special offer, or unclear pricing request, do NOT decide discounts. Ask for contact details and say a human advisor will follow up.
 6) If question is vague, ask a clarifying question instead of giving a broad company overview.
+6b) Ask a clarification only when a key detail is missing. If details are sufficient, answer directly.
 7) Never recommend competitors or external alternatives. Keep the user inside LSA GLOBAL context only.
 8) Use knowledge base content as the primary source of truth.
 9) Never invent prices, legal guarantees, turnaround promises, or policies.
@@ -2751,6 +2848,7 @@ Core behavior:
 12) Reply in the same language as the customer message.
 13) Never send users outside LSA GLOBAL, even when information is missing.
 14) If the customer asks a broad question, ask one clarifying question only.
+14b) Clarification must be short, professional, and narrowing (one question, no multi-step interrogation).
 15) When a relevant KB answer exists in another language, use it and answer in the customer's language.
 16) If KB clearly contains the asked detail, answer it directly and do not say information is unavailable.
 17) Keep output under 80 words unless the customer explicitly asks for details.
@@ -3021,9 +3119,15 @@ app.post("/webhook", async (req, res) => {
 
           if (courseArticle) {
             const summary = formatCourseSummary(courseArticle, detectedLanguage);
-            reply = summary || getLocalizedClarifyingQuestion(detectedLanguage);
+            reply = summary || getLocalizedClarifyingQuestion(detectedLanguage, {
+              topic: detectClarificationTopic({ text, retrievalResult, userState }),
+              intent: resolvedIntent
+            });
           } else {
-            reply = getLocalizedClarifyingQuestion(detectedLanguage);
+            reply = getLocalizedClarifyingQuestion(detectedLanguage, {
+              topic: detectClarificationTopic({ text, retrievalResult, userState }),
+              intent: resolvedIntent
+            });
           }
           setCustomerState(from, {
             clarifyingAsked: false,
@@ -3088,22 +3192,14 @@ app.post("/webhook", async (req, res) => {
             topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (broadMessage && retrievalResult.matches.length) {
-          selectedRoutingBranch = "test_retrieval_broad_overview";
-          routingReason = "broad_query_structured_overview";
-          reply = buildBroadOverviewFromMatches({
-            retrievalResult,
-            language: detectedLanguage
+          selectedRoutingBranch = "test_retrieval_clarify";
+          routingReason = "broad_query_clarification_required";
+          reply = getLocalizedClarifyingQuestion(detectedLanguage, {
+            topic: detectClarificationTopic({ text, retrievalResult, userState }),
+            intent: resolvedIntent
           });
-          if (reply) {
-            reply = await localizeNarrowAnswer({
-              text: reply,
-              language: detectedLanguage,
-              preserveCompleteness: false,
-              applyStyle: false
-            });
-          }
           setCustomerState(from, {
-            clarifyingAsked: false,
+            clarifyingAsked: true,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
@@ -3116,7 +3212,10 @@ app.post("/webhook", async (req, res) => {
         } else if (broadMessage && !retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
           routingReason = "broad_query_no_matches";
-          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          reply = getLocalizedClarifyingQuestion(detectedLanguage, {
+            topic: detectClarificationTopic({ text, retrievalResult, userState }),
+            intent: resolvedIntent
+          });
           setCustomerState(from, {
             clarifyingAsked: true,
             preferredCourseLanguage: currentCourseLanguage,
@@ -3952,9 +4051,11 @@ Rules:
 5. Keep every answer strictly inside LSA GLOBAL context. Never recommend competitors or external alternatives.
 6. If the message looks like a quote request, partnership request, student inquiry, or support issue, mention that a human advisor can assist.
 7. If the question is vague, ask one clarifying question.
+7b. Ask clarifying questions only when a key detail is missing; otherwise answer directly.
 8. If a relevant KB article is in another language, still use it and answer in the user's language.
 9. Keep replies concise and narrow to the user's exact question.
 10. If internal matches clearly answer the question, provide the answer directly and do not claim information is missing.
+11. Clarifying question style: short, professional, and narrowing (one question only).
 `;
 
     const input = `
