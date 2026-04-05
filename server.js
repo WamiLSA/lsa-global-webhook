@@ -819,7 +819,8 @@ const NARROW_INTENT_KEYWORDS = {
   turnaround: ["turnaround", "delivery time", "processing time", "délai", "delai", "urgent", "rush"],
   requirements: ["requirements", "required", "documents", "documents needed", "pieces", "pièces", "conditions", "needed"],
   refund_policy: ["refund", "refunds", "refund policy", "remboursement", "rembolso", "rimborso"],
-  contact: ["contact", "contacts", "phone", "email", "whatsapp", "address", "coordonnées", "coordonnees"]
+  contact: ["contact", "contacts", "phone", "email", "whatsapp", "address", "coordonnées", "coordonnees"],
+  availability: ["availability", "available", "disponibilite", "disponibilité", "available slots", "places left", "remaining seats", "openings", "business hours", "opening hours", "hours"]
 };
 
 const NARROW_INTENT_ALIASES = {
@@ -830,7 +831,9 @@ const NARROW_INTENT_ALIASES = {
   payments: "payment_options",
   documents: "requirements",
   requirement: "requirements",
-  refund: "refund_policy"
+  refund: "refund_policy",
+  availability: "availability",
+  hours: "availability"
 };
 
 const MENU_KEYWORDS = {
@@ -1191,6 +1194,10 @@ const FIELD_EXTRACTION_RULES = {
   contact: {
     headingKeywords: ["contact", "contacts", "phone", "email", "address", "whatsapp"],
     lineSignals: [/\b(contact|phone|email|whatsapp|address|city|branch|office|douala|yaounde|london|usa)\b/i]
+  },
+  availability: {
+    headingKeywords: ["availability", "available", "slots", "places", "opening hours", "business hours", "hours"],
+    lineSignals: [/\b(availability|available|slots?|places?|openings?|opening hours|business hours|hours?|mon|tue|wed|thu|fri|sat|sun|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/i]
   }
 };
 
@@ -1316,7 +1323,8 @@ function extractRelevantKbSection(answerText, intent) {
     turnaround: /\b(turnaround|delivery|processing|jours ouvrables|business days|urgent|rush)\b/i,
     requirements: /\b(requirements|required|documents|passport|id|identity|pieces|pièces)\b/i,
     refund_policy: /\b(refund|remboursement|policy|absence|cancellation|annulation)\b/i,
-    contact: /\b(contact|phone|email|whatsapp|address|city|branch|douala|yaounde|london)\b/i
+    contact: /\b(contact|phone|email|whatsapp|address|city|branch|douala|yaounde|london)\b/i,
+    availability: /\b(availability|available|openings|slots|places|opening hours|business hours|mon|tue|wed|thu|fri|sat|sun|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/i
   };
 
   const signal = heuristicSignals[intent];
@@ -1641,8 +1649,9 @@ async function runDeterministicFieldExtraction({
     return { text: null, usedFallback: true, reason: "missing_field_intent" };
   }
 
+  const sourcePriority = ["kb_articles", "kb_capture_assistant", "kb_quick_capture", "providers"];
   const candidateMatches = (retrievalResult?.matches || [])
-    .filter((match) => match?.source === "kb_articles")
+    .filter((match) => match?.source && sourcePriority.includes(match.source))
     .filter((match) => {
       if (!retrievalResult?.entity_domain) return true;
       return !match.record_domain || match.record_domain === "general" || match.record_domain === retrievalResult.entity_domain;
@@ -1652,10 +1661,11 @@ async function runDeterministicFieldExtraction({
       return !isCourseLanguageMismatch(requestedLanguage, match.raw_reference);
     });
 
+  const orderedCandidates = candidateMatches.sort((a, b) => sourcePriority.indexOf(a.source) - sourcePriority.indexOf(b.source));
   const fallbackCourseArticle = requestedLanguage && retrievalResult?.entity_domain === "course"
     ? await findCourseArticleByLanguage(requestedLanguage)
     : null;
-  const selectedMatch = candidateMatches[0] || (fallbackCourseArticle ? { title: fallbackCourseArticle.title, raw_reference: fallbackCourseArticle } : null);
+  const selectedMatch = orderedCandidates[0] || (fallbackCourseArticle ? { title: fallbackCourseArticle.title, raw_reference: fallbackCourseArticle, source: "kb_articles" } : null);
   const selectedTitle = selectedMatch?.title || null;
 
   console.log("[deterministic-retrieval-debug]", JSON.stringify({
@@ -1669,10 +1679,7 @@ async function runDeterministicFieldExtraction({
     return { text: null, usedFallback: true, reason: "no_matching_article" };
   }
 
-  const articleText = selectedMatch.raw_reference.answer
-    || selectedMatch.raw_reference.raw_answer
-    || selectedMatch.raw_reference.raw_text
-    || "";
+  const articleText = extractAnswerTextFromRetrievalMatch(selectedMatch);
   const extracted = extractRelevantKbSection(articleText, resolvedFieldIntent);
   const localized = extracted
     ? await localizeNarrowAnswer({
@@ -1688,6 +1695,7 @@ async function runDeterministicFieldExtraction({
     detected_entity: retrievalResult?.entity || requestedLanguage || "unknown",
     detected_field_intent: resolvedFieldIntent,
     selected_article_title: selectedTitle,
+    selected_source: selectedMatch?.source || "unknown",
     deterministic_field_extraction_succeeded: success,
     fallback_used: !success,
     fallback_reason: success ? null : "field_not_found_or_empty"
@@ -2542,6 +2550,58 @@ function isBroadServiceQuestion(text) {
   return hasBroadSignal && !hasSpecificSignal;
 }
 
+function classifyRetrievalQuestionScope({ text, resolvedIntent }) {
+  if (resolvedIntent) return "narrow";
+  if (isBroadServiceQuestion(text) || isVagueCustomerMessage(text)) return "broad";
+  return "neutral";
+}
+
+function buildBroadOverviewFromMatches({ retrievalResult, language = "en", maxItems = 4 }) {
+  const matches = retrievalResult?.matches || [];
+  if (!matches.length) return "";
+
+  const topic = retrievalResult?.entity
+    ? String(retrievalResult.entity).replace(/_/g, " ")
+    : (matches[0]?.title || "this service");
+
+  const bullets = matches
+    .slice(0, maxItems)
+    .map((match) => {
+      const text = extractAnswerTextFromRetrievalMatch(match);
+      const compact = String(text || "")
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .slice(0, 120);
+      return compact ? `• ${compact}` : null;
+    })
+    .filter(Boolean);
+
+  if (!bullets.length) return "";
+
+  const intro = {
+    fr: `Voici un aperçu rapide de ${topic} :`,
+    es: `Aquí tiene un resumen breve sobre ${topic}:`,
+    it: `Ecco un riepilogo rapido su ${topic}:`,
+    pt: `Aqui está um resumo rápido sobre ${topic}:`,
+    de: `Hier ist eine kurze Übersicht zu ${topic}:`,
+    en: `Here is a quick overview of ${topic}:`
+  };
+  const outro = {
+    fr: "Si vous voulez un point précis (tarif, durée, horaires, lieu, inscription, etc.), dites-le.",
+    es: "Si desea un punto preciso (precio, duración, horario, ubicación, inscripción, etc.), indíquelo.",
+    it: "Se desidera un punto preciso (prezzo, durata, orari, sede, iscrizione, ecc.), me lo dica.",
+    pt: "Se quiser um ponto específico (preço, duração, horários, local, inscrição, etc.), diga-me.",
+    de: "Wenn Sie einen genauen Punkt möchten (Preis, Dauer, Zeitplan, Ort, Anmeldung usw.), sagen Sie es mir.",
+    en: "If you want one precise point (fee, duration, schedule, location, registration, etc.), tell me."
+  };
+  const safeLanguage = intro[language] ? language : "en";
+  return [intro[safeLanguage], ...bullets, outro[safeLanguage]].join("\n");
+}
+
 function enforceReplyStyle(text, language = "en") {
   const fallback = getLocalizedAck(language);
   const safeText = (text || "").trim();
@@ -2820,7 +2880,8 @@ app.post("/webhook", async (req, res) => {
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
       const vagueMessage = isVagueCustomerMessage(text);
       const userState = getCustomerState(from);
-      const broadMessage = vagueMessage && !resolvedIntent;
+      const questionScope = classifyRetrievalQuestionScope({ text, resolvedIntent });
+      const broadMessage = questionScope === "broad";
       const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
       const explicitCourseLanguage = detectCourseLanguageMention(text);
       const courseTopicActive = userState.topicType === "language_course" || Boolean(explicitCourseLanguage);
@@ -2845,6 +2906,14 @@ app.post("/webhook", async (req, res) => {
         .filter(Boolean),
         currentCourseLanguage
       );
+      console.log("[retrieval-discipline-debug]", JSON.stringify({
+        detected_topic_entity: retrievalResult.entity || userState.topicEntity || null,
+        detected_topic_domain: retrievalResult.entity_domain || userState.topicDomain || null,
+        detected_field_intent: resolvedIntent || retrievalResult.requested_field || null,
+        question_scope: questionScope,
+        candidate_count: retrievalResult.matches.length,
+        selected_topic_title: retrievalResult.matches?.[0]?.title || null
+      }));
 
       try {
         if (shouldEscalateToHuman(text)) {
@@ -2938,20 +3007,32 @@ app.post("/webhook", async (req, res) => {
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
             topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
-        } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
-          selectedRoutingBranch = "test_retrieval_clarify";
-          routingReason = "broad_query_clarification";
-          reply = getLocalizedClarifyingQuestion(detectedLanguage);
+        } else if (broadMessage && retrievalResult.matches.length) {
+          selectedRoutingBranch = "test_retrieval_broad_overview";
+          routingReason = "broad_query_structured_overview";
+          reply = buildBroadOverviewFromMatches({
+            retrievalResult,
+            language: detectedLanguage
+          });
+          if (reply) {
+            reply = await localizeNarrowAnswer({
+              text: reply,
+              language: detectedLanguage,
+              preserveCompleteness: false,
+              applyStyle: false
+            });
+          }
           setCustomerState(from, {
-            clarifyingAsked: true,
+            clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
             topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
-        } else if (broadMessage && !kbMatches.length) {
+        } else if (broadMessage && !retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
           routingReason = "broad_query_no_matches";
           reply = getLocalizedClarifyingQuestion(detectedLanguage);
@@ -5284,7 +5365,7 @@ app.post("/api/kb-capture/check-duplicates", async (req, res) => {
       .filter(Boolean)
       .slice(0, 8);
 
-    let query = supabase
+    const buildKbSelect = () => supabase
       .from("kb_articles")
       .select(`
         id,
@@ -5299,21 +5380,42 @@ app.post("/api/kb-capture/check-duplicates", async (req, res) => {
           id,
           name
         )
-      `)
-      .limit(10);
+      `);
 
+    let data = [];
+    let error = null;
     if (searchText.length > 0) {
-      const orParts = [];
+      const collected = [];
+      const seenIds = new Set();
       for (const term of searchText) {
-        orParts.push(`title.ilike.%${term}%`);
-        orParts.push(`question.ilike.%${term}%`);
-        orParts.push(`answer.ilike.%${term}%`);
-        orParts.push(`keywords.ilike.%${term}%`);
+        const safe = String(term || "").replace(/[%,]/g, "").trim();
+        if (!safe) continue;
+        const wildcard = safe.replace(/\s+/g, "%");
+        const clause = [
+          `title.ilike.%${wildcard}%`,
+          `question.ilike.%${wildcard}%`,
+          `answer.ilike.%${wildcard}%`,
+          `keywords.ilike.%${wildcard}%`
+        ].join(",");
+        const tokenResult = await buildKbSelect().limit(8).or(clause);
+        if (tokenResult.error) {
+          error = tokenResult.error;
+          break;
+        }
+        for (const row of (tokenResult.data || [])) {
+          if (!row?.id || seenIds.has(row.id)) continue;
+          seenIds.add(row.id);
+          collected.push(row);
+          if (collected.length >= 10) break;
+        }
+        if (collected.length >= 10) break;
       }
-      query = query.or(orParts.join(","));
+      data = collected;
+    } else {
+      const fallback = await buildKbSelect().limit(10);
+      data = fallback.data || [];
+      error = fallback.error || null;
     }
-
-    const { data, error } = await query;
 
     if (error) {
       return res.status(500).json({ error });
