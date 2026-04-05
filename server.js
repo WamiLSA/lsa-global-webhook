@@ -1098,31 +1098,80 @@ function extractFeeOnlySection(answerText) {
   const levelPattern = /\b(a1|a2|b1|b2|c1|c2)\b/i;
   const feeSignalPattern = /\b(fee|fees|price|prices|pricing|cost|costs|tarif|tarifs|prix|frais|tuition|montant|amount)\b/i;
   const registrationSignalPattern = /\b(inscription|registration|enrollment|enrolment|register)\b/i;
-  const inclusionSignalPattern = /\b(manuel|manuels|manual|manuals|certificat|certificats|certificate|certificates|inclus|included)\b/i;
   const installmentSignalPattern = /\b(tranche|tranches|installment|installments|instalment|instalments|paiement|payment)\b/i;
+  const registrationOrInstallmentOnlyPattern = /\b(inscription|registration|enrollment|enrolment|tranche|tranches|installment|installments|instalment|instalments|paiement|payment)\b/i;
 
   const candidates = lines.length ? lines : fallbackChunks;
-  const selected = [];
+  const feeLinesByLevel = {
+    a1a2: null,
+    b1: null,
+    b2: null,
+    c1: null
+  };
+  const notes = [];
 
   for (const chunk of candidates) {
     const normalized = normalizeForIntent(chunk);
     if (!normalized) continue;
 
     const isLevelFeeLine = levelPattern.test(normalized) && (amountPattern.test(normalized) || feeSignalPattern.test(normalized));
-    const isGeneralFeeLine = feeSignalPattern.test(normalized) && amountPattern.test(normalized);
+    const isGeneralFeeLine = feeSignalPattern.test(normalized) && amountPattern.test(normalized) && !isLevelFeeLine;
     const isRegistrationLine = registrationSignalPattern.test(normalized) && (feeSignalPattern.test(normalized) || /\bfree|gratuit|gratuits|gratuite\b/i.test(normalized));
-    const isInclusionLine = inclusionSignalPattern.test(normalized);
     const isInstallmentLine = installmentSignalPattern.test(normalized);
 
-    if (isLevelFeeLine || isGeneralFeeLine || isRegistrationLine || isInclusionLine || isInstallmentLine) {
-      selected.push(chunk);
+    if (isLevelFeeLine) {
+      if ((/\ba1\b/i.test(normalized) || /\ba2\b/i.test(normalized)) && !feeLinesByLevel.a1a2) {
+        feeLinesByLevel.a1a2 = chunk;
+        continue;
+      }
+      if (/\bb1\b/i.test(normalized) && !feeLinesByLevel.b1) {
+        feeLinesByLevel.b1 = chunk;
+        continue;
+      }
+      if (/\bb2\b/i.test(normalized) && !feeLinesByLevel.b2) {
+        feeLinesByLevel.b2 = chunk;
+        continue;
+      }
+      if (/\bc1\b/i.test(normalized) && !feeLinesByLevel.c1) {
+        feeLinesByLevel.c1 = chunk;
+        continue;
+      }
+    }
+
+    if (isRegistrationLine || isInstallmentLine) {
+      if (!notes.some((line) => normalizeForIntent(line) === normalized)) {
+        notes.push(chunk);
+      }
+      continue;
+    }
+
+    if (!Object.values(feeLinesByLevel).every(Boolean) && isGeneralFeeLine && registrationOrInstallmentOnlyPattern.test(normalized)) {
+      if (!notes.some((line) => normalizeForIntent(line) === normalized)) {
+        notes.push(chunk);
+      }
     }
   }
 
-  if (!selected.length) return null;
+  const strictFeeBlock = [feeLinesByLevel.a1a2, feeLinesByLevel.b1, feeLinesByLevel.b2, feeLinesByLevel.c1].filter(Boolean);
+  const hasCoreLevels = strictFeeBlock.length >= 3;
+  if (hasCoreLevels) {
+    return Array.from(new Set([...strictFeeBlock, ...notes.slice(0, 2)])).join("\n");
+  }
 
-  const deduped = Array.from(new Set(selected));
-  return deduped.join("\n");
+  const fallbackSelected = [];
+  for (const chunk of candidates) {
+    const normalized = normalizeForIntent(chunk);
+    if (!normalized) continue;
+    const isLevelFeeLine = levelPattern.test(normalized) && (amountPattern.test(normalized) || feeSignalPattern.test(normalized));
+    const isRegistrationLine = registrationSignalPattern.test(normalized) && (feeSignalPattern.test(normalized) || /\bfree|gratuit|gratuits|gratuite\b/i.test(normalized));
+    const isInstallmentLine = installmentSignalPattern.test(normalized);
+    if (isLevelFeeLine || isRegistrationLine || isInstallmentLine) {
+      fallbackSelected.push(chunk);
+    }
+  }
+
+  if (!fallbackSelected.length) return null;
+  return Array.from(new Set(fallbackSelected)).join("\n");
 }
 
 const FIELD_EXTRACTION_RULES = {
@@ -1323,9 +1372,27 @@ function formatCourseSummary(article, userLanguage = "fr") {
   const schedule = extractCourseSchedule(article);
   const certification = extractRelevantKbSection(article?.answer || "", "certification");
 
-  const compactBits = [levels, duration, format, schedule, certification]
+  const summarizeField = (value, label) => {
+    const lines = String(value || "")
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) return "";
+    const firstLine = lines[0].replace(/\s+/g, " ").trim();
+    const withoutHeading = firstLine.replace(/^[^:]{2,40}:\s*/i, "").trim();
+    if (!withoutHeading) return "";
+    return `${label}: ${withoutHeading}`;
+  };
+
+  const compactBits = [
+    summarizeField(levels, userLanguage === "fr" ? "Niveaux" : "Levels"),
+    summarizeField(duration, userLanguage === "fr" ? "Durée" : "Duration"),
+    summarizeField(format, userLanguage === "fr" ? "Format" : "Format"),
+    summarizeField(schedule, userLanguage === "fr" ? "Horaires" : "Schedule"),
+    summarizeField(certification, userLanguage === "fr" ? "Certification" : "Certification")
+  ]
     .filter(Boolean)
-    .map((part) => part.replace(/\s+/g, " ").trim());
+    .filter((line, index, arr) => arr.indexOf(line) === index);
 
   if (userLanguage === "fr") {
     const intro = article?.title ? `Voici un résumé du ${article.title.trim()} :` : "Voici un résumé du programme :";
