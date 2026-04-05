@@ -814,13 +814,23 @@ const NARROW_INTENT_KEYWORDS = {
   location: ["location", "lieu", "centre", "campus", "city", "ville", "localisation", "ubicacion", "ubicación", "luogo", "sede", "ort", "standort"],
   format: ["format", "online", "onsite", "in-person", "in person", "presentiel", "présentiel", "distance", "presencial", "presenziale", "vor ort"],
   registration: ["registration", "inscription", "enroll", "enrol", "enrollment", "admission", "apply", "inscripcion", "inscripción", "iscrizione", "anmeldung", "registrazione"],
-  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification", "certificat", "certificado", "certificato", "zertifikat", "nachweis"]
+  certification: ["certificate", "certification", "attestation", "testimonial", "proof", "verification", "certificat", "certificado", "certificato", "zertifikat", "nachweis"],
+  payment_options: ["payment", "payments", "payment options", "installment", "installments", "paiement", "tranche", "tranches", "versement"],
+  turnaround: ["turnaround", "delivery time", "processing time", "délai", "delai", "urgent", "rush"],
+  requirements: ["requirements", "required", "documents", "documents needed", "pieces", "pièces", "conditions", "needed"],
+  refund_policy: ["refund", "refunds", "refund policy", "remboursement", "rembolso", "rimborso"],
+  contact: ["contact", "contacts", "phone", "email", "whatsapp", "address", "coordonnées", "coordonnees"]
 };
 
 const NARROW_INTENT_ALIASES = {
   fee: "fees",
   exam: "certification",
-  course: null
+  course: null,
+  payment: "payment_options",
+  payments: "payment_options",
+  documents: "requirements",
+  requirement: "requirements",
+  refund: "refund_policy"
 };
 
 const MENU_KEYWORDS = {
@@ -1203,6 +1213,26 @@ const FIELD_EXTRACTION_RULES = {
   registration: {
     headingKeywords: ["registration", "inscription", "enrollment", "enrolment", "admission", "apply"],
     lineSignals: [/\b(registration|inscription|register|enrollment|enrolment|deadline|apply|admission|dossier)\b/i]
+  },
+  payment_options: {
+    headingKeywords: ["payment", "payment options", "installments", "tranches", "paiement", "versement"],
+    lineSignals: [/\b(payment|payments|installments?|tranches?|paiement|versement|bank transfer|mobile money|cash|card)\b/i]
+  },
+  turnaround: {
+    headingKeywords: ["turnaround", "delivery", "délai", "delai", "processing time"],
+    lineSignals: [/\b(turnaround|delivery|processing time|business days?|jours ouvrables?|urgent|rush)\b/i]
+  },
+  requirements: {
+    headingKeywords: ["requirements", "documents", "conditions", "needed", "pièces", "pieces"],
+    lineSignals: [/\b(requirements?|required|documents?|pieces|pièces|conditions|passport|id|identity)\b/i]
+  },
+  refund_policy: {
+    headingKeywords: ["refund", "refund policy", "remboursement", "policy", "absence"],
+    lineSignals: [/\b(refund|refunds|remboursement|rembolso|rimborso|policy|absence|cancellation|annulation)\b/i]
+  },
+  contact: {
+    headingKeywords: ["contact", "contacts", "phone", "email", "address", "whatsapp"],
+    lineSignals: [/\b(contact|phone|email|whatsapp|address|city|branch|office|douala|yaounde|london|usa)\b/i]
   }
 };
 
@@ -1316,7 +1346,12 @@ function extractRelevantKbSection(answerText, intent) {
     location: /\b(address|city|centre|campus|location|lieu|ville|douala|paris|london)\b/i,
     format: /\b(online|in person|in-person|onsite|hybrid|présentiel|presentiel|distance)\b/i,
     registration: /\b(register|registration|inscription|deadline|apply|admission)\b/i,
-    certification: /\b(certificate|certification|attestation|proof|exam|examen)\b/i
+    certification: /\b(certificate|certification|attestation|proof|exam|examen)\b/i,
+    payment_options: /\b(payment|installment|tranche|bank transfer|mobile money|cash|card)\b/i,
+    turnaround: /\b(turnaround|delivery|processing|jours ouvrables|business days|urgent|rush)\b/i,
+    requirements: /\b(requirements|required|documents|passport|id|identity|pieces|pièces)\b/i,
+    refund_policy: /\b(refund|remboursement|policy|absence|cancellation|annulation)\b/i,
+    contact: /\b(contact|phone|email|whatsapp|address|city|branch|douala|yaounde|london)\b/i
   };
 
   const signal = heuristicSignals[intent];
@@ -1507,8 +1542,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null };
 }
 
 function setCustomerState(waId, state) {
@@ -1520,7 +1555,9 @@ function setCustomerState(waId, state) {
     topicType: state?.topicType || current.topicType || null,
     topicLanguage: state?.topicLanguage || current.topicLanguage || null,
     topicEntity: state?.topicEntity || current.topicEntity || null,
-    topicIntent: state?.topicIntent || current.topicIntent || null
+    topicIntent: state?.topicIntent || current.topicIntent || null,
+    topicDomain: state?.topicDomain || current.topicDomain || null,
+    topicLabel: state?.topicLabel || current.topicLabel || null
   });
 }
 
@@ -1628,36 +1665,50 @@ function filterMismatchedCourseArticles(matches, queryLanguageEntity) {
   return (matches || []).filter((article) => !isCourseLanguageMismatch(queryLanguageEntity, article));
 }
 
-async function runDeterministicCourseFieldExtraction({
+async function runDeterministicFieldExtraction({
   retrievalResult,
   requestedLanguage,
   fieldIntent,
   detectedLanguage
 }) {
   const resolvedFieldIntent = resolveNarrowIntent(fieldIntent);
-  if (!resolvedFieldIntent || !requestedLanguage) {
-    return { text: null, usedFallback: true, reason: "missing_intent_or_course_language" };
+  if (!resolvedFieldIntent) {
+    return { text: null, usedFallback: true, reason: "missing_field_intent" };
   }
 
-  const kbMatches = (retrievalResult?.matches || [])
+  const candidateMatches = (retrievalResult?.matches || [])
     .filter((match) => match?.source === "kb_articles")
-    .map((match) => match.raw_reference)
-    .filter(Boolean);
-  const filteredMatches = filterMismatchedCourseArticles(kbMatches, requestedLanguage);
-  const selectedArticle = filteredMatches[0] || await findCourseArticleByLanguage(requestedLanguage);
+    .filter((match) => {
+      if (!retrievalResult?.entity_domain) return true;
+      return !match.record_domain || match.record_domain === "general" || match.record_domain === retrievalResult.entity_domain;
+    })
+    .filter((match) => {
+      if (!requestedLanguage) return true;
+      return !isCourseLanguageMismatch(requestedLanguage, match.raw_reference);
+    });
+
+  const fallbackCourseArticle = requestedLanguage && retrievalResult?.entity_domain === "course"
+    ? await findCourseArticleByLanguage(requestedLanguage)
+    : null;
+  const selectedMatch = candidateMatches[0] || (fallbackCourseArticle ? { title: fallbackCourseArticle.title, raw_reference: fallbackCourseArticle } : null);
+  const selectedTitle = selectedMatch?.title || null;
 
   console.log("[deterministic-retrieval-debug]", JSON.stringify({
-    detected_entity: requestedLanguage,
+    detected_entity: retrievalResult?.entity || requestedLanguage || "unknown",
     detected_field_intent: resolvedFieldIntent,
-    candidate_article_count: filteredMatches.length,
-    selected_article_title: selectedArticle?.title || null
+    candidate_article_count: candidateMatches.length,
+    selected_article_title: selectedTitle
   }));
 
-  if (!selectedArticle) {
-    return { text: null, usedFallback: true, reason: "no_matching_course_article" };
+  if (!selectedMatch?.raw_reference) {
+    return { text: null, usedFallback: true, reason: "no_matching_article" };
   }
 
-  const extracted = extractRelevantKbSection(selectedArticle.answer || "", resolvedFieldIntent);
+  const articleText = selectedMatch.raw_reference.answer
+    || selectedMatch.raw_reference.raw_answer
+    || selectedMatch.raw_reference.raw_text
+    || "";
+  const extracted = extractRelevantKbSection(articleText, resolvedFieldIntent);
   const localized = extracted
     ? await localizeNarrowAnswer({
       text: extracted,
@@ -1669,17 +1720,15 @@ async function runDeterministicCourseFieldExtraction({
 
   const success = Boolean(localized && localized.trim());
   console.log("[deterministic-retrieval-debug]", JSON.stringify({
-    detected_entity: requestedLanguage,
+    detected_entity: retrievalResult?.entity || requestedLanguage || "unknown",
     detected_field_intent: resolvedFieldIntent,
-    selected_article_title: selectedArticle?.title || null,
+    selected_article_title: selectedTitle,
     deterministic_field_extraction_succeeded: success,
     fallback_used: !success,
     fallback_reason: success ? null : "field_not_found_or_empty"
   }));
 
-  if (success) {
-    return { text: localized, usedFallback: false, reason: null };
-  }
+  if (success) return { text: localized, usedFallback: false, reason: null };
   return { text: null, usedFallback: true, reason: "field_not_found_or_empty" };
 }
 
@@ -2819,7 +2868,9 @@ app.post("/webhook", async (req, res) => {
         courseTopicActive,
         contextMemory: {
           entity: userState.topicEntity || null,
-          intent: userState.topicIntent || null
+          intent: userState.topicIntent || null,
+          domain: userState.topicDomain || null,
+          topicLabel: userState.topicLabel || null
         }
       });
       const kbMatches = filterMismatchedCourseArticles(
@@ -2869,10 +2920,12 @@ app.post("/webhook", async (req, res) => {
             topicType: "language_course",
             topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: courseArticle?.title || retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
-        } else if (resolvedIntent && courseQueryActive && currentCourseLanguage) {
-          const deterministic = await runDeterministicCourseFieldExtraction({
+        } else if (resolvedIntent && retrievalResult.matches.length) {
+          const deterministic = await runDeterministicFieldExtraction({
             retrievalResult,
             requestedLanguage: currentCourseLanguage,
             fieldIntent: resolvedIntent,
@@ -2881,7 +2934,7 @@ app.post("/webhook", async (req, res) => {
 
           if (deterministic.text) {
             selectedRoutingBranch = "test_retrieval_narrow_deterministic";
-            routingReason = "deterministic_course_field_extraction";
+            routingReason = "deterministic_field_extraction";
             reply = deterministic.text;
           } else if (retrievalResult.matches.length) {
             selectedRoutingBranch = "test_retrieval_narrow_intent";
@@ -2913,42 +2966,12 @@ app.post("/webhook", async (req, res) => {
           setCustomerState(from, {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
-            topicType: "language_course",
+            topicType: retrievalResult.entity_domain === "course" ? "language_course" : (userState.topicType || null),
             topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
-          });
-        } else if (resolvedIntent && retrievalResult.matches.length) {
-          selectedRoutingBranch = "test_retrieval_narrow_intent";
-          routingReason = "narrow_intent_match";
-          const extractedSection = await extractNarrowAnswerFromMatches({
-            matches: retrievalResult.matches,
-            intent: resolvedIntent
-          });
-          if (extractedSection) {
-            reply = await localizeNarrowAnswer({
-              text: extractedSection,
-              language: detectedLanguage,
-              preserveCompleteness: resolvedIntent === "fees",
-              applyStyle: false
-            });
-          } else {
-            reply = {
-              fr: "Je n’ai pas trouvé ce point précis dans la base de connaissances. Souhaitez-vous être mis en relation avec un conseiller LSA GLOBAL ?",
-              es: "No encontré ese punto específico en la base de conocimientos. ¿Desea que le pongamos en contacto con un asesor de LSA GLOBAL?",
-              it: "Non ho trovato questo punto specifico nella base di conoscenza. Vuole che la mettiamo in contatto con un consulente LSA GLOBAL?",
-              pt: "Não encontrei esse ponto específico na base de conhecimento. Deseja que o coloquemos em contacto com um consultor da LSA GLOBAL?",
-              de: "Ich habe diesen konkreten Punkt in der Wissensdatenbank nicht gefunden. Möchten Sie mit einem LSA GLOBAL-Berater verbunden werden?",
-              en: "I could not find that specific point in the knowledge base. Would you like to be connected with an LSA GLOBAL advisor?"
-            }[detectedLanguage] || getLocalizedAck(detectedLanguage);
-          }
-          setCustomerState(from, {
-            clarifyingAsked: false,
-            preferredCourseLanguage: currentCourseLanguage,
-            topicType: (currentCourseLanguage || userState.topicType === "language_course") ? "language_course" : null,
-            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
-            topicEntity: retrievalResult.entity || userState.topicEntity || null,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
         } else if (broadMessage && kbMatches.length && !userState.clarifyingAsked) {
           selectedRoutingBranch = "test_retrieval_clarify";
@@ -2959,7 +2982,9 @@ app.post("/webhook", async (req, res) => {
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
         } else if (broadMessage && !kbMatches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
@@ -2970,7 +2995,9 @@ app.post("/webhook", async (req, res) => {
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
           });
         } else if (retrievalResult.matches.length && !vagueMessage) {
           selectedRoutingBranch = "test_retrieval_answer";
@@ -2999,10 +3026,12 @@ app.post("/webhook", async (req, res) => {
           setCustomerState(from, {
             clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
-            topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
+            topicType: (currentCourseLanguage || retrievalResult.entity_domain === "course" || courseQueryActive) ? "language_course" : (userState.topicType || null),
             topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
-            topicIntent: retrievalResult.intent || userState.topicIntent || null
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: safeMatches?.[0]?.title || userState.topicLabel || null
           });
           console.log("[course-debug] course memory context set:", JSON.stringify({
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
@@ -3021,8 +3050,12 @@ app.post("/webhook", async (req, res) => {
             setCustomerState(from, {
               clarifyingAsked: false,
               preferredCourseLanguage: currentCourseLanguage,
-              topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
-              topicLanguage: currentCourseLanguage || userState.topicLanguage || null
+              topicType: (currentCourseLanguage || retrievalResult.entity_domain === "course" || courseQueryActive) ? "language_course" : (userState.topicType || null),
+              topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+              topicEntity: retrievalResult.entity || userState.topicEntity || null,
+              topicIntent: retrievalResult.intent || userState.topicIntent || null,
+              topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+              topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
             });
             console.log("[course-debug] course memory context set:", JSON.stringify({
               topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
@@ -5269,10 +5302,20 @@ app.post("/api/kb-capture/check-duplicates", async (req, res) => {
   try {
     const { title, raw_question, raw_answer } = req.body;
 
+    const sanitizeDuplicateSearchToken = (value) => String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[’'`]/g, " ")
+      .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+      .replace(/[%(),]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
     const searchText = [title || "", raw_question || "", raw_answer || ""]
       .join(" ")
-      .toLowerCase()
       .split(/\s+/)
+      .map(sanitizeDuplicateSearchToken)
       .filter(Boolean)
       .slice(0, 8);
 
