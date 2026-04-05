@@ -877,6 +877,16 @@ const COURSE_LANGUAGE_KEYWORDS = {
   chinese: ["chinois", "chinese", "mandarin", "mandarim", "mandarín", "cinese"],
   arabic: ["arabe", "arabe", "arabic", "arabo", "árabe"]
 };
+const SUB_VARIANT_KEYWORDS = {
+  standard: ["standard", "regular", "general", "normal", "classic", "cours standard", "standard course"],
+  accelerated: ["accelerated", "accelere", "accéléré", "express", "fast track", "speed", "rapide"],
+  intensive: ["intensive", "intensif", "intensivo", "intensiva", "immersion"],
+  online: ["online", "remote", "distance", "virtual", "e learning", "elearning", "en ligne"],
+  in_person: ["in person", "in-person", "onsite", "on site", "presentiel", "présentiel", "face to face"],
+  beginner: ["beginner", "debutant", "débutant", "a1", "starter", "intro"],
+  advanced: ["advanced", "avance", "avancé", "expert", "c1", "c2"]
+};
+const SUB_VARIANT_CORRECTION_PATTERN = /\b(no|non|rather|instead|plutot|plutôt|prefer|pas celui|not that|correction)\b/i;
 const PROCESSED_MESSAGE_IDS = new Map();
 const MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 
@@ -1137,6 +1147,9 @@ function extractFeeOnlySection(answerText) {
   const candidates = lines.length ? lines : fallbackChunks;
   const selected = [];
   for (const chunk of candidates) {
+    if (/^\s*(duration|durée|duree|schedule|horaire|horaires|levels?|niveau|registration|inscription|address|location)\s*:/i.test(chunk)) {
+      continue;
+    }
     if (isFeeRelevantLine(chunk, { allowSupplementOnly: true })) {
       selected.push(chunk);
     }
@@ -1201,13 +1214,40 @@ const FIELD_EXTRACTION_RULES = {
   }
 };
 
-function extractByFieldRules(answerText, intent) {
+function sectionMatchesSubVariant(section, subVariant) {
+  if (!subVariant) return true;
+  const normalized = normalizeForIntent(section);
+  if (!normalized) return false;
+  const variantTerms = (SUB_VARIANT_KEYWORDS[subVariant] || []).map(normalizeForIntent).filter(Boolean);
+  return variantTerms.some((term) => {
+    const escaped = term.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(normalized);
+  });
+}
+
+function extractSubVariantScopedText(answerText, subVariant) {
+  if (!subVariant) return answerText;
+  const source = (answerText || "").trim();
+  if (!source) return "";
+
+  const sections = source
+    .split(/\n{2,}/)
+    .map((section) => section.trim())
+    .filter(Boolean);
+  const candidates = sections.length ? sections : source.split(/\n+/).map(line => line.trim()).filter(Boolean);
+  const matched = candidates.filter(section => sectionMatchesSubVariant(section, subVariant));
+  if (!matched.length) return source;
+  return matched.join("\n");
+}
+
+function extractByFieldRules(answerText, intent, options = {}) {
   const source = (answerText || "").trim();
   if (!source) return null;
   const rule = FIELD_EXTRACTION_RULES[intent];
   if (!rule) return null;
+  const scopedSource = extractSubVariantScopedText(source, options.subVariant);
 
-  const lines = source
+  const lines = scopedSource
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1258,25 +1298,26 @@ function extractByFieldRules(answerText, intent) {
   return Array.from(new Set(selected)).join("\n");
 }
 
-function extractRelevantKbSection(answerText, intent) {
+function extractRelevantKbSection(answerText, intent, options = {}) {
   if (!answerText || !intent || !NARROW_INTENT_KEYWORDS[intent]) return null;
+  const scopedAnswerText = extractSubVariantScopedText(answerText, options.subVariant);
   if (intent === "fees") {
-    const feeOnlySection = extractFeeOnlySection(answerText);
+    const feeOnlySection = extractFeeOnlySection(scopedAnswerText);
     if (feeOnlySection) return feeOnlySection;
   }
-  const fieldSpecificSection = extractByFieldRules(answerText, intent);
+  const fieldSpecificSection = extractByFieldRules(scopedAnswerText, intent, options);
   if (fieldSpecificSection) return fieldSpecificSection;
 
   const keywords = NARROW_INTENT_KEYWORDS[intent].map(normalizeForIntent);
-  const normalizedAnswer = normalizeForIntent(answerText);
+  const normalizedAnswer = normalizeForIntent(scopedAnswerText);
   const hasIntentSignal = keywords.some((keyword) => keyword && normalizedAnswer.includes(keyword));
 
-  const paragraphs = answerText
+  const paragraphs = scopedAnswerText
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
 
-  const fallbackParagraphs = answerText
+  const fallbackParagraphs = scopedAnswerText
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1305,7 +1346,7 @@ function extractRelevantKbSection(answerText, intent) {
 
   if (!hasIntentSignal) return null;
 
-  const fallbackLines = answerText
+  const fallbackLines = scopedAnswerText
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1515,8 +1556,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null };
 }
 
 function setCustomerState(waId, state) {
@@ -1530,8 +1571,34 @@ function setCustomerState(waId, state) {
     topicEntity: state?.topicEntity || current.topicEntity || null,
     topicIntent: state?.topicIntent || current.topicIntent || null,
     topicDomain: state?.topicDomain || current.topicDomain || null,
-    topicLabel: state?.topicLabel || current.topicLabel || null
+    topicLabel: state?.topicLabel || current.topicLabel || null,
+    topicSubVariant: state?.topicSubVariant || current.topicSubVariant || null
   });
+}
+
+function detectRequestedSubVariant(text, recentContext = {}) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return { subVariant: recentContext.topicSubVariant || null, correctionOverrideApplied: false };
+
+  let best = null;
+  for (const [variant, keywords] of Object.entries(SUB_VARIANT_KEYWORDS)) {
+    let score = 0;
+    for (const keyword of keywords) {
+      const token = normalizeForIntent(keyword).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      if (!token) continue;
+      if (new RegExp(`\\b${token}\\b`, "i").test(normalized)) {
+        score += token.includes(" ") ? 2 : 1;
+      }
+    }
+    if (score > 0 && (!best || score > best.score)) {
+      best = { variant, score };
+    }
+  }
+  if (!best) return { subVariant: recentContext.topicSubVariant || null, correctionOverrideApplied: false };
+  return {
+    subVariant: best.variant,
+    correctionOverrideApplied: SUB_VARIANT_CORRECTION_PATTERN.test(normalized)
+  };
 }
 
 function detectCourseLanguageMention(text) {
@@ -1642,7 +1709,8 @@ async function runDeterministicFieldExtraction({
   retrievalResult,
   requestedLanguage,
   fieldIntent,
-  detectedLanguage
+  detectedLanguage,
+  requestedSubVariant = null
 }) {
   const resolvedFieldIntent = resolveNarrowIntent(fieldIntent);
   if (!resolvedFieldIntent) {
@@ -1680,7 +1748,7 @@ async function runDeterministicFieldExtraction({
   }
 
   const articleText = extractAnswerTextFromRetrievalMatch(selectedMatch);
-  const extracted = extractRelevantKbSection(articleText, resolvedFieldIntent);
+  const extracted = extractRelevantKbSection(articleText, resolvedFieldIntent, { subVariant: requestedSubVariant });
   const localized = extracted
     ? await localizeNarrowAnswer({
       text: extracted,
@@ -1696,6 +1764,8 @@ async function runDeterministicFieldExtraction({
     detected_field_intent: resolvedFieldIntent,
     selected_article_title: selectedTitle,
     selected_source: selectedMatch?.source || "unknown",
+    selected_sub_variant: requestedSubVariant || null,
+    extraction_section_used: resolvedFieldIntent,
     deterministic_field_extraction_succeeded: success,
     fallback_used: !success,
     fallback_reason: success ? null : "field_not_found_or_empty"
@@ -2883,6 +2953,7 @@ app.post("/webhook", async (req, res) => {
       const questionScope = classifyRetrievalQuestionScope({ text, resolvedIntent });
       const broadMessage = questionScope === "broad";
       const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
+      const subVariantDecision = detectRequestedSubVariant(text, userState);
       const explicitCourseLanguage = detectCourseLanguageMention(text);
       const courseTopicActive = userState.topicType === "language_course" || Boolean(explicitCourseLanguage);
       const courseQueryActive = isLanguageCourseQuery(text, userState);
@@ -2896,7 +2967,10 @@ app.post("/webhook", async (req, res) => {
           entity: userState.topicEntity || null,
           intent: userState.topicIntent || null,
           domain: userState.topicDomain || null,
-          topicLabel: userState.topicLabel || null
+          topicLabel: userState.topicLabel || null,
+          subVariant: subVariantDecision.correctionOverrideApplied
+            ? subVariantDecision.subVariant
+            : (userState.topicSubVariant || subVariantDecision.subVariant || null)
         }
       });
       const kbMatches = filterMismatchedCourseArticles(
@@ -2910,9 +2984,12 @@ app.post("/webhook", async (req, res) => {
         detected_topic_entity: retrievalResult.entity || userState.topicEntity || null,
         detected_topic_domain: retrievalResult.entity_domain || userState.topicDomain || null,
         detected_field_intent: resolvedIntent || retrievalResult.requested_field || null,
+        detected_sub_variant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null,
+        correction_override_applied: Boolean(retrievalResult.correction_override_applied || subVariantDecision.correctionOverrideApplied),
         question_scope: questionScope,
         candidate_count: retrievalResult.matches.length,
-        selected_topic_title: retrievalResult.matches?.[0]?.title || null
+        selected_topic_title: retrievalResult.matches?.[0]?.title || null,
+        selected_kb_source: retrievalResult.matches?.[0]?.source || null
       }));
 
       try {
@@ -2956,14 +3033,16 @@ app.post("/webhook", async (req, res) => {
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-            topicLabel: courseArticle?.title || retrievalResult.matches?.[0]?.title || userState.topicLabel || null
+            topicLabel: courseArticle?.title || retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (resolvedIntent && retrievalResult.matches.length) {
           const deterministic = await runDeterministicFieldExtraction({
             retrievalResult,
             requestedLanguage: currentCourseLanguage,
             fieldIntent: resolvedIntent,
-            detectedLanguage
+            detectedLanguage,
+            requestedSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
 
           if (deterministic.text) {
@@ -3005,7 +3084,8 @@ app.post("/webhook", async (req, res) => {
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (broadMessage && retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_broad_overview";
@@ -3030,7 +3110,8 @@ app.post("/webhook", async (req, res) => {
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (broadMessage && !retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
@@ -3043,7 +3124,8 @@ app.post("/webhook", async (req, res) => {
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (retrievalResult.matches.length && !vagueMessage) {
           selectedRoutingBranch = "test_retrieval_answer";
@@ -3077,7 +3159,8 @@ app.post("/webhook", async (req, res) => {
             topicEntity: retrievalResult.entity || userState.topicEntity || null,
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-            topicLabel: safeMatches?.[0]?.title || userState.topicLabel || null
+            topicLabel: safeMatches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
           console.log("[course-debug] course memory context set:", JSON.stringify({
             topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
@@ -3101,7 +3184,8 @@ app.post("/webhook", async (req, res) => {
               topicEntity: retrievalResult.entity || userState.topicEntity || null,
               topicIntent: retrievalResult.intent || userState.topicIntent || null,
               topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
-              topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null
+              topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+              topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
             });
             console.log("[course-debug] course memory context set:", JSON.stringify({
               topicType: (currentCourseLanguage || courseQueryActive) ? "language_course" : null,
