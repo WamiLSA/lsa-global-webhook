@@ -631,13 +631,25 @@ function formatRoutingBranchForModeLog(branch) {
   return branch;
 }
 
-function logInboundRoutingDecision({ mode, branch, text, normalizedText = "", testRetrievalEnabled = false, reason = "none" }) {
+function logInboundRoutingDecision({
+  mode,
+  branch,
+  text,
+  normalizedText = "",
+  testRetrievalEnabled = false,
+  reason = "none",
+  retrievalBlocked = false,
+  retrievalBlockedReason = "none",
+  controlledAction = "none"
+}) {
   const resolvedMode = String(mode || "live").toLowerCase() === "test" ? "TEST" : "LIVE";
   const resolvedBranch = formatRoutingBranchForModeLog(branch);
   const safeText = String(text || "").replace(/"/g, '\\"').slice(0, 160);
   const safeNormalizedText = String(normalizedText || "").replace(/"/g, '\\"').slice(0, 160);
   const safeReason = String(reason || "none").replace(/"/g, '\\"').slice(0, 120);
-  console.log(`[routing-runtime] mode=${resolvedMode} text="${safeText}" normalized_text="${safeNormalizedText}" test_retrieval_enabled=${testRetrievalEnabled ? "true" : "false"} branch=${resolvedBranch} reason=${safeReason} mode_source=app_config`);
+  const safeRetrievalBlockedReason = String(retrievalBlockedReason || "none").replace(/"/g, '\\"').slice(0, 120);
+  const safeControlledAction = String(controlledAction || "none").replace(/"/g, '\\"').slice(0, 120);
+  console.log(`[routing-runtime] mode=${resolvedMode} text="${safeText}" normalized_text="${safeNormalizedText}" test_retrieval_enabled=${testRetrievalEnabled ? "true" : "false"} branch=${resolvedBranch} reason=${safeReason} retrieval_blocked=${retrievalBlocked ? "true" : "false"} retrieval_blocked_reason=${safeRetrievalBlockedReason} controlled_action=${safeControlledAction} mode_source=app_config`);
 }
 
 async function retrieveInternalKnowledgeForTestMode(query, options = {}) {
@@ -1556,8 +1568,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null };
 }
 
 function setCustomerState(waId, state) {
@@ -1572,7 +1584,8 @@ function setCustomerState(waId, state) {
     topicIntent: state?.topicIntent || current.topicIntent || null,
     topicDomain: state?.topicDomain || current.topicDomain || null,
     topicLabel: state?.topicLabel || current.topicLabel || null,
-    topicSubVariant: state?.topicSubVariant || current.topicSubVariant || null
+    topicSubVariant: state?.topicSubVariant || current.topicSubVariant || null,
+    liveMenuOption: state?.liveMenuOption || current.liveMenuOption || null
   });
 }
 
@@ -2550,6 +2563,45 @@ function getControlledFallbackReply(languageCode) {
   return LIVE_MODE_MESSAGES[language]?.fallback || LIVE_MODE_MESSAGES.en.fallback;
 }
 
+function getLiveSafeMenuClarificationReply(languageCode, menuOption) {
+  const language = normalizeLanguageCode(languageCode);
+  const byOption = {
+    translation: {
+      en: "For translation, please share language pair, document type, and deadline. For exact pricing, an advisor will confirm after review.",
+      fr: "Pour la traduction, indiquez la paire de langues, le type de document et l’échéance. Pour le tarif exact, un conseiller confirmera après vérification.",
+      es: "Para traducción, indique par de idiomas, tipo de documento y plazo. Para precio exacto, un asesor lo confirmará tras revisión.",
+      de: "Für Übersetzungen nennen Sie bitte Sprachpaar, Dokumenttyp und Frist. Den exakten Preis bestätigt ein Berater nach Prüfung.",
+      it: "Per la traduzione, indichi coppia linguistica, tipo di documento e scadenza. Per il prezzo esatto, un consulente confermerà dopo verifica.",
+      pt: "Para tradução, indique par de idiomas, tipo de documento e prazo. Para preço exato, um consultor confirmará após revisão."
+    },
+    courses: {
+      en: "For language courses, please specify language, level, and format (standard/intensive/online/private). Exact pricing is confirmed by an advisor.",
+      fr: "Pour les cours de langues, précisez la langue, le niveau et le format (standard/intensif/en ligne/privé). Le tarif exact est confirmé par un conseiller.",
+      es: "Para cursos de idiomas, indique idioma, nivel y modalidad (estándar/intensiva/online/privada). El precio exacto lo confirma un asesor.",
+      de: "Für Sprachkurse nennen Sie bitte Sprache, Niveau und Format (Standard/Intensiv/Online/Privat). Den genauen Preis bestätigt ein Berater.",
+      it: "Per i corsi di lingua, indichi lingua, livello e formato (standard/intensivo/online/privato). Il prezzo esatto viene confermato da un consulente.",
+      pt: "Para cursos de idiomas, indique idioma, nível e formato (padrão/intensivo/online/privado). O preço exato é confirmado por um consultor."
+    },
+    interpreting: {
+      en: "For interpreting, do you need on-site or online support, and for which date/language pair? A human advisor confirms final pricing.",
+      fr: "Pour l’interprétation, avez-vous besoin d’un service sur site ou en ligne, et pour quelle date/paire de langues ? Un conseiller confirme le tarif final.",
+      es: "Para interpretación, ¿necesita servicio presencial u online y para qué fecha/par de idiomas? Un asesor confirma el precio final.",
+      de: "Für Dolmetschen: Benötigen Sie Vor-Ort- oder Online-Service und für welches Datum/Sprachpaar? Ein Berater bestätigt den Endpreis.",
+      it: "Per l’interpretariato, le serve servizio in presenza o online, e per quale data/coppia linguistica? Un consulente conferma il prezzo finale.",
+      pt: "Para interpretação, precisa de serviço presencial ou online e para que data/par de idiomas? Um consultor confirma o preço final."
+    },
+    advisor: {
+      en: "Thank you. Please share your name and WhatsApp number, and an LSA GLOBAL advisor will contact you shortly.",
+      fr: "Merci. Partagez votre nom et numéro WhatsApp, et un conseiller LSA GLOBAL vous contactera rapidement.",
+      es: "Gracias. Comparta su nombre y número de WhatsApp y un asesor de LSA GLOBAL le contactará pronto.",
+      de: "Danke. Bitte teilen Sie Ihren Namen und Ihre WhatsApp-Nummer mit, ein LSA GLOBAL-Berater meldet sich zeitnah.",
+      it: "Grazie. Condivida nome e numero WhatsApp e un consulente LSA GLOBAL la contatterà presto.",
+      pt: "Obrigado. Partilhe nome e número WhatsApp e um consultor da LSA GLOBAL entrará em contacto em breve."
+    }
+  };
+  return byOption[menuOption]?.[language] || byOption[menuOption]?.en || getControlledFallbackReply(language);
+}
+
 function detectClarificationTopic({ text = "", retrievalResult = null, userState = null }) {
   const normalized = normalizeForIntent(text);
   const hintedDomain = retrievalResult?.entity_domain || userState?.topicDomain || "";
@@ -3083,8 +3135,12 @@ app.post("/webhook", async (req, res) => {
     const autonomousReplyAllowed = await isAutonomousReplyAllowed();
     const canUseTestRetrievalRouting = await canRunTestRetrievalExperiments();
     const testModeActive = String(activeMode || "").toLowerCase() === "test";
+    const userState = getCustomerState(from);
     let selectedRoutingBranch = "unresolved";
     let routingReason = "unresolved";
+    let retrievalBlockedForSafety = false;
+    let retrievalBlockedReason = "none";
+    let controlledAction = "none";
 
     const greetingIntent = detectGreetingIntent(text);
     const detectedLanguage = resolveConversationLanguage({
@@ -3095,13 +3151,18 @@ app.post("/webhook", async (req, res) => {
     const menuSelection = detectMenuSelection(text);
     const normalizedInbound = normalizeForIntent(text);
     const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
-    const testRetrievalEnabledForMessage = Boolean(canUseTestRetrievalRouting && retrievalEligibleFreeText);
+    const testRetrievalEnabledForMessage = Boolean(testModeActive && canUseTestRetrievalRouting && retrievalEligibleFreeText);
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
     const fallbackEligible = hasStoredLanguage
       && !menuSelection
       && !greetingIntent
       && normalizedInbound
       && normalizedInbound.split(/\s+/).filter(Boolean).length <= 2;
+    const liveModeControlledCandidate = !testModeActive && retrievalEligibleFreeText;
+    if (liveModeControlledCandidate) {
+      retrievalBlockedForSafety = true;
+      retrievalBlockedReason = "production_safety";
+    }
 
     if (greetingIntent || isGreetingMessage(text)) {
       selectedRoutingBranch = "greeting_menu";
@@ -3115,21 +3176,38 @@ app.post("/webhook", async (req, res) => {
       console.log("[greeting-debug] normalized greeting text:", normalizedGreetingText);
       console.log("[greeting-debug] detected language code:", greetingLanguageCode || "none");
       console.log("[greeting-debug] rendered menu language code:", renderedMenuLanguageCode);
+      setCustomerState(from, {
+        clarifyingAsked: false,
+        liveMenuOption: null
+      });
       suppressAutoAck = true;
     } else if (menuSelection) {
       selectedRoutingBranch = "menu_option";
       routingReason = "menu_input";
       reply = getOptionReply(menuSelection, detectedLanguage);
+      controlledAction = "menu_template";
+      setCustomerState(from, {
+        clarifyingAsked: false,
+        liveMenuOption: menuSelection
+      });
+      suppressAutoAck = true;
+    } else if (!testModeActive && userState.liveMenuOption && liveModeControlledCandidate) {
+      selectedRoutingBranch = "live_safe_menu_clarification";
+      routingReason = "live_mode_post_menu_controlled_clarification";
+      reply = getLiveSafeMenuClarificationReply(detectedLanguage, userState.liveMenuOption);
+      controlledAction = "controlled_clarification";
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
+      controlledAction = "controlled_fallback_template";
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
+      controlledAction = "safe_handoff";
       suppressAutoAck = true;
     } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
@@ -3138,7 +3216,6 @@ app.post("/webhook", async (req, res) => {
       const specificIntent = detectSpecificIntent(text);
       const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
       const vagueMessage = isVagueCustomerMessage(text);
-      const userState = getCustomerState(from);
       const questionScope = classifyRetrievalQuestionScope({ text, resolvedIntent });
       const broadMessage = questionScope === "broad";
       const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
@@ -3440,6 +3517,7 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = "live_safe_handoff";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
+      controlledAction = "safe_handoff";
       suppressAutoAck = true;
     }
     console.log("[routing-debug] inbound branch selected", {
@@ -3456,7 +3534,10 @@ app.post("/webhook", async (req, res) => {
       text: inboundBody,
       normalizedText: normalizedInbound,
       testRetrievalEnabled: testRetrievalEnabledForMessage,
-      reason: routingReason
+      reason: routingReason,
+      retrievalBlocked: retrievalBlockedForSafety,
+      retrievalBlockedReason,
+      controlledAction
     });
     if (reply) {
   if (reply.length > 180 && !suppressAutoAck && allowIntermediateAck) {
