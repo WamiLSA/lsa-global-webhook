@@ -1561,6 +1561,61 @@ function filterMismatchedCourseArticles(matches, queryLanguageEntity) {
   return (matches || []).filter((article) => !isCourseLanguageMismatch(queryLanguageEntity, article));
 }
 
+async function runDeterministicCourseFieldExtraction({
+  retrievalResult,
+  requestedLanguage,
+  fieldIntent,
+  detectedLanguage
+}) {
+  const resolvedFieldIntent = resolveNarrowIntent(fieldIntent);
+  if (!resolvedFieldIntent || !requestedLanguage) {
+    return { text: null, usedFallback: true, reason: "missing_intent_or_course_language" };
+  }
+
+  const kbMatches = (retrievalResult?.matches || [])
+    .filter((match) => match?.source === "kb_articles")
+    .map((match) => match.raw_reference)
+    .filter(Boolean);
+  const filteredMatches = filterMismatchedCourseArticles(kbMatches, requestedLanguage);
+  const selectedArticle = filteredMatches[0] || await findCourseArticleByLanguage(requestedLanguage);
+
+  console.log("[deterministic-retrieval-debug]", JSON.stringify({
+    detected_entity: requestedLanguage,
+    detected_field_intent: resolvedFieldIntent,
+    candidate_article_count: filteredMatches.length,
+    selected_article_title: selectedArticle?.title || null
+  }));
+
+  if (!selectedArticle) {
+    return { text: null, usedFallback: true, reason: "no_matching_course_article" };
+  }
+
+  const extracted = extractRelevantKbSection(selectedArticle.answer || "", resolvedFieldIntent);
+  const localized = extracted
+    ? await localizeNarrowAnswer({
+      text: extracted,
+      language: detectedLanguage,
+      preserveCompleteness: resolvedFieldIntent === "fees",
+      applyStyle: false
+    })
+    : null;
+
+  const success = Boolean(localized && localized.trim());
+  console.log("[deterministic-retrieval-debug]", JSON.stringify({
+    detected_entity: requestedLanguage,
+    detected_field_intent: resolvedFieldIntent,
+    selected_article_title: selectedArticle?.title || null,
+    deterministic_field_extraction_succeeded: success,
+    fallback_used: !success,
+    fallback_reason: success ? null : "field_not_found_or_empty"
+  }));
+
+  if (success) {
+    return { text: localized, usedFallback: false, reason: null };
+  }
+  return { text: null, usedFallback: true, reason: "field_not_found_or_empty" };
+}
+
 function hasProcessedMessage(messageId) {
   if (!messageId) return false;
   const seenAt = PROCESSED_MESSAGE_IDS.get(messageId);
@@ -2740,6 +2795,53 @@ app.post("/webhook", async (req, res) => {
             reply = summary || getLocalizedClarifyingQuestion(detectedLanguage);
           } else {
             reply = getLocalizedClarifyingQuestion(detectedLanguage);
+          }
+          setCustomerState(from, {
+            clarifyingAsked: false,
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: "language_course",
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null
+          });
+        } else if (resolvedIntent && courseQueryActive && currentCourseLanguage) {
+          const deterministic = await runDeterministicCourseFieldExtraction({
+            retrievalResult,
+            requestedLanguage: currentCourseLanguage,
+            fieldIntent: resolvedIntent,
+            detectedLanguage
+          });
+
+          if (deterministic.text) {
+            selectedRoutingBranch = "test_retrieval_narrow_deterministic";
+            routingReason = "deterministic_course_field_extraction";
+            reply = deterministic.text;
+          } else if (retrievalResult.matches.length) {
+            selectedRoutingBranch = "test_retrieval_narrow_intent";
+            routingReason = "narrow_intent_match";
+            const extractedSection = await extractNarrowAnswerFromMatches({
+              matches: retrievalResult.matches,
+              intent: resolvedIntent
+            });
+            if (extractedSection) {
+              reply = await localizeNarrowAnswer({
+                text: extractedSection,
+                language: detectedLanguage,
+                preserveCompleteness: resolvedIntent === "fees",
+                applyStyle: false
+              });
+            }
+          }
+
+          if (!reply) {
+            selectedRoutingBranch = "test_retrieval_ai_fallback";
+            routingReason = deterministic.reason || "retrieval_ai_fallback";
+            reply = await generateAIAnswerMessage({
+              customerMessage: text,
+              kbMatches,
+              retrievalResult,
+              specificIntent: resolvedIntent
+            });
           }
           setCustomerState(from, {
             clarifyingAsked: false,
