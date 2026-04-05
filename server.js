@@ -1686,6 +1686,69 @@ function detectArticleCourseLanguage(article) {
   return detectCourseLanguageMention(blob);
 }
 
+function humanizeEntityKey(entityKey) {
+  if (!entityKey) return "";
+  return String(entityKey)
+    .replace(/_/g, " ")
+    .replace(/\b(course|service|prep|process)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getLocalizedTruthfulnessFallback({
+  language = "en",
+  requestedEntity = null,
+  requestedField = null,
+  reason = "field_unavailable"
+}) {
+  const entityLabel = humanizeEntityKey(requestedEntity) || "this topic";
+  const fieldLabel = humanizeEntityKey(requestedField) || "this information";
+  const messages = {
+    en: {
+      field_unavailable: `I can’t confirm ${fieldLabel} for ${entityLabel} in the KB yet. Please share the exact variant, or I can hand this to an LSA GLOBAL advisor.`,
+      entity_not_found: `I could not find a reliable KB record for ${entityLabel} yet. I can connect you with an LSA GLOBAL advisor.`
+    },
+    es: {
+      field_unavailable: `No puedo confirmar ${fieldLabel} para ${entityLabel} en la base de conocimiento todavía. Indique la variante exacta, o puedo derivarlo a un asesor de LSA GLOBAL.`,
+      entity_not_found: `No encontré un registro fiable en la base de conocimiento para ${entityLabel} todavía. Puedo derivarlo a un asesor de LSA GLOBAL.`
+    },
+    fr: {
+      field_unavailable: `Je ne peux pas confirmer ${fieldLabel} pour ${entityLabel} dans la base de connaissance pour le moment. Précisez la variante exacte, ou je peux transférer à un conseiller LSA GLOBAL.`,
+      entity_not_found: `Je n’ai pas trouvé d’article KB fiable pour ${entityLabel} pour le moment. Je peux transférer vers un conseiller LSA GLOBAL.`
+    },
+    it: {
+      field_unavailable: `Non posso confermare ${fieldLabel} per ${entityLabel} nella base di conoscenza al momento. Indichi la variante precisa, oppure posso inoltrare a un consulente LSA GLOBAL.`,
+      entity_not_found: `Non ho trovato un record KB affidabile per ${entityLabel} al momento. Posso inoltrare a un consulente LSA GLOBAL.`
+    },
+    pt: {
+      field_unavailable: `Ainda não consigo confirmar ${fieldLabel} para ${entityLabel} na base de conhecimento. Indique a variante exata, ou posso encaminhar para um consultor da LSA GLOBAL.`,
+      entity_not_found: `Ainda não encontrei um registo KB fiável para ${entityLabel}. Posso encaminhar para um consultor da LSA GLOBAL.`
+    },
+    de: {
+      field_unavailable: `Ich kann ${fieldLabel} für ${entityLabel} in der Wissensdatenbank noch nicht bestätigen. Bitte nennen Sie die genaue Variante, oder ich leite an einen LSA GLOBAL-Berater weiter.`,
+      entity_not_found: `Ich habe noch keinen verlässlichen KB-Eintrag für ${entityLabel} gefunden. Ich kann an einen LSA GLOBAL-Berater weiterleiten.`
+    }
+  };
+  const selectedLanguage = messages[language] ? language : "en";
+  const selectedReason = reason === "entity_not_found" ? "entity_not_found" : "field_unavailable";
+  return finalizeCourseMessage(messages[selectedLanguage][selectedReason]);
+}
+
+function isSourceConfirmedForField({
+  retrievalResult,
+  match,
+  requestedLanguage = null
+}) {
+  if (!retrievalResult?.requested_field || !match?.raw_reference) return false;
+  if (requestedLanguage && isCourseLanguageMismatch(requestedLanguage, match.raw_reference)) return false;
+  const extracted = extractRelevantKbSection(
+    extractAnswerTextFromRetrievalMatch(match),
+    retrievalResult.requested_field,
+    { subVariant: retrievalResult.sub_variant || null }
+  );
+  return Boolean(extracted && extracted.trim());
+}
+
 function isCourseLanguageMismatch(queryLanguageEntity, candidateArticle) {
   if (!queryLanguageEntity || !candidateArticle) return false;
   const candidateLanguage = detectArticleCourseLanguage(candidateArticle);
@@ -1735,16 +1798,25 @@ async function runDeterministicFieldExtraction({
     : null;
   const selectedMatch = orderedCandidates[0] || (fallbackCourseArticle ? { title: fallbackCourseArticle.title, raw_reference: fallbackCourseArticle, source: "kb_articles" } : null);
   const selectedTitle = selectedMatch?.title || null;
+  const selectedEntity = selectedMatch?.title || selectedMatch?.category || null;
 
   console.log("[deterministic-retrieval-debug]", JSON.stringify({
     detected_entity: retrievalResult?.entity || requestedLanguage || "unknown",
     detected_field_intent: resolvedFieldIntent,
     candidate_article_count: candidateMatches.length,
-    selected_article_title: selectedTitle
+    selected_article_title: selectedTitle,
+    selected_entity: selectedEntity
   }));
 
   if (!selectedMatch?.raw_reference) {
-    return { text: null, usedFallback: true, reason: "no_matching_article" };
+    return {
+      text: null,
+      usedFallback: true,
+      reason: "no_matching_article",
+      blockedForTruthfulness: true,
+      fieldSourceConfirmed: false,
+      selectedEntity
+    };
   }
 
   const articleText = extractAnswerTextFromRetrievalMatch(selectedMatch);
@@ -1759,20 +1831,39 @@ async function runDeterministicFieldExtraction({
     : null;
 
   const success = Boolean(localized && localized.trim());
+  const fieldSourceConfirmed = Boolean(extracted && extracted.trim());
+  const blockedForTruthfulness = !fieldSourceConfirmed;
   console.log("[deterministic-retrieval-debug]", JSON.stringify({
     detected_entity: retrievalResult?.entity || requestedLanguage || "unknown",
+    selected_entity: selectedEntity,
     detected_field_intent: resolvedFieldIntent,
     selected_article_title: selectedTitle,
     selected_source: selectedMatch?.source || "unknown",
     selected_sub_variant: requestedSubVariant || null,
     extraction_section_used: resolvedFieldIntent,
+    source_confirmed_field_exists: fieldSourceConfirmed,
     deterministic_field_extraction_succeeded: success,
+    truthfulness_blocked: blockedForTruthfulness,
     fallback_used: !success,
     fallback_reason: success ? null : "field_not_found_or_empty"
   }));
 
-  if (success) return { text: localized, usedFallback: false, reason: null };
-  return { text: null, usedFallback: true, reason: "field_not_found_or_empty" };
+  if (success) return {
+    text: localized,
+    usedFallback: false,
+    reason: null,
+    blockedForTruthfulness: false,
+    fieldSourceConfirmed: true,
+    selectedEntity
+  };
+  return {
+    text: null,
+    usedFallback: true,
+    reason: "field_not_found_or_empty",
+    blockedForTruthfulness: true,
+    fieldSourceConfirmed: false,
+    selectedEntity
+  };
 }
 
 function hasProcessedMessage(messageId) {
@@ -3044,16 +3135,31 @@ app.post("/webhook", async (req, res) => {
             detectedLanguage,
             requestedSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
+          const sourceConfirmedMatch = retrievalResult.matches.find((match) => isSourceConfirmedForField({
+            retrievalResult: { ...retrievalResult, requested_field: resolvedIntent },
+            match,
+            requestedLanguage: currentCourseLanguage
+          })) || null;
+          const strictFieldAvailable = Boolean(sourceConfirmedMatch);
+          const fallbackReason = deterministic.reason || (strictFieldAvailable ? null : "field_not_confirmed_for_requested_entity");
+          console.log("[truthfulness-guard]", JSON.stringify({
+            requested_entity: retrievalResult.entity || currentCourseLanguage || userState.topicEntity || null,
+            selected_entity: deterministic.selectedEntity || sourceConfirmedMatch?.title || retrievalResult.matches?.[0]?.title || null,
+            requested_field: resolvedIntent,
+            source_confirmed_field_exists: strictFieldAvailable,
+            answer_blocked_for_truthfulness: Boolean(!strictFieldAvailable || deterministic.blockedForTruthfulness),
+            fallback_reason: fallbackReason
+          }));
 
           if (deterministic.text) {
             selectedRoutingBranch = "test_retrieval_narrow_deterministic";
             routingReason = "deterministic_field_extraction";
             reply = deterministic.text;
-          } else if (retrievalResult.matches.length) {
+          } else if (strictFieldAvailable && retrievalResult.matches.length) {
             selectedRoutingBranch = "test_retrieval_narrow_intent";
             routingReason = "narrow_intent_match";
             const extractedSection = await extractNarrowAnswerFromMatches({
-              matches: retrievalResult.matches,
+              matches: [sourceConfirmedMatch],
               intent: resolvedIntent
             });
             if (extractedSection) {
@@ -3067,13 +3173,13 @@ app.post("/webhook", async (req, res) => {
           }
 
           if (!reply) {
-            selectedRoutingBranch = "test_retrieval_ai_fallback";
-            routingReason = deterministic.reason || "retrieval_ai_fallback";
-            reply = await generateAIAnswerMessage({
-              customerMessage: text,
-              kbMatches,
-              retrievalResult,
-              specificIntent: resolvedIntent
+            selectedRoutingBranch = "test_retrieval_truthful_field_fallback";
+            routingReason = fallbackReason || "field_not_confirmed_for_requested_entity";
+            reply = getLocalizedTruthfulnessFallback({
+              language: detectedLanguage,
+              requestedEntity: retrievalResult.entity || (currentCourseLanguage ? `${currentCourseLanguage}_course` : null),
+              requestedField: resolvedIntent,
+              reason: retrievalResult.entity ? "field_unavailable" : "entity_not_found"
             });
           }
           setCustomerState(from, {
@@ -3085,6 +3191,34 @@ app.post("/webhook", async (req, res) => {
             topicIntent: retrievalResult.intent || userState.topicIntent || null,
             topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
             topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
+          });
+        } else if (resolvedIntent && !retrievalResult.matches.length) {
+          selectedRoutingBranch = "test_retrieval_truthful_no_matches";
+          routingReason = "no_source_confirmed_field_match";
+          console.log("[truthfulness-guard]", JSON.stringify({
+            requested_entity: retrievalResult.entity || currentCourseLanguage || userState.topicEntity || null,
+            selected_entity: null,
+            requested_field: resolvedIntent,
+            source_confirmed_field_exists: false,
+            answer_blocked_for_truthfulness: true,
+            fallback_reason: "no_matches_for_requested_entity"
+          }));
+          reply = getLocalizedTruthfulnessFallback({
+            language: detectedLanguage,
+            requestedEntity: retrievalResult.entity || (currentCourseLanguage ? `${currentCourseLanguage}_course` : null),
+            requestedField: resolvedIntent,
+            reason: retrievalResult.entity ? "field_unavailable" : "entity_not_found"
+          });
+          setCustomerState(from, {
+            clarifyingAsked: true,
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: retrievalResult.entity_domain === "course" ? "language_course" : (userState.topicType || null),
+            topicLanguage: currentCourseLanguage || userState.topicLanguage || null,
+            topicEntity: retrievalResult.entity || userState.topicEntity || null,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: userState.topicLabel || null,
             topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (broadMessage && retrievalResult.matches.length) {
