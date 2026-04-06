@@ -1568,8 +1568,8 @@ const retrieveInternalKnowledge = createInternalRetriever({
 const customerState = new Map();
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null };
+  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null, liveKnownSlots: {} };
+  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null, liveKnownSlots: {} };
 }
 
 function setCustomerState(waId, state) {
@@ -1585,7 +1585,8 @@ function setCustomerState(waId, state) {
     topicDomain: state?.topicDomain || current.topicDomain || null,
     topicLabel: state?.topicLabel || current.topicLabel || null,
     topicSubVariant: state?.topicSubVariant || current.topicSubVariant || null,
-    liveMenuOption: state?.liveMenuOption || current.liveMenuOption || null
+    liveMenuOption: state?.liveMenuOption || current.liveMenuOption || null,
+    liveKnownSlots: state?.liveKnownSlots || current.liveKnownSlots || {}
   });
 }
 
@@ -1639,6 +1640,76 @@ function isLanguageCourseQuery(query, recentContext = {}) {
   if (!normalized) return Boolean(recentContext.topicType === "language_course");
   const courseSignal = /\b(course|courses|cours|curso|corsi|corso|class|classes|formation|program|programme|langue|language|idioma|lingua)\b/i.test(normalized);
   return courseSignal || recentContext.topicType === "language_course";
+}
+
+const LIVE_SERVICE_LANGUAGE_KEYWORDS = {
+  english: ["english", "anglais", "inglés", "ingles", "inglese"],
+  french: ["french", "français", "francais", "francese", "francés", "frances"],
+  italian: ["italian", "italien", "italiano", "italiana"],
+  german: ["german", "allemand", "deutsch", "alemán", "aleman", "tedesco"],
+  spanish: ["spanish", "espagnol", "español", "espanol", "spagnolo"],
+  portuguese: ["portuguese", "portugais", "português", "portugues", "portoghese"],
+  chinese: ["chinese", "chinois", "mandarin", "cinese"],
+  arabic: ["arabic", "arabe", "árabe", "arabo"],
+  russian: ["russian", "russe", "ruso", "russo"],
+  dutch: ["dutch", "néerlandais", "neerlandais", "holandés", "olandese"],
+  japanese: ["japanese", "japonais", "japonés", "giapponese"]
+};
+
+function detectServiceLanguages(text = "") {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return [];
+  const found = [];
+  for (const [language, variants] of Object.entries(LIVE_SERVICE_LANGUAGE_KEYWORDS)) {
+    if (variants.some((variant) => {
+      const token = normalizeForIntent(variant).replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      return token && new RegExp(`\\b${token}\\b`, "i").test(normalized);
+    })) {
+      found.push(language);
+    }
+  }
+  return found;
+}
+
+function extractLiveClarificationSlots(menuOption, text = "", state = {}) {
+  const priorSlots = state?.liveKnownSlots || {};
+  const normalized = normalizeForIntent(text);
+  const slots = { ...priorSlots };
+  if (!normalized) return slots;
+
+  if (menuOption === "courses") {
+    const language = detectCourseLanguageMention(text) || priorSlots.language || null;
+    const levelMatch = normalized.match(/\b(a1|a2|b1|b2|c1|c2|beginner|debutant|débutant|intermediate|advanced)\b/i);
+    const variantDetection = detectRequestedSubVariant(text, { topicSubVariant: priorSlots.course_variant || null });
+    const formatMatch = normalized.match(/\b(online|in person|in-person|onsite|on site|presentiel|présentiel|private|prive|privé|intensive|intensif|standard)\b/i);
+    slots.language = language;
+    if (levelMatch) slots.level = levelMatch[1].toLowerCase();
+    if (formatMatch) slots.format = formatMatch[1].toLowerCase();
+    if (variantDetection?.subVariant) slots.course_variant = variantDetection.subVariant;
+    return slots;
+  }
+
+  if (menuOption === "translation") {
+    const languages = detectServiceLanguages(text);
+    const dateMatch = normalized.match(/\b(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow|aujourd hui|demain)\b/i);
+    const docMatch = normalized.match(/\b(passport|contract|certificate|transcript|birth certificate|document|pdf|docx?)\b/i);
+    if (languages.length >= 2) slots.language_pair = `${languages[0]}-${languages[1]}`;
+    if (docMatch) slots.document_type = docMatch[1].toLowerCase();
+    if (dateMatch) slots.deadline = dateMatch[1].toLowerCase();
+    return slots;
+  }
+
+  if (menuOption === "interpreting") {
+    const languages = detectServiceLanguages(text);
+    const formatMatch = normalized.match(/\b(online|on site|onsite|in person|in-person|presentiel|présentiel)\b/i);
+    const dateMatch = normalized.match(/\b(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow|aujourd hui|demain)\b/i);
+    if (languages.length >= 2) slots.language_pair = `${languages[0]}-${languages[1]}`;
+    if (formatMatch) slots.format = formatMatch[1].toLowerCase();
+    if (dateMatch) slots.date = dateMatch[1].toLowerCase();
+    return slots;
+  }
+
+  return slots;
 }
 
 async function findCourseArticleByLanguage(requestedLanguage) {
@@ -2563,8 +2634,74 @@ function getControlledFallbackReply(languageCode) {
   return LIVE_MODE_MESSAGES[language]?.fallback || LIVE_MODE_MESSAGES.en.fallback;
 }
 
-function getLiveSafeMenuClarificationReply(languageCode, menuOption) {
+function joinFieldsByLanguage(language, fields = []) {
+  const safeFields = fields.filter(Boolean);
+  if (!safeFields.length) return "";
+  if (safeFields.length === 1) return safeFields[0];
+  const conjunctionByLanguage = {
+    fr: " et ",
+    es: " y ",
+    de: " und ",
+    it: " e ",
+    pt: " e "
+  };
+  const conjunction = conjunctionByLanguage[language] || " and ";
+  return `${safeFields.slice(0, -1).join(", ")}${conjunction}${safeFields[safeFields.length - 1]}`;
+}
+
+function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots = {}) {
   const language = normalizeLanguageCode(languageCode);
+  if (menuOption === "courses") {
+    const fieldLabels = {
+      en: { language: "language", level: "level", format: "format", course_variant: "course variant" },
+      fr: { language: "la langue", level: "le niveau", format: "le format", course_variant: "la variante du cours" },
+      es: { language: "el idioma", level: "el nivel", format: "la modalidad", course_variant: "la variante del curso" },
+      de: { language: "die Sprache", level: "das Niveau", format: "das Format", course_variant: "die Kursvariante" },
+      it: { language: "la lingua", level: "il livello", format: "il formato", course_variant: "la variante del corso" },
+      pt: { language: "o idioma", level: "o nível", format: "o formato", course_variant: "a variante do curso" }
+    };
+    const missing = ["language", "level", "format"].filter((field) => !knownSlots?.[field]);
+    if (!missing.length) {
+      const completeByLanguage = {
+        en: "Thank you. I have the required details. An advisor will confirm exact pricing and next steps.",
+        fr: "Merci. J’ai les informations nécessaires. Un conseiller confirmera le tarif exact et la suite.",
+        es: "Gracias. Ya tengo los datos necesarios. Un asesor confirmará el precio exacto y los siguientes pasos.",
+        de: "Danke. Ich habe die nötigen Angaben. Ein Berater bestätigt den genauen Preis und die nächsten Schritte.",
+        it: "Grazie. Ho le informazioni necessarie. Un consulente confermerà il prezzo esatto e i prossimi passi.",
+        pt: "Obrigado. Já tenho os dados necessários. Um consultor confirmará o preço exato e os próximos passos."
+      };
+      return completeByLanguage[language] || completeByLanguage.en;
+    }
+    const languageLabelMap = fieldLabels[language] || fieldLabels.en;
+    const missingList = joinFieldsByLanguage(language, missing.map((field) => languageLabelMap[field]));
+    const languageDescriptor = knownSlots?.language
+      ? {
+        en: `for the ${knownSlots.language} course`,
+        fr: `pour le cours de ${knownSlots.language}`,
+        es: `para el curso de ${knownSlots.language}`,
+        de: `für den ${knownSlots.language}-Kurs`,
+        it: `per il corso di ${knownSlots.language}`,
+        pt: `para o curso de ${knownSlots.language}`
+      }[language] || `for the ${knownSlots.language} course`
+      : {
+        en: "for the language course",
+        fr: "pour le cours de langues",
+        es: "para el curso de idiomas",
+        de: "für den Sprachkurs",
+        it: "per il corso di lingua",
+        pt: "para o curso de idiomas"
+      }[language] || "for the language course";
+    const responseByLanguage = {
+      en: `For ${languageDescriptor.replace(/^for\s+/i, "")}, please specify ${missingList} (standard/intensive/online/private). Exact pricing will be confirmed by an advisor.`,
+      fr: `${languageDescriptor.charAt(0).toUpperCase()}${languageDescriptor.slice(1)}, veuillez préciser ${missingList} (standard, intensif, en ligne ou privé). Le tarif exact sera confirmé par un conseiller.`,
+      es: `${languageDescriptor.charAt(0).toUpperCase()}${languageDescriptor.slice(1)}, por favor precise ${missingList} (estándar, intensivo, online o privado). El precio exacto será confirmado por un asesor.`,
+      de: `${languageDescriptor.charAt(0).toUpperCase()}${languageDescriptor.slice(1)}, bitte geben Sie ${missingList} an (Standard, Intensiv, Online oder Privat). Der genaue Preis wird von einem Berater bestätigt.`,
+      it: `${languageDescriptor.charAt(0).toUpperCase()}${languageDescriptor.slice(1)}, indichi ${missingList} (standard, intensivo, online o privato). Il prezzo esatto sarà confermato da un consulente.`,
+      pt: `${languageDescriptor.charAt(0).toUpperCase()}${languageDescriptor.slice(1)}, por favor indique ${missingList} (padrão, intensivo, online ou privado). O preço exato será confirmado por um consultor.`
+    };
+    return responseByLanguage[language] || responseByLanguage.en;
+  }
+
   const byOption = {
     translation: {
       en: "For translation, please share language pair, document type, and deadline. For exact pricing, an advisor will confirm after review.",
@@ -3178,7 +3315,8 @@ app.post("/webhook", async (req, res) => {
       console.log("[greeting-debug] rendered menu language code:", renderedMenuLanguageCode);
       setCustomerState(from, {
         clarifyingAsked: false,
-        liveMenuOption: null
+        liveMenuOption: null,
+        liveKnownSlots: {}
       });
       suppressAutoAck = true;
     } else if (menuSelection) {
@@ -3188,14 +3326,19 @@ app.post("/webhook", async (req, res) => {
       controlledAction = "menu_template";
       setCustomerState(from, {
         clarifyingAsked: false,
-        liveMenuOption: menuSelection
+        liveMenuOption: menuSelection,
+        liveKnownSlots: {}
       });
       suppressAutoAck = true;
     } else if (!testModeActive && userState.liveMenuOption && liveModeControlledCandidate) {
       selectedRoutingBranch = "live_safe_menu_clarification";
       routingReason = "live_mode_post_menu_controlled_clarification";
-      reply = getLiveSafeMenuClarificationReply(detectedLanguage, userState.liveMenuOption);
+      const knownSlots = extractLiveClarificationSlots(userState.liveMenuOption, text, userState);
+      reply = getLiveSafeMenuClarificationReply(detectedLanguage, userState.liveMenuOption, knownSlots);
       controlledAction = "controlled_clarification";
+      setCustomerState(from, {
+        liveKnownSlots: knownSlots
+      });
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
