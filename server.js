@@ -1520,44 +1520,12 @@ async function extractNarrowAnswerFromMatches({ matches, intent }) {
       lastFallbackReason = "target_field_not_found_in_candidate";
     }
   }
-
-  const compactKb = matches
-    .slice(0, 3)
-    .map((match, index) => `[Record ${index + 1}] ${match.title || "Untitled"}\n${extractAnswerTextFromRetrievalMatch(match)}`)
-    .join("\n\n");
-
-  try {
-    const extraction = await openai.responses.create({
-      model: "gpt-5-mini",
-      instructions:
-        "Extract ONLY the text that answers the requested field from the internal content. " +
-        "Do not add explanations, introductions, or questions. " +
-        "If the field does not exist, reply exactly: NOT_FOUND.",
-      input: `Field: ${safeIntent}\n\nInternal content:\n${compactKb}`
-    });
-    const extracted = (extraction.output_text || "").trim();
-    if (!extracted || /^NOT_FOUND$/i.test(extracted)) {
-      console.log("[narrow-extract-debug] fallback", JSON.stringify({
-        detected_field_intent: safeIntent,
-        fallback_reason: "llm_not_found",
-        previous_reason: lastFallbackReason
-      }));
-      return null;
-    }
-    console.log("[narrow-extract-debug] fallback-success", JSON.stringify({
-      detected_field_intent: safeIntent,
-      extracted_snippet_length: extracted.length
-    }));
-    return extracted;
-  } catch (error) {
-    console.error("Narrow KB extraction error:", error?.message || error);
-    console.log("[narrow-extract-debug] fallback", JSON.stringify({
-      detected_field_intent: safeIntent,
-      fallback_reason: "llm_extraction_error",
-      previous_reason: lastFallbackReason
-    }));
-    return null;
-  }
+  console.log("[narrow-extract-debug] fallback", JSON.stringify({
+    detected_field_intent: safeIntent,
+    fallback_reason: "source_not_confirmed_by_rules",
+    previous_reason: lastFallbackReason
+  }));
+  return null;
 }
 
 const retrieveInternalKnowledge = createInternalRetriever({
@@ -1852,6 +1820,32 @@ function filterMismatchedCourseArticles(matches, queryLanguageEntity) {
   return (matches || []).filter((article) => !isCourseLanguageMismatch(queryLanguageEntity, article));
 }
 
+function getCourseLanguageFromEntityKey(entityKey) {
+  if (!entityKey) return null;
+  const match = String(entityKey).match(/^([a-z]+)_course$/);
+  return match?.[1] || null;
+}
+
+function isMatchEntityLocked({
+  retrievalResult,
+  match,
+  requestedLanguage = null
+}) {
+  if (!match?.raw_reference) return false;
+  const requestedEntityCourseLanguage = getCourseLanguageFromEntityKey(retrievalResult?.entity);
+  const strictCourseLanguage = requestedLanguage || requestedEntityCourseLanguage;
+  if (strictCourseLanguage && isCourseLanguageMismatch(strictCourseLanguage, match.raw_reference)) {
+    return false;
+  }
+  if (requestedEntityCourseLanguage) {
+    const candidateLanguage = detectArticleCourseLanguage(match.raw_reference);
+    if (candidateLanguage && candidateLanguage !== requestedEntityCourseLanguage) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function runDeterministicFieldExtraction({
   retrievalResult,
   requestedLanguage,
@@ -1871,10 +1865,11 @@ async function runDeterministicFieldExtraction({
       if (!retrievalResult?.entity_domain) return true;
       return !match.record_domain || match.record_domain === "general" || match.record_domain === retrievalResult.entity_domain;
     })
-    .filter((match) => {
-      if (!requestedLanguage) return true;
-      return !isCourseLanguageMismatch(requestedLanguage, match.raw_reference);
-    });
+    .filter((match) => isMatchEntityLocked({
+      retrievalResult,
+      match,
+      requestedLanguage
+    }));
 
   const orderedCandidates = candidateMatches.sort((a, b) => sourcePriority.indexOf(a.source) - sourcePriority.indexOf(b.source));
   const fallbackCourseArticle = requestedLanguage && retrievalResult?.entity_domain === "course"
@@ -3499,6 +3494,12 @@ app.post("/webhook", async (req, res) => {
           if (!reply) {
             selectedRoutingBranch = "test_retrieval_truthful_field_fallback";
             routingReason = fallbackReason || "field_not_confirmed_for_requested_entity";
+            console.log("[truthfulness-field-blocked]", JSON.stringify({
+              requested_entity: retrievalResult.entity || currentCourseLanguage || userState.topicEntity || null,
+              requested_field: resolvedIntent,
+              blocked_reason: routingReason,
+              selected_entity: deterministic.selectedEntity || sourceConfirmedMatch?.title || null
+            }));
             reply = getLocalizedTruthfulnessFallback({
               language: detectedLanguage,
               requestedEntity: retrievalResult.entity || (currentCourseLanguage ? `${currentCourseLanguage}_course` : null),
