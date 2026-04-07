@@ -886,7 +886,7 @@ const COURSE_LANGUAGE_KEYWORDS = {
   german: ["allemand", "german", "deutsch", "tedesco", "aleman", "alemán"],
   spanish: ["espagnol", "spanish", "espanol", "español", "spagnolo"],
   portuguese: ["portugais", "portuguese", "portugues", "português", "portoghese"],
-  chinese: ["chinois", "chinese", "mandarin", "mandarim", "mandarín", "cinese"],
+  chinese: ["chinois", "chinese", "chino", "china", "mandarin", "mandarim", "mandarín", "cinese"],
   arabic: ["arabe", "arabe", "arabic", "arabo", "árabe"]
 };
 const SUB_VARIANT_KEYWORDS = {
@@ -1844,6 +1844,39 @@ function isMatchEntityLocked({
     }
   }
   return true;
+}
+
+function buildNarrowFieldTruthfulnessContext({
+  text = "",
+  retrievalResult = null,
+  requestedLanguage = null,
+  resolvedIntent = null,
+  userState = null
+}) {
+  const requestedEntity = retrievalResult?.entity
+    || (requestedLanguage ? `${requestedLanguage}_course` : null)
+    || userState?.topicEntity
+    || null;
+  const entityLockedMatches = (retrievalResult?.matches || []).filter((match) => isMatchEntityLocked({
+    retrievalResult: { ...(retrievalResult || {}), entity: requestedEntity },
+    match,
+    requestedLanguage
+  }));
+  const entityExistsInKb = Boolean(requestedEntity && entityLockedMatches.length);
+  const fieldExistsForEntity = Boolean(entityExistsInKb && entityLockedMatches.find((match) => isSourceConfirmedForField({
+    retrievalResult: { ...(retrievalResult || {}), entity: requestedEntity, requested_field: resolvedIntent },
+    match,
+    requestedLanguage
+  })));
+  const queryTokens = normalizeText(text).split(/\s+/).filter(Boolean);
+  const queryLooksEntitySpecific = queryTokens.length <= 8 || Boolean(requestedLanguage) || Boolean(retrievalResult?.entity);
+  return {
+    requestedEntity,
+    entityLockedMatches,
+    entityExistsInKb,
+    fieldExistsForEntity,
+    queryLooksEntitySpecific
+  };
 }
 
 async function runDeterministicFieldExtraction({
@@ -3447,34 +3480,47 @@ app.post("/webhook", async (req, res) => {
             topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
         } else if (resolvedIntent && retrievalResult.matches.length) {
-          const deterministic = await runDeterministicFieldExtraction({
+          const truthContext = buildNarrowFieldTruthfulnessContext({
+            text,
             retrievalResult,
+            requestedLanguage: currentCourseLanguage,
+            resolvedIntent,
+            userState
+          });
+          const deterministic = await runDeterministicFieldExtraction({
+            retrievalResult: { ...retrievalResult, entity: truthContext.requestedEntity || retrievalResult.entity },
             requestedLanguage: currentCourseLanguage,
             fieldIntent: resolvedIntent,
             detectedLanguage,
             requestedSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
-          const sourceConfirmedMatch = retrievalResult.matches.find((match) => isSourceConfirmedForField({
-            retrievalResult: { ...retrievalResult, requested_field: resolvedIntent },
+          const sourceConfirmedMatch = truthContext.entityLockedMatches.find((match) => isSourceConfirmedForField({
+            retrievalResult: { ...retrievalResult, entity: truthContext.requestedEntity, requested_field: resolvedIntent },
             match,
             requestedLanguage: currentCourseLanguage
           })) || null;
-          const strictFieldAvailable = Boolean(sourceConfirmedMatch);
+          const strictEntityAvailable = truthContext.entityExistsInKb;
+          const strictFieldAvailable = Boolean(truthContext.fieldExistsForEntity && sourceConfirmedMatch);
+          const answerBlockedForMissingEntity = Boolean(!strictEntityAvailable && truthContext.queryLooksEntitySpecific);
           const fallbackReason = deterministic.reason || (strictFieldAvailable ? null : "field_not_confirmed_for_requested_entity");
           console.log("[truthfulness-guard]", JSON.stringify({
-            requested_entity: retrievalResult.entity || currentCourseLanguage || userState.topicEntity || null,
+            requested_entity: truthContext.requestedEntity || null,
+            requested_entity_exists_in_kb: strictEntityAvailable,
             selected_entity: deterministic.selectedEntity || sourceConfirmedMatch?.title || retrievalResult.matches?.[0]?.title || null,
             requested_field: resolvedIntent,
+            requested_field_exists_for_entity: strictFieldAvailable,
             source_confirmed_field_exists: strictFieldAvailable,
-            answer_blocked_for_truthfulness: Boolean(!strictFieldAvailable || deterministic.blockedForTruthfulness),
-            fallback_reason: fallbackReason
+            selected_source: sourceConfirmedMatch?.source || null,
+            selected_article: sourceConfirmedMatch?.title || null,
+            answer_blocked_for_truthfulness: Boolean(answerBlockedForMissingEntity || !strictFieldAvailable || deterministic.blockedForTruthfulness),
+            fallback_reason: answerBlockedForMissingEntity ? "entity_not_found" : fallbackReason
           }));
 
-          if (deterministic.text) {
+          if (!answerBlockedForMissingEntity && strictFieldAvailable && deterministic.text) {
             selectedRoutingBranch = "test_retrieval_narrow_deterministic";
             routingReason = "deterministic_field_extraction";
             reply = deterministic.text;
-          } else if (strictFieldAvailable && retrievalResult.matches.length) {
+          } else if (!answerBlockedForMissingEntity && strictFieldAvailable && retrievalResult.matches.length) {
             selectedRoutingBranch = "test_retrieval_narrow_intent";
             routingReason = "narrow_intent_match";
             const extractedSection = await extractNarrowAnswerFromMatches({
@@ -3493,18 +3539,22 @@ app.post("/webhook", async (req, res) => {
 
           if (!reply) {
             selectedRoutingBranch = "test_retrieval_truthful_field_fallback";
-            routingReason = fallbackReason || "field_not_confirmed_for_requested_entity";
+            routingReason = (answerBlockedForMissingEntity ? "entity_not_found" : fallbackReason) || "field_not_confirmed_for_requested_entity";
             console.log("[truthfulness-field-blocked]", JSON.stringify({
-              requested_entity: retrievalResult.entity || currentCourseLanguage || userState.topicEntity || null,
+              requested_entity: truthContext.requestedEntity || null,
+              requested_entity_exists_in_kb: strictEntityAvailable,
               requested_field: resolvedIntent,
               blocked_reason: routingReason,
-              selected_entity: deterministic.selectedEntity || sourceConfirmedMatch?.title || null
+              requested_field_exists_for_entity: strictFieldAvailable,
+              selected_entity: deterministic.selectedEntity || sourceConfirmedMatch?.title || null,
+              selected_source: sourceConfirmedMatch?.source || null,
+              selected_article: sourceConfirmedMatch?.title || null
             }));
             reply = getLocalizedTruthfulnessFallback({
               language: detectedLanguage,
-              requestedEntity: retrievalResult.entity || (currentCourseLanguage ? `${currentCourseLanguage}_course` : null),
+              requestedEntity: truthContext.requestedEntity || retrievalResult.entity || (currentCourseLanguage ? `${currentCourseLanguage}_course` : null),
               requestedField: resolvedIntent,
-              reason: retrievalResult.entity ? "field_unavailable" : "entity_not_found"
+              reason: strictEntityAvailable ? "field_unavailable" : "entity_not_found"
             });
           }
           setCustomerState(from, {
