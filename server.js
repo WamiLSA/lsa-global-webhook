@@ -1226,6 +1226,53 @@ const FIELD_EXTRACTION_RULES = {
   }
 };
 
+const STRICT_FIELD_ONLY_INTENTS = new Set(["fees", "duration", "schedule", "levels", "registration"]);
+
+function hasStrongFieldSignal(line, intent) {
+  const rule = FIELD_EXTRACTION_RULES[intent];
+  if (!rule) return false;
+  const signals = rule.lineSignals || [];
+  return signals.some((signal) => signal.test(line));
+}
+
+function lineHasCompetingFieldSignal(line, intent) {
+  const normalized = normalizeForIntent(line);
+  if (!normalized) return false;
+
+  const strictIntents = [...STRICT_FIELD_ONLY_INTENTS];
+  for (const otherIntent of strictIntents) {
+    if (otherIntent === intent) continue;
+    const otherRule = FIELD_EXTRACTION_RULES[otherIntent];
+    if (!otherRule) continue;
+    const hasOtherSignal = (otherRule.lineSignals || []).some((signal) => signal.test(line));
+    if (!hasOtherSignal) continue;
+
+    const selfSignal = hasStrongFieldSignal(line, intent);
+    if (!selfSignal) return true;
+    return true;
+  }
+
+  return false;
+}
+
+function enforceStrictFieldOnlyLines(text, intent) {
+  if (!STRICT_FIELD_ONLY_INTENTS.has(intent)) return text;
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return null;
+
+  const strictLines = lines.filter((line) => {
+    if (!hasStrongFieldSignal(line, intent)) return false;
+    if (lineHasCompetingFieldSignal(line, intent)) return false;
+    return true;
+  });
+
+  if (!strictLines.length) return null;
+  return Array.from(new Set(strictLines)).join("\n");
+}
+
 function sectionMatchesSubVariant(section, subVariant) {
   if (!subVariant) return true;
   const normalized = normalizeForIntent(section);
@@ -1307,7 +1354,8 @@ function extractByFieldRules(answerText, intent, options = {}) {
   }
 
   if (!selected.length) return null;
-  return Array.from(new Set(selected)).join("\n");
+  const joined = Array.from(new Set(selected)).join("\n");
+  return enforceStrictFieldOnlyLines(joined, intent) || joined;
 }
 
 function extractRelevantKbSection(answerText, intent, options = {}) {
@@ -1383,7 +1431,8 @@ function extractRelevantKbSection(answerText, intent, options = {}) {
   const signal = heuristicSignals[intent];
   if (!signal) return null;
   const matchedLine = fallbackLines.find((line) => signal.test(line));
-  return matchedLine || null;
+  if (!matchedLine) return null;
+  return enforceStrictFieldOnlyLines(matchedLine, intent) || matchedLine;
 }
 
 function finalizeCourseMessage(text, maxLength = 900) {
