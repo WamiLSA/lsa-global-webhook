@@ -29,12 +29,12 @@ app.use(
     }
   })
 );
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL?.trim();
 const SUPABASE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SECRET_KEY ||
-  process.env.SUPABASE_ANON_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+  process.env.SUPABASE_SECRET_KEY?.trim() ||
+  process.env.SUPABASE_ANON_KEY?.trim();
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const APP_ENV = String(process.env.APP_ENV || "live").toLowerCase();
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
