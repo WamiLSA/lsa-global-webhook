@@ -29,17 +29,20 @@ app.use(
     }
   })
 );
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_ANON_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const APP_ENV = String(process.env.APP_ENV || "live").toLowerCase();
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
 const INBOX_USERNAME = process.env.INBOX_USERNAME;
 const INBOX_PASSWORD = process.env.INBOX_PASSWORD;
 const WHATSAPP_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || "v18.0";
 const AI_AUTOREPLY_ENABLED = String(process.env.AI_AUTOREPLY_ENABLED || "false").toLowerCase() === "true";
-const APP_ENV = String(process.env.APP_ENV || process.env.NODE_ENV || "production").toLowerCase();
 const AI_EXPERIMENTS_ENABLED = String(process.env.AI_EXPERIMENTS_ENABLED || "false").toLowerCase() === "true";
 const TEST_RETRIEVAL_FORCE_ENABLE = String(process.env.TEST_RETRIEVAL_FORCE_ENABLE || "false").toLowerCase() === "true";
 const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS || "")
@@ -507,7 +510,19 @@ async function extractProviderAttachmentText({ safePath, mimeType, originalName 
   }
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY);
+if (!SUPABASE_URL) {
+  throw new Error("Missing SUPABASE_URL environment variable");
+}
+
+if (!SUPABASE_KEY) {
+  throw new Error("Missing Supabase key. Set SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, or SUPABASE_ANON_KEY.");
+}
+
+if (!OPENAI_API_KEY) {
+  throw new Error("Missing OPENAI_API_KEY environment variable");
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 const TEST_LIKE_ENVS = new Set(["test", "testing", "staging", "development", "dev"]);
 const IS_TEST_MODE = TEST_LIKE_ENVS.has(APP_ENV);
