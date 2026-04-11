@@ -23,6 +23,17 @@ APP_ENV=live
 
 `SUPABASE_SERVICE_ROLE_KEY` is recommended. Backward-compatible fallbacks are also supported: `SUPABASE_SECRET_KEY`, then `SUPABASE_ANON_KEY`.
 
+### Render quick setup
+
+Set these in Render Environment:
+
+```bash
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+OPENAI_API_KEY=
+APP_ENV=live
+```
+
 - `APP_ENV`:
   - `production` (default): always safe controlled mode (no AI experiments).
   - `staging` / `test` / `development`: eligible for experiment mode.
