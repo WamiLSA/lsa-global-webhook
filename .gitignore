@@ -3,19 +3,28 @@
 
 # Safety-critical backup and local data protections
 backups/
+/backups/
 backups/manual/
+/backups/manual/
 backups/**/*.sql
+/backups/**/*.sql
 backups/**/*.tar.gz
+/backups/**/*.tar.gz
 backups/**/*.sha256
+/backups/**/*.sha256
 *.sql
 *.dump
 *.backup
 .env
 .env.*
 local-uploads/
+/local-uploads/
 uploads/
+/uploads/
 provider-documents/
+/provider-documents/
 client-documents/
+/client-documents/
 
 # Local runtime uploads
 /uploads/
