@@ -87,6 +87,25 @@ jobs:
             return 1
           }
 
+          has_secret_print_command() {
+            local file="$1"
+            if [[ ! -f "$file" ]]; then
+              return 1
+            fi
+
+            grep -Eq '^[[:space:]]*(echo|printf)\b.*(^|[^\\])\$SUPABASE_DB_URL([^[:alnum:]_]|$)' "$file" \
+              || grep -Eq '^[[:space:]]*(echo|printf)\b.*(^|[^\\])\$\{SUPABASE_DB_URL\}' "$file"
+          }
+
+          has_apparent_connection_string_print_command() {
+            local file="$1"
+            if [[ ! -f "$file" ]]; then
+              return 1
+            fi
+
+            grep -Eq '^[[:space:]]*(echo|printf)\b.*postgres(ql)?://' "$file"
+          }
+
           WARNINGS=()
           CRITICAL_FAILURES=()
 
@@ -166,10 +185,7 @@ jobs:
             pass "Workflow does not enable shell xtrace."
           fi
 
-          if has_any_line "$WORKFLOW_FILE" \
-            'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
-            'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
-            'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
+          if has_secret_print_command "$WORKFLOW_FILE"; then
             fail_critical "Workflow appears to print the database backup secret variable."
           else
             pass "Workflow does not print the database backup secret variable."
@@ -181,22 +197,15 @@ jobs:
             pass "Backup script does not enable shell xtrace."
           fi
 
-          if has_any_line scripts/supabase-manual-backup.sh \
-            'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
-            'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
-            'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
+          if has_secret_print_command scripts/supabase-manual-backup.sh; then
             fail_critical "Backup script appears to print the database backup secret variable."
           else
             pass "Backup script does not print the database backup secret variable."
           fi
 
-          if has_any_line "$WORKFLOW_FILE" \
-            'echo.*postgres(ql)?://' \
-            'printf[^[:alnum:]].*postgres(ql)?://' \
-            || has_any_line scripts/supabase-manual-backup.sh \
-            'echo.*postgres(ql)?://' \
-            'printf[^[:alnum:]].*postgres(ql)?://'; then
-            fail_critical "Workflow or backup script appears to print a database connection string."
+          if has_apparent_connection_string_print_command "$WORKFLOW_FILE" \
+            || has_apparent_connection_string_print_command scripts/supabase-manual-backup.sh; then
+            warn "Workflow or backup script appears to print a database connection string, but exposure could not be proven from static preflight checks."
           else
             pass "Workflow and backup script do not print database connection strings."
           fi
