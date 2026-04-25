@@ -10,10 +10,9 @@ This plan creates a **manual, production-safe backup** of the current Supabase P
   - a GitHub Actions Secret for CI/manual workflow execution.
 - Never paste database passwords into repository files, commits, or PR text.
 
-
 ## Critical safety notes (read before running)
-- Supabase database backups do **not** include Supabase Storage API objects themselves.
-- Storage objects, local uploads, document files, thumbnails, and provider documents must be backed up separately.
+- Supabase database SQL backups do **not** include Supabase Storage object binaries.
+- Storage objects, local uploads, document files, thumbnails, and provider/client documents must be backed up separately.
 - Do **not** commit real backup files to GitHub.
 - Do **not** expose `SUPABASE_DB_URL`.
 - Do **not** run a real production backup in a public repository.
@@ -33,11 +32,10 @@ supabase db dump --db-url "$SUPABASE_DB_URL" -f schema.sql
 supabase db dump --db-url "$SUPABASE_DB_URL" -f data.sql --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
 ```
 
-## Recommended execution (repo script)
-From repository root:
+## Recommended secure execution (repo script)
+From repository root, set `SUPABASE_DB_URL` **securely** (for example in a protected shell profile/session manager/CI secret vault), then run:
 
 ```bash
-export SUPABASE_DB_URL='postgresql://postgres.[PROJECT_REF]:[PASSWORD]@[HOST]:5432/postgres?sslmode=require'
 bash scripts/supabase-manual-backup.sh
 ```
 
@@ -84,8 +82,8 @@ order by table_name;
 The SQL dumps above **do not fully cover all operational assets**. Handle separately:
 
 1. **Storage objects / buckets**
-   - If Supabase Storage buckets are used, object files need separate export/sync.
-   - Bucket definitions may appear in DB metadata, but object binaries are not preserved by standard SQL table dumps in a restorable object-store form.
+   - Supabase Storage object files need separate export/sync from SQL dumps.
+   - Bucket metadata can appear in DB tables, but object binaries are not preserved by standard SQL table dumps.
 
 2. **Supabase Auth configuration / provider settings**
    - Auth users can appear in DB (`auth` schema), but dashboard-level Auth settings (providers, templates, external OAuth secrets, SMTP configs, redirect URLs, etc.) require separate configuration backup/documentation.
@@ -95,6 +93,10 @@ The SQL dumps above **do not fully cover all operational assets**. Handle separa
 
 4. **Non-DB application files used by this repo**
    - Provider and WhatsApp uploads are currently written to local filesystem paths under `uploads/` in this app and are not included by Supabase SQL dumps.
+
+## Operator workflow
+Use the dedicated operational checklist before executing the first production backup:
+- `docs/operations/first-real-backup-checklist.md`
 
 ## Operational cadence recommendation
 - Minimum: run manual backup before every production schema change.
