@@ -27,3 +27,8 @@ secrets/
 *.key
 *.p12
 *.pfx
+
+# Backup readiness artifacts (sensitive)
+/backups/automated/
+/backups/**/*.tar.gz
+/backups/**/*.sha256
