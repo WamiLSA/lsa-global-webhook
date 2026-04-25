@@ -910,6 +910,8 @@ const SUB_VARIANT_KEYWORDS = {
   intensive: ["intensive", "intensif", "intensivo", "intensiva", "immersion"],
   online: ["online", "remote", "distance", "virtual", "e learning", "elearning", "en ligne"],
   in_person: ["in person", "in-person", "onsite", "on site", "presentiel", "présentiel", "face to face"],
+  private: ["private", "one to one", "one-to-one", "individual", "cours particulier", "privado", "privé"],
+  group: ["group", "group class", "small group", "collective", "collectif", "grupo"],
   beginner: ["beginner", "debutant", "débutant", "a1", "starter", "intro"],
   advanced: ["advanced", "avance", "avancé", "expert", "c1", "c2"]
 };
@@ -1241,7 +1243,7 @@ const FIELD_EXTRACTION_RULES = {
   }
 };
 
-const STRICT_FIELD_ONLY_INTENTS = new Set(["fees", "duration", "schedule", "levels", "registration"]);
+const STRICT_FIELD_ONLY_INTENTS = new Set(["fees", "duration", "schedule", "levels", "registration", "location", "certification", "requirements"]);
 
 function hasStrongFieldSignal(line, intent) {
   const rule = FIELD_EXTRACTION_RULES[intent];
@@ -3094,6 +3096,19 @@ function classifyRetrievalQuestionScope({ text, resolvedIntent }) {
   return "neutral";
 }
 
+function classifyRetrievalDiscipline({
+  text = "",
+  resolvedIntent = null,
+  explicitSubVariant = false,
+  detectedEntity = null
+}) {
+  if (resolvedIntent && explicitSubVariant) return "narrow_field_sub_variant";
+  if (resolvedIntent) return "narrow_field";
+  if (isVagueCustomerMessage(text)) return "ambiguous";
+  if (isBroadServiceQuestion(text) || detectedEntity) return "broad_topic";
+  return "ambiguous";
+}
+
 function buildBroadOverviewFromMatches({ retrievalResult, language = "en", maxItems = 4 }) {
   const matches = retrievalResult?.matches || [];
   if (!matches.length) return "";
@@ -3114,7 +3129,8 @@ function buildBroadOverviewFromMatches({ retrievalResult, language = "en", maxIt
         .join(" ")
         .replace(/\s+/g, " ")
         .slice(0, 120);
-      return compact ? `• ${compact}` : null;
+      const title = (match?.title || "").trim();
+      return compact ? `• ${title ? `${title}: ` : ""}${compact}` : null;
     })
     .filter(Boolean);
 
@@ -3129,12 +3145,12 @@ function buildBroadOverviewFromMatches({ retrievalResult, language = "en", maxIt
     en: `Here is a quick overview of ${topic}:`
   };
   const outro = {
-    fr: "Si vous voulez un point précis (tarif, durée, horaires, lieu, inscription, etc.), dites-le.",
-    es: "Si desea un punto preciso (precio, duración, horario, ubicación, inscripción, etc.), indíquelo.",
-    it: "Se desidera un punto preciso (prezzo, durata, orari, sede, iscrizione, ecc.), me lo dica.",
-    pt: "Se quiser um ponto específico (preço, duração, horários, local, inscrição, etc.), diga-me.",
-    de: "Wenn Sie einen genauen Punkt möchten (Preis, Dauer, Zeitplan, Ort, Anmeldung usw.), sagen Sie es mir.",
-    en: "If you want one precise point (fee, duration, schedule, location, registration, etc.), tell me."
+    fr: "Précisez un seul point (tarif, durée, horaires, lieu, inscription, etc.) pour une réponse ciblée.",
+    es: "Indique un solo punto (precio, duración, horario, ubicación, inscripción, etc.) para una respuesta precisa.",
+    it: "Indichi un solo punto (prezzo, durata, orari, sede, iscrizione, ecc.) per una risposta mirata.",
+    pt: "Indique apenas um ponto (preço, duração, horários, local, inscrição, etc.) para uma resposta precisa.",
+    de: "Nennen Sie bitte genau einen Punkt (Preis, Dauer, Zeitplan, Ort, Anmeldung usw.) für eine gezielte Antwort.",
+    en: "Please specify one point (fee, duration, schedule, location, registration, etc.) for a focused answer."
   };
   const safeLanguage = intro[language] ? language : "en";
   return [intro[safeLanguage], ...bullets, outro[safeLanguage]].join("\n");
@@ -3481,6 +3497,12 @@ app.post("/webhook", async (req, res) => {
         .filter(Boolean),
         currentCourseLanguage
       );
+      const retrievalDiscipline = classifyRetrievalDiscipline({
+        text,
+        resolvedIntent,
+        explicitSubVariant: Boolean(subVariantDecision.explicit),
+        detectedEntity: retrievalResult.entity || retrievalResult.entity_domain || userState.topicEntity || null
+      });
       console.log("[retrieval-discipline-debug]", JSON.stringify({
         detected_topic_entity: retrievalResult.entity || userState.topicEntity || null,
         detected_topic_domain: retrievalResult.entity_domain || userState.topicDomain || null,
@@ -3488,6 +3510,7 @@ app.post("/webhook", async (req, res) => {
         detected_sub_variant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null,
         correction_override_applied: Boolean(retrievalResult.correction_override_applied || subVariantDecision.correctionOverrideApplied),
         question_scope: questionScope,
+        broad_narrow_classification: retrievalDiscipline,
         candidate_count: retrievalResult.matches.length,
         selected_topic_title: retrievalResult.matches?.[0]?.title || null,
         selected_kb_source: retrievalResult.matches?.[0]?.source || null
@@ -3660,15 +3683,16 @@ app.post("/webhook", async (req, res) => {
             topicLabel: userState.topicLabel || null,
             topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
-        } else if (broadMessage && retrievalResult.matches.length) {
-          selectedRoutingBranch = "test_retrieval_clarify";
-          routingReason = "broad_query_clarification_required";
-          reply = getLocalizedClarifyingQuestion(detectedLanguage, {
-            topic: detectClarificationTopic({ text, retrievalResult, userState }),
-            intent: resolvedIntent
+        } else if (retrievalDiscipline === "broad_topic" && retrievalResult.matches.length) {
+          selectedRoutingBranch = "test_retrieval_broad_summary";
+          routingReason = "broad_topic_structured_summary";
+          reply = buildBroadOverviewFromMatches({
+            retrievalResult,
+            language: detectedLanguage,
+            maxItems: 3
           });
           setCustomerState(from, {
-            clarifyingAsked: true,
+            clarifyingAsked: false,
             preferredCourseLanguage: currentCourseLanguage,
             topicType: currentCourseLanguage ? "language_course" : userState.topicType,
             topicLanguage: currentCourseLanguage || userState.topicLanguage,
@@ -3678,9 +3702,26 @@ app.post("/webhook", async (req, res) => {
             topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
             topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
           });
-        } else if (broadMessage && !retrievalResult.matches.length) {
+        } else if ((retrievalDiscipline === "ambiguous" || broadMessage) && !retrievalResult.matches.length) {
           selectedRoutingBranch = "test_retrieval_clarify";
-          routingReason = "broad_query_no_matches";
+          routingReason = retrievalDiscipline === "ambiguous" ? "ambiguous_query_narrowing_required" : "broad_query_no_matches";
+          reply = getLocalizedClarifyingQuestion(detectedLanguage, {
+            topic: detectClarificationTopic({ text, retrievalResult, userState }),
+            intent: resolvedIntent
+          });
+          setCustomerState(from, {
+            clarifyingAsked: true,
+            preferredCourseLanguage: currentCourseLanguage,
+            topicType: currentCourseLanguage ? "language_course" : userState.topicType,
+            topicLanguage: currentCourseLanguage || userState.topicLanguage,
+            topicIntent: retrievalResult.intent || userState.topicIntent || null,
+            topicDomain: retrievalResult.entity_domain || userState.topicDomain || null,
+            topicLabel: retrievalResult.matches?.[0]?.title || userState.topicLabel || null,
+            topicSubVariant: retrievalResult.sub_variant || subVariantDecision.subVariant || userState.topicSubVariant || null
+          });
+        } else if (retrievalDiscipline === "ambiguous") {
+          selectedRoutingBranch = "test_retrieval_clarify";
+          routingReason = "ambiguous_query_narrowing_required";
           reply = getLocalizedClarifyingQuestion(detectedLanguage, {
             topic: detectClarificationTopic({ text, retrievalResult, userState }),
             intent: resolvedIntent
