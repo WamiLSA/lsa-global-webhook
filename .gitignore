@@ -1,9 +1,29 @@
+# Dependencies
+/node_modules/
+
 # Local runtime uploads
 /uploads/
 
 # Supabase manual backup outputs (sensitive)
 /backups/manual/
 
-# Local environment files
+# SQL dump artifacts (never commit)
+roles.sql
+schema.sql
+data.sql
+*.dump
+*.sql.gz
+
+# Local environment files and secrets
 .env
 .env.*
+*.env
+*.secret
+*.secrets
+secrets/
+
+# Certificate and private key material
+*.pem
+*.key
+*.p12
+*.pfx
