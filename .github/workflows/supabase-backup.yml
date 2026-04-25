@@ -149,28 +149,57 @@ jobs:
             has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE" || fail "Backup branch logic missing."
             has_line 'scripts/supabase-manual-backup\.sh' "$WORKFLOW_FILE" || fail "Backup script execution logic missing from workflow."
             has_line 'sha256sum' "$WORKFLOW_FILE" || warn "Checksum logic not detected. Backup evidence quality may be reduced."
-            has_line 'SUPABASE_DB_URL' "$WORKFLOW_FILE" || fail "SUPABASE_DB_URL handling missing from workflow."
+            has_line 'secrets\.SUPABASE_DB_URL' "$WORKFLOW_FILE" || fail "Required database backup secret handling is missing from workflow."
             has_line "Validate required secret is configured" "$WORKFLOW_FILE" || fail "Backup secret validation step missing."
             pass "Workflow backup mode logic validation completed."
           fi
 
-          if has_line 'echo .*SUPABASE_DB_URL' "$WORKFLOW_FILE"; then
-            fail "Workflow appears to echo SUPABASE_DB_URL in logs."
+          if has_line '(^|[[:space:]])set -x([[:space:]]|$)' "$WORKFLOW_FILE"; then
+            fail "Workflow contains shell xtrace (set -x), which can leak sensitive runtime data."
           else
-            pass "Workflow does not echo SUPABASE_DB_URL."
+            pass "Workflow does not enable shell xtrace."
           fi
 
-          if has_line 'echo .*SUPABASE_DB_URL' scripts/supabase-manual-backup.sh; then
-            fail "Backup script appears to echo SUPABASE_DB_URL in logs."
+          if has_any_line "$WORKFLOW_FILE" \
+            'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
+            'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
+            'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
+            fail "Workflow appears to print the database backup secret variable."
           else
-            pass "Backup script does not echo SUPABASE_DB_URL."
+            pass "Workflow does not print the database backup secret variable."
+          fi
+
+          if has_line '(^|[[:space:]])set -x([[:space:]]|$)' scripts/supabase-manual-backup.sh; then
+            fail "Backup script contains shell xtrace (set -x), which can leak sensitive runtime data."
+          else
+            pass "Backup script does not enable shell xtrace."
+          fi
+
+          if has_any_line scripts/supabase-manual-backup.sh \
+            'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
+            'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
+            'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
+            fail "Backup script appears to print the database backup secret variable."
+          else
+            pass "Backup script does not print the database backup secret variable."
+          fi
+
+          if has_any_line "$WORKFLOW_FILE" \
+            'echo.*postgres(ql)?://' \
+            'printf[^[:alnum:]].*postgres(ql)?://' \
+            || has_any_line scripts/supabase-manual-backup.sh \
+            'echo.*postgres(ql)?://' \
+            'printf[^[:alnum:]].*postgres(ql)?://'; then
+            fail "Workflow or backup script appears to print a database connection string."
+          else
+            pass "Workflow and backup script do not print database connection strings."
           fi
 
           if has_line 'SUPABASE_DB_URL: \${\{ secrets\.SUPABASE_DB_URL \}\}' "$WORKFLOW_FILE" \
              && has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE"; then
-            pass "SUPABASE_DB_URL is scoped to backup mode."
+            pass "Database backup secret is scoped to backup mode."
           else
-            fail "SUPABASE_DB_URL scope is unsafe or missing."
+            fail "Database backup secret scope is unsafe or missing."
           fi
 
           STATUS="PASS"
@@ -215,8 +244,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
-            echo "FAIL: SUPABASE_DB_URL is not configured in GitHub Secrets."
-            echo "Set SUPABASE_DB_URL first, then re-run this workflow in backup mode."
+            echo "FAIL: Required database backup secret is missing."
+            echo "Set the required database backup secret in GitHub Secrets, then re-run this workflow in backup mode."
             exit 1
           fi
           echo "PASS: Required secret detected (value hidden)."
