@@ -82,7 +82,13 @@ jobs:
             if [[ -x scripts/supabase-manual-backup.sh ]]; then
               pass "Backup script is executable."
             else
-              warn "Backup script is not executable in git metadata. CI can still run chmod +x safely before backup mode."
+              TMP_SCRIPT="${RUNNER_TEMP}/supabase-manual-backup-preflight.sh"
+              cp scripts/supabase-manual-backup.sh "$TMP_SCRIPT"
+              if chmod +x "$TMP_SCRIPT"; then
+                pass "Backup script is not executable in git metadata, but CI can make it executable safely."
+              else
+                fail "Backup script is not executable and CI could not apply chmod safely."
+              fi
             fi
           fi
 
@@ -100,12 +106,20 @@ jobs:
           if [[ ! -f .gitignore ]]; then
             fail ".gitignore file is missing."
           else
-            has_line '^/backups/manual/$' .gitignore || fail ".gitignore missing /backups/manual/ protection."
-            has_line '^/backups/automated/$' .gitignore || fail ".gitignore missing /backups/automated/ protection."
-            has_line '^/uploads/$' .gitignore || fail ".gitignore missing /uploads/ protection."
-            has_line '^/data/$' .gitignore || warn ".gitignore missing /data/ local data protection."
+            has_line '^backups/$' .gitignore || fail ".gitignore missing backups/ protection."
+            has_line '^backups/manual/$' .gitignore || fail ".gitignore missing backups/manual/ protection."
+            has_line '^backups/\*\*/\*\.sql$' .gitignore || fail ".gitignore missing backups/**/*.sql protection."
+            has_line '^backups/\*\*/\*\.tar\.gz$' .gitignore || fail ".gitignore missing backups/**/*.tar.gz protection."
+            has_line '^backups/\*\*/\*\.sha256$' .gitignore || fail ".gitignore missing backups/**/*.sha256 protection."
+            has_line '^\*\.sql$' .gitignore || fail ".gitignore missing *.sql protection."
+            has_line '^\*\.dump$' .gitignore || fail ".gitignore missing *.dump protection."
+            has_line '^\*\.backup$' .gitignore || fail ".gitignore missing *.backup protection."
             has_line '^\.env$' .gitignore || fail ".gitignore missing .env protection."
             has_line '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
+            has_line '^local-uploads/$' .gitignore || fail ".gitignore missing local-uploads/ protection."
+            has_line '^uploads/$' .gitignore || fail ".gitignore missing uploads/ protection."
+            has_line '^provider-documents/$' .gitignore || fail ".gitignore missing provider-documents/ protection."
+            has_line '^client-documents/$' .gitignore || fail ".gitignore missing client-documents/ protection."
             pass ".gitignore validation completed."
           fi
 

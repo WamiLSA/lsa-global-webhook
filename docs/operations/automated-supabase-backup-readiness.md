@@ -111,6 +111,8 @@ Preflight checks validate only safe readiness conditions:
 
 Preflight does **not** connect to Supabase, does **not** run SQL dumps, and does **not** create real backup files.
 
+**Operational note:** A preflight failure does **not** mean the live app or Supabase database is broken; it means backup-readiness checks need correction.
+
 ---
 
 ## How to enable / disable weekly schedule
