@@ -98,6 +98,8 @@ The SQL dumps above **do not fully cover all operational assets**. Handle separa
 Use the dedicated operational checklist before executing the first production backup:
 - `docs/operations/first-real-backup-checklist.md`
 
+For CI readiness validation, use workflow preflight mode first. Preflight is a dry-run validation only and must not require `SUPABASE_DB_URL`, must not connect to Supabase, and must not create real dump files.
+
 ## Operational cadence recommendation
 - Minimum: run manual backup before every production schema change.
 - Recommended: weekly full manual backup + pre-release backup.

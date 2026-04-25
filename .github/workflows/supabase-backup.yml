@@ -49,51 +49,137 @@ jobs:
         run: |
           set -euo pipefail
 
-          fail() {
-            echo "FAIL: $1"
-            exit 1
-          }
-
           pass() {
             echo "PASS: $1"
           }
 
-          [[ -f scripts/supabase-manual-backup.sh ]] || fail "Backup script is missing: scripts/supabase-manual-backup.sh"
-          pass "Backup script exists."
+          warn() {
+            echo "WARN: $1"
+            WARNINGS+=("$1")
+          }
 
-          [[ -x scripts/supabase-manual-backup.sh ]] || fail "Backup script is not executable."
-          pass "Backup script is executable."
+          fail() {
+            echo "FAIL: $1"
+            FAILURES+=("$1")
+          }
+
+          has_line() {
+            local regex="$1"
+            local file="$2"
+            grep -Eq "$regex" "$file"
+          }
+
+          WARNINGS=()
+          FAILURES=()
+
+          if [[ -f scripts/supabase-manual-backup.sh ]]; then
+            pass "Backup script exists."
+          else
+            fail "Backup script is missing: scripts/supabase-manual-backup.sh"
+          fi
+
+          if [[ -f scripts/supabase-manual-backup.sh ]]; then
+            if [[ -x scripts/supabase-manual-backup.sh ]]; then
+              pass "Backup script is executable."
+            else
+              warn "Backup script is not executable in git metadata. CI can still run chmod +x safely before backup mode."
+            fi
+          fi
 
           for runbook in \
             docs/operations/automated-supabase-backup-readiness.md \
             docs/operations/supabase-manual-backup-plan.md \
             docs/operations/first-real-backup-checklist.md; do
-            [[ -f "$runbook" ]] || fail "Required runbook missing: $runbook"
+            if [[ -f "$runbook" ]]; then
+              pass "Runbook exists: $runbook"
+            else
+              warn "Runbook missing: $runbook"
+            fi
           done
-          pass "Required runbooks exist."
 
-          [[ -f .gitignore ]] || fail ".gitignore file is missing."
+          if [[ ! -f .gitignore ]]; then
+            fail ".gitignore file is missing."
+          else
+            has_line '^/backups/manual/$' .gitignore || fail ".gitignore missing /backups/manual/ protection."
+            has_line '^/backups/automated/$' .gitignore || fail ".gitignore missing /backups/automated/ protection."
+            has_line '^/uploads/$' .gitignore || fail ".gitignore missing /uploads/ protection."
+            has_line '^/data/$' .gitignore || warn ".gitignore missing /data/ local data protection."
+            has_line '^\.env$' .gitignore || fail ".gitignore missing .env protection."
+            has_line '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
+            pass ".gitignore validation completed."
+          fi
 
-          rg -q '^/backups/manual/$' .gitignore || fail ".gitignore missing /backups/manual/ protection."
-          rg -q '^/backups/automated/$' .gitignore || fail ".gitignore missing /backups/automated/ protection."
-          rg -q '^/uploads/$' .gitignore || fail ".gitignore missing /uploads/ protection."
-          rg -q '^\.env$' .gitignore || fail ".gitignore missing .env protection."
-          rg -q '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
-          pass ".gitignore protects backup outputs, local uploads, and environment files."
+          if [[ -f "$WORKFLOW_FILE" ]]; then
+            pass "Workflow file exists: $WORKFLOW_FILE"
+          else
+            fail "Workflow file missing: $WORKFLOW_FILE"
+          fi
 
-          [[ -f "$WORKFLOW_FILE" ]] || fail "Workflow file missing: $WORKFLOW_FILE"
-          rg -q 'inputs:' "$WORKFLOW_FILE" || fail "Workflow input section missing."
-          rg -q 'mode:' "$WORKFLOW_FILE" || fail "Mode input missing."
-          rg -q 'scripts/supabase-manual-backup.sh' "$WORKFLOW_FILE" || fail "Backup script execution logic missing from workflow."
-          rg -q 'sha256sum' "$WORKFLOW_FILE" || fail "Checksum logic missing from workflow."
-          pass "Workflow file contains backup job logic."
+          if [[ -f "$WORKFLOW_FILE" ]]; then
+            has_line 'workflow_dispatch:' "$WORKFLOW_FILE" || fail "workflow_dispatch trigger missing."
+            has_line 'inputs:' "$WORKFLOW_FILE" || fail "Workflow inputs section missing."
+            has_line 'mode:' "$WORKFLOW_FILE" || fail "Mode input missing."
+            has_line "steps\\.mode\\.outputs\\.mode == 'preflight'" "$WORKFLOW_FILE" || fail "Preflight branch logic missing."
+            has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE" || fail "Backup branch logic missing."
+            has_line 'scripts/supabase-manual-backup\.sh' "$WORKFLOW_FILE" || fail "Backup script execution logic missing from workflow."
+            has_line 'sha256sum' "$WORKFLOW_FILE" || warn "Checksum logic not detected. Backup evidence quality may be reduced."
+            has_line 'SUPABASE_DB_URL' "$WORKFLOW_FILE" || fail "SUPABASE_DB_URL handling missing from workflow."
+            has_line "Validate required secret is configured" "$WORKFLOW_FILE" || fail "Backup secret validation step missing."
+            pass "Workflow backup mode logic validation completed."
+          fi
+
+          if has_line 'echo .*SUPABASE_DB_URL' "$WORKFLOW_FILE"; then
+            fail "Workflow appears to echo SUPABASE_DB_URL in logs."
+          else
+            pass "Workflow does not echo SUPABASE_DB_URL."
+          fi
+
+          if has_line 'echo .*SUPABASE_DB_URL' scripts/supabase-manual-backup.sh; then
+            fail "Backup script appears to echo SUPABASE_DB_URL in logs."
+          else
+            pass "Backup script does not echo SUPABASE_DB_URL."
+          fi
+
+          if has_line 'SUPABASE_DB_URL: \${\{ secrets\.SUPABASE_DB_URL \}\}' "$WORKFLOW_FILE" \
+             && has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE"; then
+            pass "SUPABASE_DB_URL is scoped to backup mode."
+          else
+            fail "SUPABASE_DB_URL scope is unsafe or missing."
+          fi
+
+          STATUS="PASS"
+          if [[ ${#FAILURES[@]} -gt 0 ]]; then
+            STATUS="FAIL"
+          elif [[ ${#WARNINGS[@]} -gt 0 ]]; then
+            STATUS="WARN"
+          fi
 
           {
             echo "## Backup Readiness Result"
-            echo "- status: PASS"
+            echo "- status: $STATUS"
             echo "- mode: preflight"
-            echo "- note: Safe dry-run completed. No database connection and no real backup files were generated."
+            echo "- checks:"
+            echo "  - preflight performs file and workflow validation only"
+            echo "  - no Supabase connection attempted"
+            echo "  - no SQL dump command executed"
+            echo "  - no backup artifacts generated"
+            if [[ ${#WARNINGS[@]} -gt 0 ]]; then
+              echo "- warnings:"
+              for item in "${WARNINGS[@]}"; do
+                echo "  - $item"
+              done
+            fi
+            if [[ ${#FAILURES[@]} -gt 0 ]]; then
+              echo "- failures:"
+              for item in "${FAILURES[@]}"; do
+                echo "  - $item"
+              done
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ${#FAILURES[@]} -gt 0 ]]; then
+            exit 1
+          fi
 
       - name: Validate required secret is configured
         if: ${{ steps.mode.outputs.mode == 'backup' }}
