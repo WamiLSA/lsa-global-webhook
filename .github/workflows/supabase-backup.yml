@@ -1,0 +1,157 @@
+name: Supabase Backup Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_backup:
+        description: "Run backup readiness now"
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    # Weekly Sunday 03:30 UTC. Disable by removing this block or setting this workflow inactive.
+    - cron: "30 3 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  backup-readiness:
+    name: Backup Readiness Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secret is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
+            echo "FAIL: SUPABASE_DB_URL is not configured in GitHub Secrets."
+            echo "Set SUPABASE_DB_URL first, then re-run this workflow."
+            exit 1
+          fi
+          echo "PASS: Required secret detected (value hidden)."
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare temporary backup directory
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +"%Y%m%dT%H%M%SZ")"
+          BACKUP_DIR="${RUNNER_TEMP}/supabase-backup-${TS}"
+          ARCHIVE="${RUNNER_TEMP}/supabase-backup-${TS}.tar.gz"
+          REPORT="${RUNNER_TEMP}/supabase-backup-report-${TS}.txt"
+          CHECKSUMS="${RUNNER_TEMP}/supabase-backup-${TS}.sha256"
+          mkdir -p "$BACKUP_DIR"
+          {
+            echo "timestamp=$TS"
+            echo "backup_dir=$BACKUP_DIR"
+            echo "archive_path=$ARCHIVE"
+            echo "report_path=$REPORT"
+            echo "checksums_path=$CHECKSUMS"
+          } >> "$GITHUB_OUTPUT"
+          echo "PASS: Temporary backup workspace created in runner temp storage."
+
+      - name: Run backup script
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/supabase-manual-backup.sh
+          SUPABASE_BACKUP_DIR="${{ steps.prep.outputs.backup_dir }}" ./scripts/supabase-manual-backup.sh
+          echo "PASS: Backup script completed."
+
+      - name: Validate expected files exist
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKUP_DIR="${{ steps.prep.outputs.backup_dir }}"
+          for file in roles.sql schema.sql data.sql; do
+            if [[ ! -s "$BACKUP_DIR/$file" ]]; then
+              echo "FAIL: Missing or empty backup file: $file"
+              exit 1
+            fi
+          done
+          echo "PASS: roles.sql, schema.sql, and data.sql were generated."
+
+      - name: Build archive and checksums
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKUP_DIR="${{ steps.prep.outputs.backup_dir }}"
+          ARCHIVE_PATH="${{ steps.prep.outputs.archive_path }}"
+          CHECKSUMS_PATH="${{ steps.prep.outputs.checksums_path }}"
+
+          tar -C "$(dirname "$BACKUP_DIR")" -czf "$ARCHIVE_PATH" "$(basename "$BACKUP_DIR")"
+
+          sha256sum \
+            "$BACKUP_DIR/roles.sql" \
+            "$BACKUP_DIR/schema.sql" \
+            "$BACKUP_DIR/data.sql" \
+            "$ARCHIVE_PATH" > "$CHECKSUMS_PATH"
+
+          echo "PASS: Archive and checksums created."
+
+      - name: Generate safe backup report
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="${{ steps.prep.outputs.timestamp }}"
+          BACKUP_DIR="${{ steps.prep.outputs.backup_dir }}"
+          ARCHIVE_PATH="${{ steps.prep.outputs.archive_path }}"
+          CHECKSUMS_PATH="${{ steps.prep.outputs.checksums_path }}"
+          REPORT_PATH="${{ steps.prep.outputs.report_path }}"
+
+          {
+            echo "Supabase Backup Readiness Report"
+            echo "timestamp_utc: $TS"
+            echo "git_commit_sha: ${GITHUB_SHA}"
+            echo
+            echo "files:"
+            for target in "$BACKUP_DIR/roles.sql" "$BACKUP_DIR/schema.sql" "$BACKUP_DIR/data.sql" "$ARCHIVE_PATH"; do
+              printf "- %s | %s bytes\n" "$(basename "$target")" "$(wc -c < "$target")"
+            done
+            echo
+            echo "sha256:"
+            while IFS= read -r line; do
+              file_name="$(basename "${line#* }")"
+              hash_value="${line%% *}"
+              printf "- %s | %s\n" "$file_name" "$hash_value"
+            done < "$CHECKSUMS_PATH"
+          } > "$REPORT_PATH"
+
+          cat "$REPORT_PATH"
+
+          {
+            echo "## Backup Readiness Result"
+            echo "- status: PASS"
+            echo "- timestamp_utc: $TS"
+            echo "- git_commit_sha: ${GITHUB_SHA}"
+            echo "- note: Real backup files remain in runner temp storage only and are not uploaded or committed."
+            echo ""
+            echo "### Safe Report"
+            cat "$REPORT_PATH"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Storage publishing policy (safe default)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PASS: Publishing disabled by default."
+          echo "No upload, no commit, and no external transfer occurs in this workflow."
+          echo "Enable publishing only after repository privacy and storage approval are explicitly confirmed."
