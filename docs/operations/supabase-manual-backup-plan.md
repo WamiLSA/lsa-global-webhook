@@ -10,6 +10,14 @@ This plan creates a **manual, production-safe backup** of the current Supabase P
   - a GitHub Actions Secret for CI/manual workflow execution.
 - Never paste database passwords into repository files, commits, or PR text.
 
+
+## Critical safety notes (read before running)
+- Supabase database backups do **not** include Supabase Storage API objects themselves.
+- Storage objects, local uploads, document files, thumbnails, and provider documents must be backed up separately.
+- Do **not** commit real backup files to GitHub.
+- Do **not** expose `SUPABASE_DB_URL`.
+- Do **not** run a real production backup in a public repository.
+
 ## Required backup outputs
 This backup must produce exactly:
 1. `roles.sql`
@@ -22,7 +30,7 @@ Use this exact official pattern (connection string injected from env var):
 ```bash
 supabase db dump --db-url "$SUPABASE_DB_URL" -f roles.sql --role-only
 supabase db dump --db-url "$SUPABASE_DB_URL" -f schema.sql
-supabase db dump --db-url "$SUPABASE_DB_URL" -f data.sql --use-copy --data-only
+supabase db dump --db-url "$SUPABASE_DB_URL" -f data.sql --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
 ```
 
 ## Recommended execution (repo script)

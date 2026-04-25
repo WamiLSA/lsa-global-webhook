@@ -31,7 +31,7 @@ echo "Starting Supabase backup into: $BACKUP_DIR"
 # Official command pattern.
 supabase db dump --db-url "$SUPABASE_DB_URL" -f "$ROLES_FILE" --role-only
 supabase db dump --db-url "$SUPABASE_DB_URL" -f "$SCHEMA_FILE"
-supabase db dump --db-url "$SUPABASE_DB_URL" -f "$DATA_FILE" --use-copy --data-only
+supabase db dump --db-url "$SUPABASE_DB_URL" -f "$DATA_FILE" --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
 
 # Basic sanity checks.
 for f in "$ROLES_FILE" "$SCHEMA_FILE" "$DATA_FILE"; do
