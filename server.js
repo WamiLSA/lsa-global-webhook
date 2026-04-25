@@ -1705,45 +1705,124 @@ function detectServiceLanguages(text = "") {
   return found;
 }
 
+function normalizeLiveDomain(menuOption) {
+  const normalized = normalizeForIntent(menuOption || "");
+  if (!normalized) return "";
+  if (["courses", "course", "language_course", "exam_prep"].includes(normalized)) return "courses";
+  if (["translation", "translations", "certified_translation"].includes(normalized)) return "translation";
+  if (["interpreting", "interpretation", "interpreter"].includes(normalized)) return "interpreting";
+  if (["registration", "enrollment", "enrolment"].includes(normalized)) return "registration";
+  if (["location", "address", "branch", "office", "contact"].includes(normalized)) return "location";
+  if (["certificate", "certificates", "attestation", "verification"].includes(normalized)) return "certificates";
+  if (["policy", "policies", "refund", "support"].includes(normalized)) return "policy";
+  return "";
+}
+
+function detectLiveDomainTopic(text = "", state = {}) {
+  const fromState = normalizeLiveDomain(state?.liveMenuOption || state?.topicDomain || "");
+  if (fromState) return fromState;
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return "";
+  if (/\b(course|courses|cours|curso|corsi|corso|class|formation|language training|exam prep|ielts|toefl|tef|toeic)\b/.test(normalized)) return "courses";
+  if (/\b(translation|traduction|traduccion|traduzione|translate|certified translation|sworn translation|localized|localization|editing|proofreading|writing)\b/.test(normalized)) return "translation";
+  if (/\b(interpreting|interpretation|interpreter|interpretariat|interpretazione|interprétation|dolmetsch)\b/.test(normalized)) return "interpreting";
+  if (/\b(register|registration|enroll|enrollment|inscription|admission|apply)\b/.test(normalized)) return "registration";
+  if (/\b(location|address|branch|office|campus|city|country|where are you|contact)\b/.test(normalized)) return "location";
+  if (/\b(certificate|certification|attestation|verification|verify|proof)\b/.test(normalized)) return "certificates";
+  if (/\b(policy|refund|absence|support|help|issue|problem|partner|provider)\b/.test(normalized)) return "policy";
+  return "";
+}
+
 function extractLiveClarificationSlots(menuOption, text = "", state = {}) {
+  const resolvedDomain = normalizeLiveDomain(menuOption) || detectLiveDomainTopic(text, state);
   const priorSlots = state?.liveKnownSlots || {};
   const normalized = normalizeForIntent(text);
   const slots = { ...priorSlots };
   if (!normalized) return slots;
 
-  if (menuOption === "courses") {
+  if (resolvedDomain === "courses") {
     const language = detectCourseLanguageMention(text) || priorSlots.language || null;
     const levelMatch = normalized.match(/\b(a1|a2|b1|b2|c1|c2|beginner|debutant|débutant|intermediate|advanced)\b/i);
     const variantDetection = detectRequestedSubVariant(text, { topicSubVariant: priorSlots.course_variant || null });
     const formatMatch = normalized.match(/\b(online|in person|in-person|onsite|on site|presentiel|présentiel|private|prive|privé|intensive|intensif|standard)\b/i);
+    const pricingIntent = /\b(price|pricing|fees|fee|prix|precio|prezzo|tarif)\b/i.test(normalized);
+    const durationIntent = /\b(duration|duree|durée|duracion|duración|durata|how long|length)\b/i.test(normalized);
+    const scheduleIntent = /\b(schedule|horaire|horario|orario|time|timetable)\b/i.test(normalized);
     slots.language = language;
     if (levelMatch) slots.level = levelMatch[1].toLowerCase();
     if (formatMatch) slots.format = formatMatch[1].toLowerCase();
     if (variantDetection?.subVariant) slots.course_variant = variantDetection.subVariant;
+    if (pricingIntent) slots.pricing_intent = "true";
+    if (durationIntent) slots.duration_intent = "true";
+    if (scheduleIntent) slots.schedule_intent = "true";
     return slots;
   }
 
-  if (menuOption === "translation") {
+  if (resolvedDomain === "translation") {
     const languages = detectServiceLanguages(text);
     const dateMatch = normalized.match(/\b(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow|aujourd hui|demain)\b/i);
-    const docMatch = normalized.match(/\b(passport|contract|certificate|transcript|birth certificate|document|pdf|docx?)\b/i);
+    const docMatch = normalized.match(/\b(passport|contract|certificate|transcript|birth certificate|diploma|degree|marriage certificate|bank statement|invoice|document|pdf|docx?)\b/i);
+    const pageMatch = normalized.match(/\b(\d{1,3})\s*(pages?|p|pp)\b/i);
     if (languages.length >= 2) slots.language_pair = `${languages[0]}-${languages[1]}`;
     if (docMatch) slots.document_type = docMatch[1].toLowerCase();
     if (dateMatch) slots.deadline = dateMatch[1].toLowerCase();
+    if (pageMatch) slots.pages = pageMatch[1];
     return slots;
   }
 
-  if (menuOption === "interpreting") {
+  if (resolvedDomain === "interpreting") {
     const languages = detectServiceLanguages(text);
     const formatMatch = normalized.match(/\b(online|on site|onsite|in person|in-person|presentiel|présentiel)\b/i);
     const dateMatch = normalized.match(/\b(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow|aujourd hui|demain)\b/i);
+    const durationMatch = normalized.match(/\b(\d{1,3}\s*(hours?|hrs?|h|minutes?|mins?))\b/i);
+    const locationMatch = normalized.match(/\b(in|at)\s+([a-z][a-z\s-]{1,40})\b/i);
     if (languages.length >= 2) slots.language_pair = `${languages[0]}-${languages[1]}`;
     if (formatMatch) slots.format = formatMatch[1].toLowerCase();
     if (dateMatch) slots.date = dateMatch[1].toLowerCase();
+    if (durationMatch) slots.duration = durationMatch[1].toLowerCase();
+    if (locationMatch?.[2]) slots.location = locationMatch[2].trim().toLowerCase();
+    return slots;
+  }
+
+  if (resolvedDomain === "registration") {
+    const examMatch = normalized.match(/\b(ielts|toefl|tef|toeic|delf|dalf|course|program|programme|translation|interpreting)\b/i);
+    if (examMatch) slots.program = examMatch[1].toLowerCase();
+    return slots;
+  }
+
+  if (resolvedDomain === "location") {
+    const branchMatch = normalized.match(/\b(uk|united kingdom|usa|united states|cameroon|douala|yaounde|london|new york)\b/i);
+    if (branchMatch) slots.location = branchMatch[1].toLowerCase();
+    return slots;
+  }
+
+  if (resolvedDomain === "certificates") {
+    const certMatch = normalized.match(/\b(certificate|attestation|verification|tef|ielts|toefl|training certificate)\b/i);
+    if (certMatch) slots.certificate_type = certMatch[1].toLowerCase();
+    return slots;
+  }
+
+  if (resolvedDomain === "policy") {
+    const policyMatch = normalized.match(/\b(refund|absence|payment|support|privacy|terms|complaint)\b/i);
+    if (policyMatch) slots.policy_type = policyMatch[1].toLowerCase();
     return slots;
   }
 
   return slots;
+}
+
+function getLiveDomainMissingSlots(domain, knownSlots = {}) {
+  const rules = {
+    courses: ["language", "level", "format"],
+    translation: ["language_pair", "document_type", "deadline"],
+    interpreting: ["language_pair", "date", "format"],
+    registration: ["program"],
+    location: ["location"],
+    certificates: ["certificate_type"],
+    policy: ["policy_type"]
+  };
+  const required = rules[domain] || [];
+  return required.filter((slot) => !knownSlots?.[slot]);
 }
 
 async function findCourseArticleByLanguage(requestedLanguage) {
@@ -2745,7 +2824,9 @@ function joinFieldsByLanguage(language, fields = []) {
 
 function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots = {}) {
   const language = normalizeLanguageCode(languageCode);
-  if (menuOption === "courses") {
+  const resolvedDomain = normalizeLiveDomain(menuOption) || "general";
+  const missingSlots = getLiveDomainMissingSlots(resolvedDomain, knownSlots);
+  if (resolvedDomain === "courses") {
     const fieldLabels = {
       en: { language: "language", level: "level", format: "format", course_variant: "course variant" },
       fr: { language: "la langue", level: "le niveau", format: "le format", course_variant: "la variante du cours" },
@@ -2754,7 +2835,7 @@ function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots 
       it: { language: "la lingua", level: "il livello", format: "il formato", course_variant: "la variante del corso" },
       pt: { language: "o idioma", level: "o nível", format: "o formato", course_variant: "a variante do curso" }
     };
-    const missing = ["language", "level", "format"].filter((field) => !knownSlots?.[field]);
+    const missing = missingSlots;
     if (!missing.length) {
       const completeByLanguage = {
         en: "Thank you. I have the required details. An advisor will confirm exact pricing and next steps.",
@@ -2796,6 +2877,111 @@ function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots 
     return responseByLanguage[language] || responseByLanguage.en;
   }
 
+  if (resolvedDomain === "translation") {
+    const byLanguage = {
+      en: {
+        language_pair: "For translation, which language pair do you need?",
+        document_type: "What document type is it?",
+        deadline: "What is your deadline?"
+      },
+      fr: {
+        language_pair: "Pour la traduction, quelle paire de langues souhaitez-vous ?",
+        document_type: "Quel type de document s’agit-il ?",
+        deadline: "Quelle est votre échéance ?"
+      },
+      es: {
+        language_pair: "Para traducción, ¿qué par de idiomas necesita?",
+        document_type: "¿Qué tipo de documento es?",
+        deadline: "¿Cuál es su plazo?"
+      },
+      de: {
+        language_pair: "Für die Übersetzung: Welches Sprachpaar benötigen Sie?",
+        document_type: "Um welchen Dokumenttyp handelt es sich?",
+        deadline: "Was ist Ihre Frist?"
+      },
+      it: {
+        language_pair: "Per la traduzione, quale coppia linguistica le serve?",
+        document_type: "Di quale tipo di documento si tratta?",
+        deadline: "Qual è la sua scadenza?"
+      },
+      pt: {
+        language_pair: "Para tradução, qual par de idiomas precisa?",
+        document_type: "Que tipo de documento é?",
+        deadline: "Qual é o seu prazo?"
+      }
+    };
+    const firstMissing = missingSlots[0];
+    if (firstMissing) return byLanguage[language]?.[firstMissing] || byLanguage.en[firstMissing];
+  }
+
+  if (resolvedDomain === "interpreting") {
+    const byLanguage = {
+      en: { language_pair: "For interpreting, which language pair do you need?", date: "For which date do you need interpreting?", format: "Do you need on-site or online interpreting?" },
+      fr: { language_pair: "Pour l’interprétation, quelle paire de langues souhaitez-vous ?", date: "Pour quelle date avez-vous besoin d’interprétation ?", format: "Souhaitez-vous une interprétation sur site ou en ligne ?" },
+      es: { language_pair: "Para interpretación, ¿qué par de idiomas necesita?", date: "¿Para qué fecha necesita la interpretación?", format: "¿Necesita interpretación presencial o en línea?" },
+      de: { language_pair: "Für Dolmetschen: Welches Sprachpaar benötigen Sie?", date: "Für welches Datum benötigen Sie Dolmetschen?", format: "Benötigen Sie Dolmetschen vor Ort oder online?" },
+      it: { language_pair: "Per l’interpretariato, quale coppia linguistica le serve?", date: "Per quale data le serve l’interpretariato?", format: "Le serve interpretariato in presenza o online?" },
+      pt: { language_pair: "Para interpretação, qual par de idiomas precisa?", date: "Para que data precisa de interpretação?", format: "Precisa de interpretação presencial ou online?" }
+    };
+    const firstMissing = missingSlots[0];
+    if (firstMissing) return byLanguage[language]?.[firstMissing] || byLanguage.en[firstMissing];
+  }
+
+  if (resolvedDomain === "registration" && missingSlots.includes("program")) {
+    return {
+      en: "Which program or exam do you want to register for?",
+      fr: "Pour quel programme ou examen souhaitez-vous vous inscrire ?",
+      es: "¿Para qué programa o examen desea inscribirse?",
+      de: "Für welches Programm oder welche Prüfung möchten Sie sich anmelden?",
+      it: "Per quale programma o esame desidera registrarsi?",
+      pt: "Para qual programa ou exame deseja se inscrever?"
+    }[language] || "Which program or exam do you want to register for?";
+  }
+
+  if (resolvedDomain === "location" && missingSlots.includes("location")) {
+    return {
+      en: "Which branch or country are you asking about?",
+      fr: "De quelle agence ou de quel pays parlez-vous ?",
+      es: "¿Sobre qué sede o país consulta?",
+      de: "Zu welchem Standort oder Land haben Sie eine Frage?",
+      it: "Di quale sede o paese sta parlando?",
+      pt: "Sobre qual filial ou país está a perguntar?"
+    }[language] || "Which branch or country are you asking about?";
+  }
+
+  if (resolvedDomain === "certificates" && missingSlots.includes("certificate_type")) {
+    return {
+      en: "Which certificate or attestation do you mean?",
+      fr: "De quel certificat ou de quelle attestation s’agit-il ?",
+      es: "¿A qué certificado o constancia se refiere?",
+      de: "Welches Zertifikat oder welchen Nachweis meinen Sie?",
+      it: "A quale certificato o attestazione si riferisce?",
+      pt: "A que certificado ou atestado se refere?"
+    }[language] || "Which certificate or attestation do you mean?";
+  }
+
+  if (resolvedDomain === "policy" && missingSlots.includes("policy_type")) {
+    return {
+      en: "Which policy topic do you need: refund, payment, absence, or support?",
+      fr: "Quel sujet de politique souhaitez-vous : remboursement, paiement, absence ou assistance ?",
+      es: "¿Qué política necesita: reembolso, pago, ausencia o soporte?",
+      de: "Welches Richtlinienthema benötigen Sie: Erstattung, Zahlung, Abwesenheit oder Support?",
+      it: "Quale policy le serve: rimborso, pagamento, assenza o supporto?",
+      pt: "Que política precisa: reembolso, pagamento, ausência ou suporte?"
+    }[language] || "Which policy topic do you need: refund, payment, absence, or support?";
+  }
+
+  if (resolvedDomain === "general") {
+    return {
+      en: "How can I help you today: courses, translation, interpreting, registration, location, or certificates?",
+      fr: "Comment puis-je vous aider aujourd’hui : cours, traduction, interprétation, inscription, localisation ou certificats ?",
+      es: "¿Cómo puedo ayudarle hoy: cursos, traducción, interpretación, inscripción, ubicación o certificados?",
+      de: "Wie kann ich Ihnen heute helfen: Kurse, Übersetzung, Dolmetschen, Anmeldung, Standort oder Zertifikate?",
+      it: "Come posso aiutarla oggi: corsi, traduzione, interpretariato, iscrizione, sede o certificati?",
+      pt: "Como posso ajudar hoje: cursos, tradução, interpretação, inscrição, localização ou certificados?"
+    }[language] || "How can I help you today: courses, translation, interpreting, registration, location, or certificates?";
+  }
+
   const byOption = {
     translation: {
       en: "For translation, please share language pair, document type, and deadline. For exact pricing, an advisor will confirm after review.",
@@ -2830,7 +3016,11 @@ function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots 
       pt: "Obrigado. Partilhe nome e número WhatsApp e um consultor da LSA GLOBAL entrará em contacto em breve."
     }
   };
-  return byOption[menuOption]?.[language] || byOption[menuOption]?.en || getControlledFallbackReply(language);
+  return byOption[resolvedDomain]?.[language]
+    || byOption[resolvedDomain]?.en
+    || byOption[menuOption]?.[language]
+    || byOption[menuOption]?.en
+    || getControlledFallbackReply(language);
 }
 
 function detectClarificationTopic({ text = "", retrievalResult = null, userState = null }) {
@@ -3438,13 +3628,23 @@ app.post("/webhook", async (req, res) => {
         liveKnownSlots: {}
       });
       suppressAutoAck = true;
-    } else if (!testModeActive && userState.liveMenuOption && liveModeControlledCandidate) {
-      selectedRoutingBranch = "live_safe_menu_clarification";
-      routingReason = "live_mode_post_menu_controlled_clarification";
-      const knownSlots = extractLiveClarificationSlots(userState.liveMenuOption, text, userState);
-      reply = getLiveSafeMenuClarificationReply(detectedLanguage, userState.liveMenuOption, knownSlots);
+    } else if (!testModeActive && liveModeControlledCandidate) {
+      selectedRoutingBranch = "live_safe_slot_clarification";
+      routingReason = "live_mode_general_slot_aware_clarification";
+      const detectedLiveDomain = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
+      const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
+      const missingSlots = getLiveDomainMissingSlots(detectedLiveDomain, knownSlots);
+      reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
+      console.log("[live-mode-debug]", JSON.stringify({
+        detected_domain: detectedLiveDomain,
+        known_slots: knownSlots,
+        missing_slots: missingSlots,
+        clarification_question_selected: reply,
+        language_used: detectedLanguage
+      }));
       controlledAction = "controlled_clarification";
       setCustomerState(from, {
+        liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
         liveKnownSlots: knownSlots
       });
       suppressAutoAck = true;
