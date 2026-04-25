@@ -15,7 +15,7 @@ if ! command -v supabase >/dev/null 2>&1; then
 fi
 
 if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
-  echo "ERROR: SUPABASE_DB_URL is not set." >&2
+  echo "ERROR: Required database backup secret is not set." >&2
   echo "Set it as a private environment variable (do NOT commit it)." >&2
   exit 1
 fi
