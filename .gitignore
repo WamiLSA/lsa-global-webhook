@@ -3,6 +3,7 @@
 
 # Local runtime uploads
 /uploads/
+/data/
 
 # Supabase manual backup outputs (sensitive)
 /backups/manual/

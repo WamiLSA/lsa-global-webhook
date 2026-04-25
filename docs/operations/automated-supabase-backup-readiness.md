@@ -37,6 +37,8 @@ The GitHub Actions workflow `.github/workflows/supabase-backup.yml` is designed 
 
 The workflow avoids database URL output and does not print SQL file contents.
 
+In `preflight` mode the workflow now emits explicit `PASS`, `WARN`, and `FAIL` check lines and a structured step summary so operators can separate non-critical hygiene warnings from true safety failures.
+
 ---
 
 ## Required mode note (operational policy)
@@ -94,9 +96,20 @@ Rules:
 5. Review logs and step summary.
 
 Expected result:
-- `preflight`: PASS if safety/readiness checks pass.
+- `preflight`: PASS when safety/readiness checks pass.
+- `preflight`: WARN when only non-critical readiness items require cleanup (for example, missing optional local-data ignore rule).
 - `backup`: PASS if secret exists and SQL files are generated.
 - `backup`: FAIL if secret is missing or dumps are not generated.
+
+Preflight checks validate only safe readiness conditions:
+- backup script existence,
+- backup script executability (or CI-safe remediation),
+- runbook presence,
+- `.gitignore` protections for backup outputs, env files, uploads, and local data paths,
+- workflow backup/preflight branching logic,
+- no direct secret echo patterns.
+
+Preflight does **not** connect to Supabase, does **not** run SQL dumps, and does **not** create real backup files.
 
 ---
 
