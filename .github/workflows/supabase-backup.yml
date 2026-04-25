@@ -69,6 +69,18 @@ jobs:
             grep -Eq "$regex" "$file"
           }
 
+          has_any_line() {
+            local file="$1"
+            shift
+            local regex
+            for regex in "$@"; do
+              if grep -Eq "$regex" "$file"; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           WARNINGS=()
           FAILURES=()
 
@@ -106,20 +118,20 @@ jobs:
           if [[ ! -f .gitignore ]]; then
             fail ".gitignore file is missing."
           else
-            has_line '^backups/$' .gitignore || fail ".gitignore missing backups/ protection."
-            has_line '^backups/manual/$' .gitignore || fail ".gitignore missing backups/manual/ protection."
-            has_line '^backups/\*\*/\*\.sql$' .gitignore || fail ".gitignore missing backups/**/*.sql protection."
-            has_line '^backups/\*\*/\*\.tar\.gz$' .gitignore || fail ".gitignore missing backups/**/*.tar.gz protection."
-            has_line '^backups/\*\*/\*\.sha256$' .gitignore || fail ".gitignore missing backups/**/*.sha256 protection."
+            has_any_line .gitignore '^backups/$' '^/backups/$' || fail ".gitignore missing backups/ protection."
+            has_any_line .gitignore '^backups/manual/$' '^/backups/manual/$' || fail ".gitignore missing backups/manual/ protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.sql$' '^/backups/\*\*/\*\.sql$' || fail ".gitignore missing backups/**/*.sql protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.tar\.gz$' '^/backups/\*\*/\*\.tar\.gz$' || fail ".gitignore missing backups/**/*.tar.gz protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.sha256$' '^/backups/\*\*/\*\.sha256$' || fail ".gitignore missing backups/**/*.sha256 protection."
             has_line '^\*\.sql$' .gitignore || fail ".gitignore missing *.sql protection."
             has_line '^\*\.dump$' .gitignore || fail ".gitignore missing *.dump protection."
             has_line '^\*\.backup$' .gitignore || fail ".gitignore missing *.backup protection."
             has_line '^\.env$' .gitignore || fail ".gitignore missing .env protection."
             has_line '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
-            has_line '^local-uploads/$' .gitignore || fail ".gitignore missing local-uploads/ protection."
-            has_line '^uploads/$' .gitignore || fail ".gitignore missing uploads/ protection."
-            has_line '^provider-documents/$' .gitignore || fail ".gitignore missing provider-documents/ protection."
-            has_line '^client-documents/$' .gitignore || fail ".gitignore missing client-documents/ protection."
+            has_any_line .gitignore '^local-uploads/$' '^/local-uploads/$' || fail ".gitignore missing local-uploads/ protection."
+            has_any_line .gitignore '^uploads/$' '^/uploads/$' || fail ".gitignore missing uploads/ protection."
+            has_any_line .gitignore '^provider-documents/$' '^/provider-documents/$' || fail ".gitignore missing provider-documents/ protection."
+            has_any_line .gitignore '^client-documents/$' '^/client-documents/$' || fail ".gitignore missing client-documents/ protection."
             pass ".gitignore validation completed."
           fi
 
