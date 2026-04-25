@@ -1,6 +1,22 @@
 # Dependencies
 /node_modules/
 
+# Safety-critical backup and local data protections
+backups/
+backups/manual/
+backups/**/*.sql
+backups/**/*.tar.gz
+backups/**/*.sha256
+*.sql
+*.dump
+*.backup
+.env
+.env.*
+local-uploads/
+uploads/
+provider-documents/
+client-documents/
+
 # Local runtime uploads
 /uploads/
 /data/
