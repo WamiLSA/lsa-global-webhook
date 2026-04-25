@@ -3,11 +3,14 @@ name: Supabase Backup Readiness
 on:
   workflow_dispatch:
     inputs:
-      run_backup:
-        description: "Run backup readiness now"
-        required: false
-        type: boolean
-        default: true
+      mode:
+        description: "Execution mode"
+        required: true
+        type: choice
+        options:
+          - preflight
+          - backup
+        default: preflight
   schedule:
     # Weekly Sunday 03:30 UTC. Disable by removing this block or setting this workflow inactive.
     - cron: "30 3 * * 0"
@@ -21,29 +24,99 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      WORKFLOW_FILE: .github/workflows/supabase-backup.yml
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate required secret is configured
+      - name: Resolve execution mode
+        id: mode
         shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            MODE="${{ inputs.mode }}"
+          else
+            MODE="backup"
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "PASS: Selected mode is '$MODE'."
+
+      - name: Preflight checks (safe dry-run)
+        if: ${{ steps.mode.outputs.mode == 'preflight' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "FAIL: $1"
+            exit 1
+          }
+
+          pass() {
+            echo "PASS: $1"
+          }
+
+          [[ -f scripts/supabase-manual-backup.sh ]] || fail "Backup script is missing: scripts/supabase-manual-backup.sh"
+          pass "Backup script exists."
+
+          [[ -x scripts/supabase-manual-backup.sh ]] || fail "Backup script is not executable."
+          pass "Backup script is executable."
+
+          for runbook in \
+            docs/operations/automated-supabase-backup-readiness.md \
+            docs/operations/supabase-manual-backup-plan.md \
+            docs/operations/first-real-backup-checklist.md; do
+            [[ -f "$runbook" ]] || fail "Required runbook missing: $runbook"
+          done
+          pass "Required runbooks exist."
+
+          [[ -f .gitignore ]] || fail ".gitignore file is missing."
+
+          rg -q '^/backups/manual/$' .gitignore || fail ".gitignore missing /backups/manual/ protection."
+          rg -q '^/backups/automated/$' .gitignore || fail ".gitignore missing /backups/automated/ protection."
+          rg -q '^/uploads/$' .gitignore || fail ".gitignore missing /uploads/ protection."
+          rg -q '^\.env$' .gitignore || fail ".gitignore missing .env protection."
+          rg -q '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
+          pass ".gitignore protects backup outputs, local uploads, and environment files."
+
+          [[ -f "$WORKFLOW_FILE" ]] || fail "Workflow file missing: $WORKFLOW_FILE"
+          rg -q 'inputs:' "$WORKFLOW_FILE" || fail "Workflow input section missing."
+          rg -q 'mode:' "$WORKFLOW_FILE" || fail "Mode input missing."
+          rg -q 'scripts/supabase-manual-backup.sh' "$WORKFLOW_FILE" || fail "Backup script execution logic missing from workflow."
+          rg -q 'sha256sum' "$WORKFLOW_FILE" || fail "Checksum logic missing from workflow."
+          pass "Workflow file contains backup job logic."
+
+          {
+            echo "## Backup Readiness Result"
+            echo "- status: PASS"
+            echo "- mode: preflight"
+            echo "- note: Safe dry-run completed. No database connection and no real backup files were generated."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate required secret is configured
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
           if [[ -z "${SUPABASE_DB_URL:-}" ]]; then
             echo "FAIL: SUPABASE_DB_URL is not configured in GitHub Secrets."
-            echo "Set SUPABASE_DB_URL first, then re-run this workflow."
+            echo "Set SUPABASE_DB_URL first, then re-run this workflow in backup mode."
             exit 1
           fi
           echo "PASS: Required secret detected (value hidden)."
 
       - name: Install Supabase CLI
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
       - name: Prepare temporary backup directory
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         id: prep
         shell: bash
         run: |
@@ -64,16 +137,17 @@ jobs:
           echo "PASS: Temporary backup workspace created in runner temp storage."
 
       - name: Run backup script
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          chmod +x scripts/supabase-manual-backup.sh
           SUPABASE_BACKUP_DIR="${{ steps.prep.outputs.backup_dir }}" ./scripts/supabase-manual-backup.sh
           echo "PASS: Backup script completed."
 
       - name: Validate expected files exist
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -87,7 +161,7 @@ jobs:
           echo "PASS: roles.sql, schema.sql, and data.sql were generated."
 
       - name: Build archive and checksums
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -106,7 +180,7 @@ jobs:
           echo "PASS: Archive and checksums created."
 
       - name: Generate safe backup report
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,14 +197,14 @@ jobs:
             echo
             echo "files:"
             for target in "$BACKUP_DIR/roles.sql" "$BACKUP_DIR/schema.sql" "$BACKUP_DIR/data.sql" "$ARCHIVE_PATH"; do
-              printf "- %s | %s bytes\n" "$(basename "$target")" "$(wc -c < "$target")"
+              printf -- "- %s | %s bytes\n" "$(basename "$target")" "$(wc -c < "$target")"
             done
             echo
             echo "sha256:"
             while IFS= read -r line; do
               file_name="$(basename "${line#* }")"
               hash_value="${line%% *}"
-              printf "- %s | %s\n" "$file_name" "$hash_value"
+              printf -- "- %s | %s\n" "$file_name" "$hash_value"
             done < "$CHECKSUMS_PATH"
           } > "$REPORT_PATH"
 
@@ -139,6 +213,7 @@ jobs:
           {
             echo "## Backup Readiness Result"
             echo "- status: PASS"
+            echo "- mode: backup"
             echo "- timestamp_utc: $TS"
             echo "- git_commit_sha: ${GITHUB_SHA}"
             echo "- note: Real backup files remain in runner temp storage only and are not uploaded or committed."
@@ -148,7 +223,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Storage publishing policy (safe default)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_backup == true }}
+        if: ${{ steps.mode.outputs.mode == 'backup' }}
         shell: bash
         run: |
           set -euo pipefail

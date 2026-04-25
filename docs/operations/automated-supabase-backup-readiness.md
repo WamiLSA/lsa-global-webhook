@@ -20,13 +20,15 @@ It does **not** mean automatic public storage, and it does **not** replace priva
 The GitHub Actions workflow `.github/workflows/supabase-backup.yml` is designed to:
 
 1. run on manual trigger (`workflow_dispatch`),
-2. optionally run weekly on schedule (cron),
-3. stop immediately if `SUPABASE_DB_URL` is missing,
-4. execute `scripts/supabase-manual-backup.sh`,
-5. generate `roles.sql`, `schema.sql`, and `data.sql` in temporary runner storage,
-6. create a timestamped `.tar.gz` archive,
-7. compute SHA256 checksums,
-8. print a **safe report** containing only:
+2. support two manual modes: `preflight` (safe dry-run) and `backup` (real backup),
+3. default manual mode to `preflight`,
+4. optionally run weekly on schedule (cron) in real backup mode,
+5. stop immediately if `SUPABASE_DB_URL` is missing in backup mode,
+6. execute `scripts/supabase-manual-backup.sh` in backup mode,
+7. generate `roles.sql`, `schema.sql`, and `data.sql` in temporary runner storage,
+8. create a timestamped `.tar.gz` archive,
+9. compute SHA256 checksums,
+10. print a **safe report** containing only:
    - timestamp,
    - git commit SHA,
    - file names,
@@ -34,6 +36,15 @@ The GitHub Actions workflow `.github/workflows/supabase-backup.yml` is designed 
    - checksum values.
 
 The workflow avoids database URL output and does not print SQL file contents.
+
+---
+
+## Required mode note (operational policy)
+
+- **Preflight mode** is for safe testing and validation only (no Supabase connection, no real SQL dumps, no real backup files).
+- **Backup mode** is for real backup execution **after** `SUPABASE_DB_URL` is securely configured in GitHub Secrets.
+- Real backup files must **never** be committed to GitHub history.
+- Supabase Storage objects and uploaded files still require a separate backup plan.
 
 ---
 
@@ -77,12 +88,15 @@ Rules:
 1. Open **Actions** tab.
 2. Select workflow: **Supabase Backup Readiness**.
 3. Click **Run workflow**.
-4. Keep `run_backup=true`.
+4. Select mode:
+   - `preflight` for safe dry-run validation (recommended first),
+   - `backup` for real dump execution once secret setup is complete.
 5. Review logs and step summary.
 
 Expected result:
-- PASS if secret exists and SQL files are generated.
-- FAIL if secret is missing or dumps are not generated.
+- `preflight`: PASS if safety/readiness checks pass.
+- `backup`: PASS if secret exists and SQL files are generated.
+- `backup`: FAIL if secret is missing or dumps are not generated.
 
 ---
 
