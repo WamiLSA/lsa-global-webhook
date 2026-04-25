@@ -58,20 +58,26 @@ jobs:
             WARNINGS+=("$1")
           }
 
-          fail() {
+          fail_critical() {
             echo "FAIL: $1"
-            FAILURES+=("$1")
+            CRITICAL_FAILURES+=("$1")
           }
 
           has_line() {
             local regex="$1"
             local file="$2"
+            if [[ ! -f "$file" ]]; then
+              return 1
+            fi
             grep -Eq "$regex" "$file"
           }
 
           has_any_line() {
             local file="$1"
             shift
+            if [[ ! -f "$file" ]]; then
+              return 1
+            fi
             local regex
             for regex in "$@"; do
               if grep -Eq "$regex" "$file"; then
@@ -82,12 +88,12 @@ jobs:
           }
 
           WARNINGS=()
-          FAILURES=()
+          CRITICAL_FAILURES=()
 
           if [[ -f scripts/supabase-manual-backup.sh ]]; then
             pass "Backup script exists."
           else
-            fail "Backup script is missing: scripts/supabase-manual-backup.sh"
+            fail_critical "Backup script is missing: scripts/supabase-manual-backup.sh"
           fi
 
           if [[ -f scripts/supabase-manual-backup.sh ]]; then
@@ -99,7 +105,7 @@ jobs:
               if chmod +x "$TMP_SCRIPT"; then
                 pass "Backup script is not executable in git metadata, but CI can make it executable safely."
               else
-                fail "Backup script is not executable and CI could not apply chmod safely."
+                fail_critical "Backup script is not executable and CI could not apply chmod safely."
               fi
             fi
           fi
@@ -116,46 +122,46 @@ jobs:
           done
 
           if [[ ! -f .gitignore ]]; then
-            fail ".gitignore file is missing."
+            fail_critical ".gitignore file is missing."
           else
-            has_any_line .gitignore '^backups/$' '^/backups/$' || fail ".gitignore missing backups/ protection."
-            has_any_line .gitignore '^backups/manual/$' '^/backups/manual/$' || fail ".gitignore missing backups/manual/ protection."
-            has_any_line .gitignore '^backups/\*\*/\*\.sql$' '^/backups/\*\*/\*\.sql$' || fail ".gitignore missing backups/**/*.sql protection."
-            has_any_line .gitignore '^backups/\*\*/\*\.tar\.gz$' '^/backups/\*\*/\*\.tar\.gz$' || fail ".gitignore missing backups/**/*.tar.gz protection."
-            has_any_line .gitignore '^backups/\*\*/\*\.sha256$' '^/backups/\*\*/\*\.sha256$' || fail ".gitignore missing backups/**/*.sha256 protection."
-            has_line '^\*\.sql$' .gitignore || fail ".gitignore missing *.sql protection."
-            has_line '^\*\.dump$' .gitignore || fail ".gitignore missing *.dump protection."
-            has_line '^\*\.backup$' .gitignore || fail ".gitignore missing *.backup protection."
-            has_line '^\.env$' .gitignore || fail ".gitignore missing .env protection."
-            has_line '^\.env\.\*$' .gitignore || fail ".gitignore missing .env.* protection."
-            has_any_line .gitignore '^local-uploads/$' '^/local-uploads/$' || fail ".gitignore missing local-uploads/ protection."
-            has_any_line .gitignore '^uploads/$' '^/uploads/$' || fail ".gitignore missing uploads/ protection."
-            has_any_line .gitignore '^provider-documents/$' '^/provider-documents/$' || fail ".gitignore missing provider-documents/ protection."
-            has_any_line .gitignore '^client-documents/$' '^/client-documents/$' || fail ".gitignore missing client-documents/ protection."
+            has_any_line .gitignore '^backups/$' '^/backups/$' || fail_critical ".gitignore missing backups/ protection."
+            has_any_line .gitignore '^backups/manual/$' '^/backups/manual/$' || fail_critical ".gitignore missing backups/manual/ protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.sql$' '^/backups/\*\*/\*\.sql$' || fail_critical ".gitignore missing backups/**/*.sql protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.tar\.gz$' '^/backups/\*\*/\*\.tar\.gz$' || fail_critical ".gitignore missing backups/**/*.tar.gz protection."
+            has_any_line .gitignore '^backups/\*\*/\*\.sha256$' '^/backups/\*\*/\*\.sha256$' || fail_critical ".gitignore missing backups/**/*.sha256 protection."
+            has_line '^\*\.sql$' .gitignore || fail_critical ".gitignore missing *.sql protection."
+            has_line '^\*\.dump$' .gitignore || fail_critical ".gitignore missing *.dump protection."
+            has_line '^\*\.backup$' .gitignore || fail_critical ".gitignore missing *.backup protection."
+            has_line '^\.env$' .gitignore || fail_critical ".gitignore missing .env protection."
+            has_line '^\.env\.\*$' .gitignore || fail_critical ".gitignore missing .env.* protection."
+            has_any_line .gitignore '^local-uploads/$' '^/local-uploads/$' || fail_critical ".gitignore missing local-uploads/ protection."
+            has_any_line .gitignore '^uploads/$' '^/uploads/$' || fail_critical ".gitignore missing uploads/ protection."
+            has_any_line .gitignore '^provider-documents/$' '^/provider-documents/$' || fail_critical ".gitignore missing provider-documents/ protection."
+            has_any_line .gitignore '^client-documents/$' '^/client-documents/$' || fail_critical ".gitignore missing client-documents/ protection."
             pass ".gitignore validation completed."
           fi
 
           if [[ -f "$WORKFLOW_FILE" ]]; then
             pass "Workflow file exists: $WORKFLOW_FILE"
           else
-            fail "Workflow file missing: $WORKFLOW_FILE"
+            fail_critical "Workflow file missing: $WORKFLOW_FILE"
           fi
 
           if [[ -f "$WORKFLOW_FILE" ]]; then
-            has_line 'workflow_dispatch:' "$WORKFLOW_FILE" || fail "workflow_dispatch trigger missing."
-            has_line 'inputs:' "$WORKFLOW_FILE" || fail "Workflow inputs section missing."
-            has_line 'mode:' "$WORKFLOW_FILE" || fail "Mode input missing."
-            has_line "steps\\.mode\\.outputs\\.mode == 'preflight'" "$WORKFLOW_FILE" || fail "Preflight branch logic missing."
-            has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE" || fail "Backup branch logic missing."
-            has_line 'scripts/supabase-manual-backup\.sh' "$WORKFLOW_FILE" || fail "Backup script execution logic missing from workflow."
+            has_line 'workflow_dispatch:' "$WORKFLOW_FILE" || fail_critical "workflow_dispatch trigger missing."
+            has_line 'inputs:' "$WORKFLOW_FILE" || fail_critical "Workflow inputs section missing."
+            has_line 'mode:' "$WORKFLOW_FILE" || fail_critical "Mode input missing."
+            has_line "steps\\.mode\\.outputs\\.mode == 'preflight'" "$WORKFLOW_FILE" || fail_critical "Preflight branch logic missing."
+            has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE" || fail_critical "Backup branch logic missing."
+            has_line 'scripts/supabase-manual-backup\.sh' "$WORKFLOW_FILE" || fail_critical "Backup script execution logic missing from workflow."
             has_line 'sha256sum' "$WORKFLOW_FILE" || warn "Checksum logic not detected. Backup evidence quality may be reduced."
-            has_line 'secrets\.SUPABASE_DB_URL' "$WORKFLOW_FILE" || fail "Required database backup secret handling is missing from workflow."
-            has_line "Validate required secret is configured" "$WORKFLOW_FILE" || fail "Backup secret validation step missing."
+            has_line 'secrets\.SUPABASE_DB_URL' "$WORKFLOW_FILE" || fail_critical "Required database backup secret handling is missing from workflow."
+            has_line "Validate required secret is configured" "$WORKFLOW_FILE" || fail_critical "Backup secret validation step missing."
             pass "Workflow backup mode logic validation completed."
           fi
 
           if has_line '(^|[[:space:]])set -x([[:space:]]|$)' "$WORKFLOW_FILE"; then
-            fail "Workflow contains shell xtrace (set -x), which can leak sensitive runtime data."
+            fail_critical "Workflow contains shell xtrace (set -x), which can leak sensitive runtime data."
           else
             pass "Workflow does not enable shell xtrace."
           fi
@@ -164,13 +170,13 @@ jobs:
             'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
             'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
             'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
-            fail "Workflow appears to print the database backup secret variable."
+            fail_critical "Workflow appears to print the database backup secret variable."
           else
             pass "Workflow does not print the database backup secret variable."
           fi
 
           if has_line '(^|[[:space:]])set -x([[:space:]]|$)' scripts/supabase-manual-backup.sh; then
-            fail "Backup script contains shell xtrace (set -x), which can leak sensitive runtime data."
+            fail_critical "Backup script contains shell xtrace (set -x), which can leak sensitive runtime data."
           else
             pass "Backup script does not enable shell xtrace."
           fi
@@ -179,7 +185,7 @@ jobs:
             'echo[[:space:]]+["'"'"']?\$SUPABASE_DB_URL["'"'"']?' \
             'echo[[:space:]]+["'"'"']?\$\{SUPABASE_DB_URL\}["'"'"']?' \
             'printf[^[:alnum:]].*(\$SUPABASE_DB_URL|\$\{SUPABASE_DB_URL\})'; then
-            fail "Backup script appears to print the database backup secret variable."
+            fail_critical "Backup script appears to print the database backup secret variable."
           else
             pass "Backup script does not print the database backup secret variable."
           fi
@@ -190,7 +196,7 @@ jobs:
             || has_any_line scripts/supabase-manual-backup.sh \
             'echo.*postgres(ql)?://' \
             'printf[^[:alnum:]].*postgres(ql)?://'; then
-            fail "Workflow or backup script appears to print a database connection string."
+            fail_critical "Workflow or backup script appears to print a database connection string."
           else
             pass "Workflow and backup script do not print database connection strings."
           fi
@@ -199,11 +205,11 @@ jobs:
              && has_line "steps\\.mode\\.outputs\\.mode == 'backup'" "$WORKFLOW_FILE"; then
             pass "Database backup secret is scoped to backup mode."
           else
-            fail "Database backup secret scope is unsafe or missing."
+            fail_critical "Database backup secret scope is unsafe or missing."
           fi
 
           STATUS="PASS"
-          if [[ ${#FAILURES[@]} -gt 0 ]]; then
+          if [[ ${#CRITICAL_FAILURES[@]} -gt 0 ]]; then
             STATUS="FAIL"
           elif [[ ${#WARNINGS[@]} -gt 0 ]]; then
             STATUS="WARN"
@@ -224,17 +230,19 @@ jobs:
                 echo "  - $item"
               done
             fi
-            if [[ ${#FAILURES[@]} -gt 0 ]]; then
-              echo "- failures:"
-              for item in "${FAILURES[@]}"; do
+            if [[ ${#CRITICAL_FAILURES[@]} -gt 0 ]]; then
+              echo "- critical_failures:"
+              for item in "${CRITICAL_FAILURES[@]}"; do
                 echo "  - $item"
               done
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ ${#FAILURES[@]} -gt 0 ]]; then
+          if [[ ${#CRITICAL_FAILURES[@]} -gt 0 ]]; then
             exit 1
           fi
+
+          echo "PREFLIGHT COMPLETE: SAFE TO PROCEED TO SECRET CONFIGURATION WHEN READY."
 
       - name: Validate required secret is configured
         if: ${{ steps.mode.outputs.mode == 'backup' }}
