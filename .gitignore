@@ -1,0 +1,9 @@
+# Local runtime uploads
+/uploads/
+
+# Supabase manual backup outputs (sensitive)
+/backups/manual/
+
+# Local environment files
+.env
+.env.*
