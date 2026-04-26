@@ -1,6 +1,6 @@
 # Database Migration-Readiness Audit (Supabase → Future Private PostgreSQL)
 
-Date: 2026-04-25 (UTC)
+Date: 2026-04-26 (UTC)
 Stage: Non-destructive audit only
 
 ## Scope and safety confirmation
@@ -9,6 +9,7 @@ Stage: Non-destructive audit only
 - No schema migrations were run.
 - No Supabase removal was attempted.
 - No production runtime behavior was changed.
+- Backup preflight status context: `PREFLIGHT COMPLETE: SAFE TO PROCEED TO SECRET CONFIGURATION WHEN READY.`
 
 ## 1) Files that directly import, initialize, or call Supabase
 
@@ -21,11 +22,12 @@ Stage: Non-destructive audit only
 2. `lib/internal-retrieval.js`
    - Receives `supabase` client by dependency injection (`createInternalRetriever({ supabase, ... })`).
    - Executes query builder operations against tables used by test-mode/internal retrieval.
+3. `README.md` runtime env contract reference
+   - Documents the required Supabase runtime environment variables used by `server.js`.
 
 ### Non-runtime operational files (tooling/docs/dependency)
-3. `package.json` (declares `@supabase/supabase-js`).
-4. `scripts/supabase-manual-backup.sh` (Supabase CLI backup script, not app runtime).
-5. `README.md` (Supabase env configuration docs).
+4. `package.json` (declares `@supabase/supabase-js`).
+5. `scripts/supabase-manual-backup.sh` (Supabase CLI backup script, not app runtime).
 6. `docs/operations/supabase-manual-backup-plan.md` (backup runbook).
 7. `docs/operations/automated-supabase-backup-readiness.md` (workflow documentation).
 8. `docs/operations/first-real-backup-checklist.md` (backup checklist).
@@ -231,4 +233,3 @@ Confirmed for this PR/audit activity:
 - ✅ No real backup run executed.
 - ✅ No secret value touched or exposed.
 - ✅ App runtime behavior unchanged.
-
