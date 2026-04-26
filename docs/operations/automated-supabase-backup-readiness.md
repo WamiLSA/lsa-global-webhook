@@ -35,6 +35,8 @@ The GitHub Actions workflow `.github/workflows/supabase-backup.yml` is designed 
    - file sizes,
    - checksum values.
 
+Current operational status: scheduled cron is temporarily disabled; manual `workflow_dispatch` remains active.
+
 The workflow avoids database URL output and does not print SQL file contents.
 
 In `preflight` mode the workflow now emits explicit `PASS`, `WARN`, and `FAIL` check lines and a structured step summary so operators can separate non-critical hygiene warnings from true safety failures.
@@ -56,7 +58,7 @@ In `preflight` mode the workflow now emits explicit `PASS`, `WARN`, and `FAIL` c
 You run `scripts/supabase-manual-backup.sh` yourself when needed.
 
 ### 2) Scheduled backup readiness
-GitHub Actions runs the same backup logic weekly and confirms repeatable execution.
+When enabled, GitHub Actions runs the same backup logic weekly and confirms repeatable execution.
 
 ### 3) True point-in-time recovery (PITR)
 PITR is a different capability from CLI SQL dumps. PITR requires database-level continuous WAL/log retention and restore tooling that can recover to a precise timestamp. SQL dumps are snapshots, not full timeline recovery.
@@ -123,6 +125,13 @@ Weekly schedule is defined in `.github/workflows/supabase-backup.yml` with a `cr
 - To disable: remove or comment out the `schedule` block and commit.
 
 Use manual dispatch whenever schedule is disabled.
+
+### Temporary safety policy before re-enabling schedule
+
+Scheduled backup must only be re-enabled after all of the following are complete:
+1. `SUPABASE_DB_URL` is securely configured as a GitHub Actions secret.
+2. A private backup storage destination is approved.
+3. One manual `backup` mode test succeeds safely.
 
 ---
 

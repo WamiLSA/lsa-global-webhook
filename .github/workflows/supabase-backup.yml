@@ -11,9 +11,6 @@ on:
           - preflight
           - backup
         default: preflight
-  schedule:
-    # Weekly Sunday 03:30 UTC. Disable by removing this block or setting this workflow inactive.
-    - cron: "30 3 * * 0"
 
 permissions:
   contents: read
@@ -38,7 +35,7 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             MODE="${{ inputs.mode }}"
           else
-            MODE="backup"
+            MODE="preflight"
           fi
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "PASS: Selected mode is '$MODE'."
