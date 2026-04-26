@@ -64,3 +64,29 @@ lib/database/
 - No secret changes.
 - No Supabase removal.
 - No production behavior changes.
+
+## Repository Layer Phase 1
+
+Status: Added (skeleton only)
+
+### What was added
+- `lib/database/repositories/` folder created.
+- Repository skeleton files added for:
+  - conversations
+  - kb
+  - providers
+  - settings
+  - attachments
+- `lib/database/repositories/README.md` added to document staged migration intent.
+
+### Runtime impact
+- No runtime database logic moved in this phase.
+- Existing Supabase-backed runtime flow remains unchanged.
+- No route behavior changed.
+
+### Safe next migration candidates (future PRs)
+1. settings reads
+2. KB reads
+3. provider reads
+4. conversation reads
+5. attachments later (file/storage handling is more sensitive)
