@@ -111,7 +111,7 @@ From repository root:
 
 ```bash
 cd mobile-app
-npm ci
+npm install
 npx expo prebuild --platform android --non-interactive
 cd android
 chmod +x gradlew
