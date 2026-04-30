@@ -94,3 +94,42 @@ INTERNAL_WORKING_LANGUAGE=en
 ```
 
 If omitted, the internal working language defaults to English (`en`).
+
+## Android APK pipeline (LSA GLOBAL Internal Mobile)
+
+This repository now includes a GitHub Actions pipeline to produce an installable Android debug APK from `mobile-app/`.
+
+### Pipeline
+
+- Workflow file: `.github/workflows/android-apk.yml`
+- Trigger: manual (`workflow_dispatch`) or push changes under `mobile-app/**`
+- Artifact name: `lsa-global-internal-debug-apk`
+
+### Local APK build (manual)
+
+From repository root:
+
+```bash
+cd mobile-app
+npm ci
+npx expo prebuild --platform android --non-interactive
+cd android
+chmod +x gradlew
+./gradlew assembleDebug
+```
+
+Expected APK output:
+
+```text
+mobile-app/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Optional cloud build (EAS)
+
+`mobile-app/eas.json` provides an internal `preview` profile that builds an Android APK:
+
+```bash
+cd mobile-app
+npx eas build -p android --profile preview
+```
+
