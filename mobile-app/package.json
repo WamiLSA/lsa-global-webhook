@@ -2,7 +2,7 @@
   "name": "lsa-global-internal-mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "App.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
