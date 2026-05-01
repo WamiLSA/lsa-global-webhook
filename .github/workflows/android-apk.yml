@@ -25,13 +25,10 @@ jobs:
           cache: npm
           cache-dependency-path: mobile-app/package-lock.json
 
-      - name: Validate npm registry config
+      - name: Enforce npm public registry
         run: |
-          echo "npm registry: $(npm config get registry)"
-          npm config delete proxy || true
-          npm config delete https-proxy || true
           npm config set registry https://registry.npmjs.org/
-          echo "npm registry (normalized): $(npm config get registry)"
+          echo "NPM registry: $(npm config get registry)"
 
       - name: Install dependencies
         run: npm ci
@@ -42,16 +39,18 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Verify checked-in Android project
+      - name: Verify native Android project exists
         run: |
-          if [ ! -f android/gradlew ]; then
-            echo "ERROR: mobile-app/android is missing."
-            echo "Run once locally: cd mobile-app && CI=1 npx expo prebuild --platform android"
-            echo "Commit the generated mobile-app/android directory, then rerun CI."
+          if [ ! -d android ]; then
+            echo "mobile-app/android is missing."
+            echo "Generate it once in a trusted environment and commit it:"
+            echo "  cd mobile-app"
+            echo "  npm config set registry https://registry.npmjs.org/"
+            echo "  CI=1 npx expo prebuild --platform android"
             exit 1
           fi
 
-      - name: Build debug APK
+      - name: Build debug APK from checked-in android project
         run: |
           cd android
           chmod +x gradlew
