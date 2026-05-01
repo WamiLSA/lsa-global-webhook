@@ -1,24 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Linking } from 'react-native';
+import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Linking, ActivityIndicator } from 'react-native';
 import { api } from '../api/client';
 import * as DocumentPicker from 'expo-document-picker';
 import { ModeBadge } from '../components/ModeBadge';
+import { Screen } from '../components/Screen';
+import { colors } from '../theme';
 
 export function ConversationScreen({ route }) {
-  const { conversationId, mode } = route.params;
+  const { conversationId, mode, contact } = route.params;
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const loadThread = async () => {
-    const response = await api.get(`/api/mobile/inbox/${conversationId}`);
+    const response = await api.get(`/api/mobile/inbox/${conversationId}`, { retries: 2 });
     setMessages(response.messages || []);
   };
 
-  useEffect(() => {
-    loadThread();
-  }, [conversationId]);
+  useEffect(() => { (async () => { try { await loadThread(); } finally { setLoading(false); } })(); }, [conversationId]);
 
   const sendReply = async () => {
     try {
@@ -27,55 +28,57 @@ export function ConversationScreen({ route }) {
       await api.post(`/api/mobile/inbox/${conversationId}/reply`, { text: reply });
       setReply('');
       await loadThread();
-    } catch (err) {
+    } catch {
       setError('Message failed to send. Please retry.');
-    } finally {
-      setSending(false);
-    }
+    } finally { setSending(false); }
   };
 
   return (
-    <View style={styles.container}>
+    <Screen>
       <ModeBadge mode={mode} />
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => (
-          <View style={[styles.msg, item.direction === 'outgoing' ? styles.outgoing : styles.incoming]}>
-            <Text style={styles.original}>{item.originalText}</Text>
-            {item.staffTranslation ? <Text style={styles.translation}>Staff: {item.staffTranslation}</Text> : null}
-            {item.customerTranslation ? <Text style={styles.translation}>Customer: {item.customerTranslation}</Text> : null}
-            {item.attachmentUrl ? (
-              <Pressable onPress={() => Linking.openURL(item.attachmentUrl)}><Text style={styles.attachment}>Open attachment</Text></Pressable>
-            ) : null}
-            <Text style={styles.ts}>{item.createdAt}</Text>
-          </View>
-        )}
-      />
+      <Text style={styles.header}>{contact || 'Conversation'}</Text>
+      {loading ? <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} /> : (
+        <FlatList
+          data={messages}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={({ item }) => (
+            <View style={[styles.msg, item.direction === 'outgoing' ? styles.outgoing : styles.incoming]}>
+              <Text style={styles.original}>{item.originalText || '—'}</Text>
+              {item.staffTranslation ? <Text style={styles.translation}>Staff Translation: {item.staffTranslation}</Text> : null}
+              {item.customerTranslation ? <Text style={styles.translation}>Client Translation: {item.customerTranslation}</Text> : null}
+              {item.attachmentUrl ? <Pressable onPress={() => Linking.openURL(item.attachmentUrl)}><Text style={styles.attachment}>Attachment: Open file</Text></Pressable> : null}
+              <Text style={styles.ts}>{item.createdAt}</Text>
+            </View>
+          )}
+        />
+      )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.composer}>
-        <TextInput style={styles.input} value={reply} onChangeText={setReply} placeholder="Type a quick reply" multiline />
-        <Pressable style={styles.send} disabled={sending || !reply.trim()} onPress={sendReply}><Text style={styles.sendText}>{sending ? 'Sending...' : 'Send'}</Text></Pressable>
-        <Pressable style={styles.attach} onPress={async () => { await DocumentPicker.getDocumentAsync(); }}><Text style={styles.attachText}>Attach</Text></Pressable>
+        <TextInput style={styles.input} value={reply} onChangeText={setReply} placeholder="Type quick reply" placeholderTextColor={colors.textMuted} multiline />
+        <View style={styles.rowActions}>
+          <Pressable style={[styles.action, styles.attach]} onPress={async () => { await DocumentPicker.getDocumentAsync(); }}><Text style={styles.btn}>Attach</Text></Pressable>
+          <Pressable style={[styles.action, styles.send]} disabled={sending || !reply.trim()} onPress={sendReply}><Text style={styles.btn}>{sending ? 'Sending...' : 'Send Reply'}</Text></Pressable>
+        </View>
       </View>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#020617', padding: 12 },
-  msg: { borderRadius: 10, padding: 10, marginBottom: 8 },
+  header: { color: colors.text, fontWeight: '700', fontSize: 16, marginTop: 8, marginBottom: 8 },
+  msg: { borderRadius: 12, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
   incoming: { backgroundColor: '#1e293b' },
   outgoing: { backgroundColor: '#1d4ed8' },
   original: { color: '#fff' },
   translation: { color: '#cbd5e1', marginTop: 4, fontSize: 12 },
   attachment: { color: '#facc15', marginTop: 6 },
   ts: { color: '#94a3b8', fontSize: 11, marginTop: 6 },
-  composer: { gap: 8 },
-  input: { backgroundColor: '#fff', borderRadius: 8, padding: 10, minHeight: 42 },
-  send: { backgroundColor: '#16a34a', padding: 10, borderRadius: 8, alignItems: 'center' },
-  sendText: { color: '#fff', fontWeight: '700' },
-  attach: { backgroundColor: '#334155', padding: 10, borderRadius: 8, alignItems: 'center' },
-  attachText: { color: '#fff' },
+  composer: { gap: 8, marginTop: 8 },
+  input: { backgroundColor: colors.surfaceAlt, borderColor: colors.border, borderWidth: 1, color: colors.text, borderRadius: 10, padding: 10, minHeight: 42 },
+  rowActions: { flexDirection: 'row', gap: 8 },
+  action: { flex: 1, padding: 10, borderRadius: 10, alignItems: 'center' },
+  send: { backgroundColor: colors.success },
+  attach: { backgroundColor: '#334155' },
+  btn: { color: '#fff', fontWeight: '700' },
   error: { color: '#fca5a5', marginBottom: 6 }
 });

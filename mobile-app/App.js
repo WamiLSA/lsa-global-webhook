@@ -1,16 +1,17 @@
 import React from 'react';
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { StatusBar, useColorScheme } from 'react-native';
+import { StatusBar, useColorScheme, View, ActivityIndicator } from 'react-native';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { colors } from './src/theme';
 
 function AppShell() {
   const scheme = useColorScheme();
   const { initializing } = useAuth();
 
   if (initializing) {
-    return null;
+    return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={colors.primary} /></View>;
   }
 
   return (
