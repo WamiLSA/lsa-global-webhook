@@ -22,9 +22,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+
+      - name: Validate npm registry config
+        run: |
+          echo "npm registry: $(npm config get registry)"
+          npm config delete proxy || true
+          npm config delete https-proxy || true
+          npm config set registry https://registry.npmjs.org/
+          echo "npm registry (normalized): $(npm config get registry)"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -32,10 +42,14 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Create native Android project
-        env:
-          CI: "1"
-        run: npx expo prebuild --platform android
+      - name: Verify checked-in Android project
+        run: |
+          if [ ! -f android/gradlew ]; then
+            echo "ERROR: mobile-app/android is missing."
+            echo "Run once locally: cd mobile-app && CI=1 npx expo prebuild --platform android"
+            echo "Commit the generated mobile-app/android directory, then rerun CI."
+            exit 1
+          fi
 
       - name: Build debug APK
         run: |
