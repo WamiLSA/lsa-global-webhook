@@ -64,16 +64,10 @@ jobs:
             exit 1
           fi
 
-          if grep -q "bundleInDebug: true" android/app/build.gradle; then
+          if grep -q "bundleInDebug:[[:space:]]*true" android/app/build.gradle; then
             echo "bundleInDebug already enabled"
           else
-            cat <<'EOF' >> android/app/build.gradle
-
-            project.ext.react = [
-                bundleInDebug: true,
-                bundleInRelease: true
-            ]
-            EOF
+            printf '\nproject.ext.react = [\n    bundleInDebug: true,\n    bundleInRelease: true\n]\n' >> android/app/build.gradle
             echo "Injected bundleInDebug/bundleInRelease settings"
           fi
 
