@@ -22,8 +22,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: mobile-app/package-lock.json
 
       - name: Enforce npm public registry
         run: |
@@ -31,7 +29,7 @@ jobs:
           echo "NPM registry: $(npm config get registry)"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Setup Java
         uses: actions/setup-java@v4
