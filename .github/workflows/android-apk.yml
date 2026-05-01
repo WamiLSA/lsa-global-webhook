@@ -103,32 +103,50 @@ PY2
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew :app:assembleDebug :app:assembleRelease
+          ./gradlew :app:assembleRelease
 
-      - name: Verify JS bundle packaged in APK
+      - name: Sign release APK for installation
         run: |
-          DEBUG_APK=android/app/build/outputs/apk/debug/app-debug.apk
-          RELEASE_APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          UNSIGNED_APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+          SIGNED_APK=android/app/build/outputs/apk/release/app-release.apk
+          KEYSTORE_PATH=$HOME/debug-release.keystore
 
-          for apk in "$DEBUG_APK" "$RELEASE_APK"; do
-            if [ ! -f "$apk" ]; then
-              echo "Missing APK: $apk"
-              exit 1
-            fi
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "Missing APK: $UNSIGNED_APK"
+            exit 1
+          fi
 
-            if unzip -l "$apk" | grep -q "assets/index.android.bundle"; then
-              echo "Verified bundle in $apk"
-            else
-              echo "index.android.bundle missing in $apk"
-              exit 1
-            fi
-          done
+          keytool -genkeypair             -alias androiddebugkey             -keyalg RSA             -keysize 2048             -validity 10000             -storepass android             -keypass android             -keystore "$KEYSTORE_PATH"             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Upload APK artifact
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found"
+            exit 1
+          fi
+
+          "$APKSIGNER" sign             --ks "$KEYSTORE_PATH"             --ks-pass pass:android             --key-pass pass:android             --ks-key-alias androiddebugkey             --out "$SIGNED_APK"             "$UNSIGNED_APK"
+
+          "$APKSIGNER" verify "$SIGNED_APK"
+
+      - name: Verify JS bundle packaged in standalone APK
+        run: |
+          RELEASE_APK=android/app/build/outputs/apk/release/app-release.apk
+
+          if [ ! -f "$RELEASE_APK" ]; then
+            echo "Missing APK: $RELEASE_APK"
+            exit 1
+          fi
+
+          if unzip -l "$RELEASE_APK" | grep -q "assets/index.android.bundle"; then
+            echo "Verified bundle in $RELEASE_APK"
+          else
+            echo "index.android.bundle missing in $RELEASE_APK"
+            exit 1
+          fi
+
+      - name: Upload standalone APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsa-global-internal-standalone-apks
-          path: |
-            mobile-app/android/app/build/outputs/apk/debug/app-debug.apk
-            mobile-app/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          name: lsa-global-internal-standalone-release-apk
+          path: mobile-app/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
