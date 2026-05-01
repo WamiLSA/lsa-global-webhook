@@ -32,6 +32,9 @@ Workflow `.github/workflows/android-apk.yml` now:
 2. Installs dependencies.
 3. If `mobile-app/android` exists, skips generation and builds directly.
 4. If missing, tries `expo prebuild`, captures full terminal output, and surfaces root-cause excerpts before failing.
-5. Builds debug APK with Gradle (`./gradlew assembleDebug`).
-6. Uploads artifact `lsa-global-internal-debug-apk` from:
-   `mobile-app/android/app/build/outputs/apk/debug/app-debug.apk`.
+5. Forces React Native bundling flags so debug and release APKs both include `assets/index.android.bundle`.
+6. Builds both standalone APK variants with Gradle (`./gradlew :app:assembleDebug :app:assembleRelease`).
+7. Verifies each APK actually contains `assets/index.android.bundle` before upload.
+8. Uploads artifact `lsa-global-internal-standalone-apks` containing:
+   - `mobile-app/android/app/build/outputs/apk/debug/app-debug.apk`
+   - `mobile-app/android/app/build/outputs/apk/release/app-release-unsigned.apk`.

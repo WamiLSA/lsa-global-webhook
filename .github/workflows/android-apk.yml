@@ -57,15 +57,61 @@ jobs:
             exit 1
           fi
 
-      - name: Build debug APK from checked-in android project
+      - name: Force standalone JS bundle settings
+        run: |
+          if [ ! -f android/app/build.gradle ]; then
+            echo "android/app/build.gradle not found"
+            exit 1
+          fi
+
+          python - <<'PY2'
+from pathlib import Path
+p = Path('android/app/build.gradle')
+s = p.read_text()
+if 'project.ext.react' in s and 'bundleInDebug: true' in s:
+    print('bundleInDebug already enabled')
+else:
+    block = "\nproject.ext.react = [\n    bundleInDebug: true,\n    bundleInRelease: true\n]\n"
+    if 'apply from: ../../node_modules/react-native/react.gradle' in s:
+        s = s.replace('apply from: ../../node_modules/react-native/react.gradle', block + '\napply from: ../../node_modules/react-native/react.gradle')
+    elif 'apply from: file(\"../../node_modules/react-native/react.gradle\")' in s:
+        s = s.replace('apply from: file(\"../../node_modules/react-native/react.gradle\")', block + '\napply from: file(\"../../node_modules/react-native/react.gradle\")')
+    else:
+        s += block
+    p.write_text(s)
+    print('Injected bundleInDebug/bundleInRelease settings')
+PY2
+
+      - name: Build standalone APKs
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew :app:assembleDebug :app:assembleRelease
+
+      - name: Verify JS bundle packaged in APK
+        run: |
+          DEBUG_APK=android/app/build/outputs/apk/debug/app-debug.apk
+          RELEASE_APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
+
+          for apk in "$DEBUG_APK" "$RELEASE_APK"; do
+            if [ ! -f "$apk" ]; then
+              echo "Missing APK: $apk"
+              exit 1
+            fi
+
+            if unzip -l "$apk" | grep -q "assets/index.android.bundle"; then
+              echo "Verified bundle in $apk"
+            else
+              echo "index.android.bundle missing in $apk"
+              exit 1
+            fi
+          done
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsa-global-internal-debug-apk
-          path: mobile-app/android/app/build/outputs/apk/debug/app-debug.apk
+          name: lsa-global-internal-standalone-apks
+          path: |
+            mobile-app/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile-app/android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
