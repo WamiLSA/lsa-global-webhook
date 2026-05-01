@@ -33,7 +33,9 @@ jobs:
           java-version: 17
 
       - name: Create native Android project
-        run: npx expo prebuild --platform android --non-interactive
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform android
 
       - name: Build debug APK
         run: |
