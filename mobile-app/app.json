@@ -5,12 +5,6 @@
     "scheme": "lsainternal",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0f172a"
-    },
     "updates": {
       "fallbackToCacheTimeout": 0
     },
@@ -18,11 +12,7 @@
       "**/*"
     ],
     "android": {
-      "package": "com.lsaglobal.internal",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0f172a"
-      }
+      "package": "com.lsaglobal.internal"
     },
     "extra": {
       "apiBaseUrl": "http://10.0.2.2:3000"
