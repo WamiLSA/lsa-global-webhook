@@ -4,11 +4,13 @@ const baseUrl = Constants.expoConfig?.extra?.apiBaseUrl;
 let token = null;
 
 async function request(path, options = {}) {
-  const retries = options.retries ?? 1;
+  const method = (options.method || 'GET').toUpperCase();
+  const isSafeMethod = method === 'GET' || method === 'HEAD';
+  const retries = options.retries ?? (isSafeMethod ? 1 : 0);
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       const response = await fetch(`${baseUrl}${path}`, {
-        method: options.method || 'GET',
+        method,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
