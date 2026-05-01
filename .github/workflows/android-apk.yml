@@ -37,14 +37,23 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Verify native Android project exists
+      - name: Ensure native Android project exists
         run: |
-          if [ ! -d android ]; then
-            echo "mobile-app/android is missing."
-            echo "Generate it once in a trusted environment and commit it:"
-            echo "  cd mobile-app"
-            echo "  npm config set registry https://registry.npmjs.org/"
-            echo "  CI=1 npx expo prebuild --platform android"
+          if [ -d android ]; then
+            echo "mobile-app/android exists. Skipping generation."
+            exit 0
+          fi
+
+          echo "mobile-app/android is missing. Generating with Expo prebuild..."
+          set +e
+          CI=1 npx expo prebuild --platform android 2>&1 | tee /tmp/expo-prebuild.log
+          PREBUILD_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$PREBUILD_EXIT" -ne 0 ] || [ ! -d android ]; then
+            echo "Expo prebuild failed or android/ was not created."
+            echo "Root cause excerpt:"
+            grep -E "(npm error|Failed to create the native directory|expo-template-bare-minimum|403 Forbidden)" /tmp/expo-prebuild.log || true
             exit 1
           fi
 
