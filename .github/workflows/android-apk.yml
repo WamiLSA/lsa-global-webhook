@@ -64,23 +64,18 @@ jobs:
             exit 1
           fi
 
-          python - <<'PY2'
-from pathlib import Path
-p = Path('android/app/build.gradle')
-s = p.read_text()
-if 'project.ext.react' in s and 'bundleInDebug: true' in s:
-    print('bundleInDebug already enabled')
-else:
-    block = "\nproject.ext.react = [\n    bundleInDebug: true,\n    bundleInRelease: true\n]\n"
-    if 'apply from: ../../node_modules/react-native/react.gradle' in s:
-        s = s.replace('apply from: ../../node_modules/react-native/react.gradle', block + '\napply from: ../../node_modules/react-native/react.gradle')
-    elif 'apply from: file(\"../../node_modules/react-native/react.gradle\")' in s:
-        s = s.replace('apply from: file(\"../../node_modules/react-native/react.gradle\")', block + '\napply from: file(\"../../node_modules/react-native/react.gradle\")')
-    else:
-        s += block
-    p.write_text(s)
-    print('Injected bundleInDebug/bundleInRelease settings')
-PY2
+          if grep -q "bundleInDebug: true" android/app/build.gradle; then
+            echo "bundleInDebug already enabled"
+          else
+            cat <<'EOF' >> android/app/build.gradle
+
+            project.ext.react = [
+                bundleInDebug: true,
+                bundleInRelease: true
+            ]
+            EOF
+            echo "Injected bundleInDebug/bundleInRelease settings"
+          fi
 
       - name: Build standalone APKs
         run: |
