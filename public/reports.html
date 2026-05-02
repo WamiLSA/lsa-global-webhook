@@ -31,8 +31,16 @@
   <script src="/top-nav.js"></script>
   <script>
     const fmt = (n) => Number(n || 0).toLocaleString();
+    const fmtValue = (v) => {
+      if (v === null || v === undefined || v === '') return 'N/A';
+      if (typeof v === 'number' && Number.isFinite(v)) return fmt(v);
+      if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+      const numeric = Number(v);
+      if (typeof v !== 'string' && Number.isFinite(numeric)) return fmt(numeric);
+      return String(v);
+    };
     const card = (title, body) => `<article class="card"><h3 class="title">${title}</h3>${body}</article>`;
-    const rows = (obj) => Object.entries(obj).map(([k,v]) => `<div class="row"><span>${k}</span><b>${fmt(v)}</b></div>`).join('');
+    const rows = (obj) => Object.entries(obj).map(([k,v]) => `<div class="row"><span>${k}</span><b>${fmtValue(v)}</b></div>`).join('');
     const bars = (items) => {
       const max = Math.max(1, ...items.map(i => i.value || 0));
       return items.map(i => `<div class="row"><span>${i.label}</span><span>${fmt(i.value)}</span></div><div class="bar"><span style="width:${Math.round((i.value||0)/max*100)}%"></span></div>`).join('');
