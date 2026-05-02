@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, FlatList, Pressable, TextInput, RefreshControl, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, FlatList, Pressable, TextInput, RefreshControl, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { api } from '../api/client';
 import { ModeBadge } from '../components/ModeBadge';
 import { Screen } from '../components/Screen';
@@ -11,6 +11,7 @@ export function InboxScreen({ navigation }) {
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [branding, setBranding] = useState({});
 
   const fetchInbox = useCallback(async () => {
     const response = await api.get('/api/mobile/inbox', { retries: 2 });
@@ -18,7 +19,7 @@ export function InboxScreen({ navigation }) {
     setMode(response.runtimeMode || 'TEST');
   }, []);
 
-  useEffect(() => { (async () => { try { await fetchInbox(); } finally { setLoading(false); } })(); }, [fetchInbox]);
+  useEffect(() => { (async () => { try { await fetchInbox(); const b=await api.get('/api/branding/settings'); setBranding(b.branding||{});} finally { setLoading(false); } })(); }, [fetchInbox]);
 
   const filtered = useMemo(() => items.filter((item) => {
     const q = search.toLowerCase();
@@ -27,6 +28,7 @@ export function InboxScreen({ navigation }) {
 
   return (
     <Screen>
+      <View style={styles.brandRow}>{branding.logo_url ? <Image source={{ uri: `${api.config.baseUrl}${branding.logo_url}` }} style={styles.brandLogo} /> : null}<Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL House'}</Text></View>
       <ModeBadge mode={mode} />
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="Search contact or last message" placeholderTextColor={colors.textMuted} />
       {loading ? <ActivityIndicator color={colors.primary} size="large" style={styles.loader} /> : (
@@ -59,4 +61,7 @@ const styles = StyleSheet.create({
   settingsText: { color: '#fff', fontWeight: '700' },
   loader: { marginTop: 24 },
   empty: { color: colors.textMuted, textAlign: 'center', marginTop: 24 }
+  ,brandRow: { flexDirection:'row', alignItems:'center', gap:10, marginBottom: 8 },
+  brandLogo: { width: 28, height: 28, borderRadius: 6 },
+  brandText: { color: colors.text, fontWeight: '700' }
 });

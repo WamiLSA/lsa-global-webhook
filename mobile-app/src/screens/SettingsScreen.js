@@ -21,10 +21,14 @@ export function SettingsScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+  const [branding, setBranding] = useState({});
+  const [brandingLogoAsset, setBrandingLogoAsset] = useState(null);
 
   const loadSettings = useCallback(async () => {
     const data = await api.get('/api/account/settings');
     setForm(data.user || {});
+    const brandingData = await api.get('/api/branding/settings');
+    setBranding(brandingData.branding || {});
   }, []);
 
   useEffect(() => { loadSettings().catch(() => setStatus('Failed to load settings.')); }, [loadSettings]);
@@ -53,10 +57,17 @@ export function SettingsScreen() {
       }
       const payload = { ...form, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) };
       await api.post('/api/account/settings', payload);
+      if (brandingLogoAsset) {
+        const bfd = new FormData();
+        bfd.append('logo', { uri: brandingLogoAsset.uri, name: brandingLogoAsset.name || 'branding-logo.jpg', type: brandingLogoAsset.mimeType || 'image/jpeg' });
+        await api.postForm('/api/branding/logo', bfd);
+      }
+      await api.post('/api/branding/settings', branding);
       if (currentPassword || newPassword || confirmPassword) {
         await api.post('/api/account/change-password', { current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword });
       }
       setAvatarAsset(null);
+      setBrandingLogoAsset(null);
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
       await loadSettings();
       setStatus('Settings updated and synchronized.');
@@ -65,6 +76,10 @@ export function SettingsScreen() {
     } finally {
       setSaving(false);
     }
+  };
+  const pickBrandingLogo = async () => {
+    const result = await DocumentPicker.getDocumentAsync({ type: ['image/*'], copyToCacheDirectory: true });
+    if (!result.canceled && result.assets?.length) setBrandingLogoAsset(result.assets[0]);
   };
 
   const PasswordField = ({ label, value, onChange, visible, onToggle }) => (
@@ -76,6 +91,8 @@ export function SettingsScreen() {
       <ScrollView>
         <Text style={styles.title}>Account Settings</Text>
         <View style={styles.card}><Text style={styles.k}>AVATAR</Text><View style={styles.avatarRow}><Image source={{ uri: avatarAsset?.uri || form.avatar_url || 'https://via.placeholder.com/64' }} style={styles.avatar} /><Pressable style={styles.smallButton} onPress={pickAvatar}><Text style={styles.buttonText}>Choose Photo</Text></Pressable></View></View>
+        <View style={styles.card}><Text style={styles.k}>BRANDING</Text><View style={styles.avatarRow}><Image source={{ uri: brandingLogoAsset?.uri || (branding.logo_url ? `${api.config.baseUrl}${branding.logo_url}` : 'https://via.placeholder.com/64') }} style={styles.avatar} /><Pressable style={styles.smallButton} onPress={pickBrandingLogo}><Text style={styles.buttonText}>Choose Logo</Text></Pressable></View></View>
+        <View style={styles.card}><Text style={styles.k}>BRAND NAME</Text><TextInput value={branding.brand_name || ''} onChangeText={(value) => setBranding((prev) => ({ ...prev, brand_name: value }))} style={styles.input} /></View>
         {fields.map((key) => (
           <View style={styles.card} key={key}>
             <Text style={styles.k}>{key.replace('_', ' ').toUpperCase()}</Text>

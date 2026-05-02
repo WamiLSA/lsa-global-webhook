@@ -47,18 +47,40 @@
       <div class="actions"><button class="save" id="saveBtn">Save Settings</button></div>
       <div class="status" id="status"></div>
     </div>
+    <div class="card" style="margin-top:16px;">
+      <h1>Branding</h1>
+      <p class="sub">Shared branding source for web and mobile in-app experience.</p>
+      <div class="grid">
+        <div class="field full"><label>Main Logo</label><img id="brandingLogoPreview" class="avatar-preview" style="width:120px;height:120px;border-radius:14px;" alt="branding-logo" /><input id="branding_logo_file" type="file" accept="image/*" /></div>
+        <div class="field"><label>Brand name</label><input id="branding_brand_name" /></div>
+        <div class="field"><label>Primary blue</label><input id="branding_primary_color" type="color" /></div>
+        <div class="field"><label>Dark blue</label><input id="branding_dark_primary_color" type="color" /></div>
+        <div class="field"><label>Accent red</label><input id="branding_accent_color" type="color" /></div>
+        <div class="field"><label>Text on blue</label><input id="branding_text_on_primary" type="color" /></div>
+      </div>
+    </div>
   </main>
   <script src="/top-nav.js"></script>
   <script>
     const ids=["email","first_name","last_name","display_name","username","avatar_url"];
     const statusEl=document.getElementById('status');
     const avatarPreview=document.getElementById('avatarPreview');
+    const brandingPreview=document.getElementById('brandingLogoPreview');
+    let brandingState={};
     function msg(t,bad){statusEl.style.color=bad?'#fca5a5':'#86efac';statusEl.textContent=t;}
     function refreshPreview(url){avatarPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
+    function refreshBrandingPreview(url){brandingPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     async function load(){
       const r=await fetch('/api/account/settings');const d=await r.json();
       ids.forEach(k=>{ if(k!=='avatar_url') document.getElementById(k).value=d.user?.[k]||''; });
       refreshPreview(d.user?.avatar_url||'');
+      const br=await fetch('/api/branding/settings'); const bd=await br.json(); brandingState=bd.branding||{};
+      document.getElementById('branding_brand_name').value=brandingState.brand_name||'LSA GLOBAL House';
+      document.getElementById('branding_primary_color').value=brandingState.primary_color||'#0B3A8C';
+      document.getElementById('branding_dark_primary_color').value=brandingState.dark_primary_color||'#072C70';
+      document.getElementById('branding_accent_color').value=brandingState.accent_color||'#C81E1E';
+      document.getElementById('branding_text_on_primary').value=brandingState.text_on_primary||'#FFFFFF';
+      refreshBrandingPreview(brandingState.logo_url||'');
     }
     document.querySelectorAll('[data-toggle]').forEach((btn)=>btn.addEventListener('click',()=>{ const input=document.getElementById(btn.dataset.toggle); input.type=input.type==='password'?'text':'password'; }));
     document.getElementById('saveBtn').addEventListener('click', async()=>{
@@ -77,13 +99,28 @@
         if(avatarUrl) body.avatar_url=avatarUrl;
         const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Save failed');
+        const logoFile=document.getElementById('branding_logo_file').files[0];
+        if(logoFile){
+          const fd=new FormData(); fd.append('logo',logoFile);
+          const logoRes=await fetch('/api/branding/logo',{method:'POST',body:fd});
+          const logoData=await logoRes.json(); if(!logoRes.ok) throw new Error(logoData.error||'Logo upload failed');
+        }
+        const brandingBody={
+          brand_name:document.getElementById('branding_brand_name').value,
+          primary_color:document.getElementById('branding_primary_color').value,
+          dark_primary_color:document.getElementById('branding_dark_primary_color').value,
+          accent_color:document.getElementById('branding_accent_color').value,
+          text_on_primary:document.getElementById('branding_text_on_primary').value
+        };
+        const bs=await fetch('/api/branding/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brandingBody)});
+        const bsd=await bs.json(); if(!bs.ok) throw new Error(bsd.error||'Branding save failed');
         if(cp||np){
           const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np,confirm_password:cnp})});
           const pd=await p.json(); if(!p.ok) throw new Error(pd.error||'Password update failed');
         }
         await load();
         msg('Settings updated successfully and synchronized.');
-        ['current_password','new_password','confirm_password','avatar_file'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+        ['current_password','new_password','confirm_password','avatar_file','branding_logo_file'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
       }catch(e){msg(e.message,true);}
     });
     load().catch(()=>msg('Failed to load settings',true));

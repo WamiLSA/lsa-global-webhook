@@ -128,6 +128,32 @@ const avatarUpload = multer({
   }
 });
 
+const BRANDING_STORAGE_DIR = path.join(__dirname, "uploads", "branding");
+const brandingLogoUploadStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(BRANDING_STORAGE_DIR, { recursive: true });
+      cb(null, BRANDING_STORAGE_DIR);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const originalName = (file.originalname || "branding-logo").replace(/[^a-zA-Z0-9._-]/g, "_");
+    const timestamp = Date.now();
+    cb(null, `branding-logo-${timestamp}-${originalName}`);
+  }
+});
+const brandingLogoUpload = multer({
+  storage: brandingLogoUploadStorage,
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const mimeType = String(file.mimetype || "").toLowerCase();
+    if (mimeType.startsWith("image/")) return cb(null, true);
+    cb(new Error("Branding logo must be an image file."));
+  }
+});
+
 const PROVIDER_CAPTURE_STORAGE_DIR = path.join(__dirname, "uploads", "provider-capture");
 const PROVIDER_CAPTURE_ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
@@ -813,6 +839,34 @@ function sanitizeProfileInput(input, existing) {
   };
 }
 
+const DEFAULT_BRANDING_SETTINGS = {
+  brand_name: "LSA GLOBAL House",
+  logo_url: "",
+  primary_color: "#0B3A8C",
+  dark_primary_color: "#072C70",
+  accent_color: "#C81E1E",
+  text_on_primary: "#FFFFFF",
+  animation_style: "fade-zoom"
+};
+
+function sanitizeBrandingInput(input, existing) {
+  const previous = existing && typeof existing === "object" ? existing : DEFAULT_BRANDING_SETTINGS;
+  const next = {
+    brand_name: String(input.brand_name || previous.brand_name || DEFAULT_BRANDING_SETTINGS.brand_name).trim() || DEFAULT_BRANDING_SETTINGS.brand_name,
+    logo_url: String(input.logo_url || previous.logo_url || "").trim(),
+    primary_color: String(input.primary_color || previous.primary_color || DEFAULT_BRANDING_SETTINGS.primary_color).trim(),
+    dark_primary_color: String(input.dark_primary_color || previous.dark_primary_color || DEFAULT_BRANDING_SETTINGS.dark_primary_color).trim(),
+    accent_color: String(input.accent_color || previous.accent_color || DEFAULT_BRANDING_SETTINGS.accent_color).trim(),
+    text_on_primary: String(input.text_on_primary || previous.text_on_primary || DEFAULT_BRANDING_SETTINGS.text_on_primary).trim(),
+    animation_style: String(input.animation_style || previous.animation_style || DEFAULT_BRANDING_SETTINGS.animation_style).trim() || "fade-zoom"
+  };
+  return next;
+}
+
+function getBrandingSettings(store) {
+  return sanitizeBrandingInput(store?.branding || {}, DEFAULT_BRANDING_SETTINGS);
+}
+
 async function getUserSettings(identifier) {
   const normalized = normalizeUserIdentifier(identifier || INBOX_USERNAME);
   const store = await readAccountSettingsStore();
@@ -878,18 +932,41 @@ app.get("/login", (req, res) => {
       <meta charset="UTF-8" />
       <title>LSA GLOBAL House Login</title>
       <style>
+        :root {
+          --brand-primary: #0B3A8C;
+          --brand-primary-dark: #072C70;
+          --brand-text: #FFFFFF;
+          --brand-accent: #C81E1E;
+        }
         body {
           font-family: Arial, sans-serif;
-          background: #f5f5f5;
+          background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-dark));
           display: flex;
           justify-content: center;
           align-items: center;
           height: 100vh;
           margin: 0;
         }
+        .entry-wrap { width: min(420px, 92vw); animation: fadeIn 420ms ease-out; }
+        .brand-stage {
+          color: var(--brand-text);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-direction: column;
+          margin-bottom: 14px;
+          animation: logoRise 700ms ease-out;
+        }
+        .brand-logo {
+          width: 96px;
+          height: 96px;
+          object-fit: contain;
+          margin-bottom: 8px;
+          filter: drop-shadow(0 6px 18px rgba(0,0,0,0.25));
+        }
         .box {
-          width: 360px;
-          background: white;
+          width: 100%;
+          background: rgba(255,255,255,0.97);
           padding: 24px;
           border-radius: 12px;
           box-shadow: 0 4px 16px rgba(0,0,0,0.1);
@@ -906,15 +983,27 @@ app.get("/login", (req, res) => {
         button {
           width: 100%;
           padding: 10px;
+          border: 0;
+          border-radius: 8px;
+          background: var(--brand-primary);
+          color: var(--brand-text);
+          font-weight: 700;
         }
         .err {
-          color: red;
+          color: #b91c1c;
           margin-bottom: 12px;
         }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes logoRise { from { transform: translateY(6px) scale(0.96); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
       </style>
     </head>
     <body>
-      <div class="box">
+      <div class="entry-wrap">
+        <div class="brand-stage">
+          <img id="brandLogo" class="brand-logo" alt="LSA GLOBAL logo" hidden />
+          <h2 id="brandNameText">LSA GLOBAL House</h2>
+        </div>
+        <div class="box">
         <h2>LSA GLOBAL House</h2>
         ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
         <form method="POST" action="/login">
@@ -923,6 +1012,29 @@ app.get("/login", (req, res) => {
           <button type="submit">Login</button>
         </form>
       </div>
+      </div>
+      <script>
+        (async function loadBranding() {
+          try {
+            const res = await fetch('/api/branding/settings');
+            const payload = await res.json();
+            const branding = payload.branding || {};
+            const root = document.documentElement;
+            if (branding.primary_color) root.style.setProperty('--brand-primary', branding.primary_color);
+            if (branding.dark_primary_color) root.style.setProperty('--brand-primary-dark', branding.dark_primary_color);
+            if (branding.text_on_primary) root.style.setProperty('--brand-text', branding.text_on_primary);
+            if (branding.accent_color) root.style.setProperty('--brand-accent', branding.accent_color);
+            const brandText = branding.brand_name || 'LSA GLOBAL House';
+            const title = document.getElementById('brandNameText');
+            if (title) title.textContent = brandText;
+            const logo = document.getElementById('brandLogo');
+            if (logo && branding.logo_url) {
+              logo.src = branding.logo_url;
+              logo.hidden = false;
+            }
+          } catch (error) {}
+        })();
+      </script>
     </body>
     </html>
   `);
@@ -956,6 +1068,15 @@ app.post("/api/mobile/auth/login", async (req, res) => {
     token: Buffer.from(`${authResult.username}:${Date.now()}`).toString("base64url"),
     user: { username: authResult.username }
   });
+});
+
+app.get("/api/branding/settings", async (req, res) => {
+  try {
+    const store = await readAccountSettingsStore();
+    return res.json({ ok: true, branding: getBrandingSettings(store) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 app.get("/logout", (req, res) => {
@@ -4340,6 +4461,30 @@ app.post("/api/account/avatar", requireAccountAuth, avatarUpload.single("avatar"
     store.users[normalized] = { ...record, avatar_url: avatarUrl, updated_at: new Date().toISOString() };
     await writeAccountSettingsStore(store);
     return res.json({ ok: true, avatar_url: avatarUrl });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/branding/logo", requireAccountAuth, brandingLogoUpload.single("logo"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Logo file is required" });
+    const logoUrl = `/uploads/branding/${req.file.filename}`;
+    const store = await readAccountSettingsStore();
+    store.branding = sanitizeBrandingInput({ ...(store.branding || {}), logo_url: logoUrl }, store.branding || DEFAULT_BRANDING_SETTINGS);
+    await writeAccountSettingsStore(store);
+    return res.json({ ok: true, logo_url: logoUrl, branding: store.branding });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/branding/settings", requireAccountAuth, async (req, res) => {
+  try {
+    const store = await readAccountSettingsStore();
+    store.branding = sanitizeBrandingInput(req.body || {}, store.branding || DEFAULT_BRANDING_SETTINGS);
+    await writeAccountSettingsStore(store);
+    return res.json({ ok: true, branding: store.branding });
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
