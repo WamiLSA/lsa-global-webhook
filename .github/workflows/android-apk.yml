@@ -110,12 +110,15 @@ jobs:
           RELEASE_DIR=android/app/build/outputs/apk/release
           KEYSTORE_PATH=$HOME/debug-release.keystore
 
-          mapfile -t UNSIGNED_APKS < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*-release-unsigned.apk' | sort)
-          if [ ${#UNSIGNED_APKS[@]} -eq 0 ]; then
-            echo "No unsigned release APKs found in $RELEASE_DIR"
-            find "$RELEASE_DIR" -maxdepth 2 -type f -name '*.apk' -print || true
+          mapfile -t RELEASE_APKS < <(find "$RELEASE_DIR" -type f -name '*.apk' | sort)
+          if [ ${#RELEASE_APKS[@]} -eq 0 ]; then
+            echo "No release APKs found under $RELEASE_DIR"
+            find "$RELEASE_DIR" -maxdepth 3 -type f -print || true
             exit 1
           fi
+
+          echo "Discovered release APK outputs:"
+          printf ' - %s\n' "${RELEASE_APKS[@]}"
 
           keytool -genkeypair \
             -alias androiddebugkey \
@@ -133,15 +136,22 @@ jobs:
             exit 1
           fi
 
-          for UNSIGNED_APK in "${UNSIGNED_APKS[@]}"; do
-            SIGNED_APK="${UNSIGNED_APK%-unsigned.apk}.apk"
+          for RELEASE_APK in "${RELEASE_APKS[@]}"; do
+            if [[ "$RELEASE_APK" == *"-unsigned.apk" ]]; then
+              SIGNED_APK="${RELEASE_APK%-unsigned.apk}.apk"
+            elif [[ "$RELEASE_APK" == *"-release.apk" ]]; then
+              SIGNED_APK="${RELEASE_APK%-release.apk}-release-signed.apk"
+            else
+              SIGNED_APK="${RELEASE_APK%.apk}-signed.apk"
+            fi
+
             "$APKSIGNER" sign \
               --ks "$KEYSTORE_PATH" \
               --ks-pass pass:android \
               --key-pass pass:android \
               --ks-key-alias androiddebugkey \
               --out "$SIGNED_APK" \
-              "$UNSIGNED_APK"
+              "$RELEASE_APK"
 
             "$APKSIGNER" verify "$SIGNED_APK"
             echo "Signed: $SIGNED_APK"
@@ -150,7 +160,7 @@ jobs:
       - name: Verify JS bundle packaged in standalone APK(s)
         run: |
           RELEASE_DIR=android/app/build/outputs/apk/release
-          mapfile -t SIGNED_APKS < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*-release.apk' ! -name '*-unsigned.apk' | sort)
+          mapfile -t SIGNED_APKS < <(find "$RELEASE_DIR" -type f -name '*-signed.apk' | sort)
 
           if [ ${#SIGNED_APKS[@]} -eq 0 ]; then
             echo "No signed release APKs found in $RELEASE_DIR"
@@ -170,5 +180,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lsa-global-internal-standalone-release-apk
-          path: mobile-app/android/app/build/outputs/apk/release/*-release.apk
+          path: mobile-app/android/app/build/outputs/apk/release/**/*-signed.apk
           if-no-files-found: error
