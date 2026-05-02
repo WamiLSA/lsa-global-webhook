@@ -23,7 +23,7 @@ export function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>LSA GLOBAL Internal</Text>
+      <Text style={styles.title}>LSA GLOBAL House</Text>
       <TextInput placeholder="Username" autoCapitalize="none" style={styles.input} value={username} onChangeText={setUsername} />
       <TextInput placeholder="Password" secureTextEntry style={styles.input} value={password} onChangeText={setPassword} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
