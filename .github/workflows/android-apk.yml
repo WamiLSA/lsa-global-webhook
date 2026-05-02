@@ -105,48 +105,70 @@ PY2
           chmod +x gradlew
           ./gradlew :app:assembleRelease
 
-      - name: Sign release APK for installation
+      - name: Sign release APK(s) for installation
         run: |
-          UNSIGNED_APK=android/app/build/outputs/apk/release/app-release-unsigned.apk
-          SIGNED_APK=android/app/build/outputs/apk/release/app-release.apk
+          RELEASE_DIR=android/app/build/outputs/apk/release
           KEYSTORE_PATH=$HOME/debug-release.keystore
 
-          if [ ! -f "$UNSIGNED_APK" ]; then
-            echo "Missing APK: $UNSIGNED_APK"
+          mapfile -t UNSIGNED_APKS < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*-release-unsigned.apk' | sort)
+          if [ ${#UNSIGNED_APKS[@]} -eq 0 ]; then
+            echo "No unsigned release APKs found in $RELEASE_DIR"
+            find "$RELEASE_DIR" -maxdepth 2 -type f -name '*.apk' -print || true
             exit 1
           fi
 
-          keytool -genkeypair             -alias androiddebugkey             -keyalg RSA             -keysize 2048             -validity 10000             -storepass android             -keypass android             -keystore "$KEYSTORE_PATH"             -dname "CN=Android Debug,O=Android,C=US"
+          keytool -genkeypair \
+            -alias androiddebugkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass android \
+            -keypass android \
+            -keystore "$KEYSTORE_PATH" \
+            -dname "CN=Android Debug,O=Android,C=US"
 
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
+          APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort | tail -n 1)
           if [ -z "$APKSIGNER" ]; then
             echo "apksigner not found"
             exit 1
           fi
 
-          "$APKSIGNER" sign             --ks "$KEYSTORE_PATH"             --ks-pass pass:android             --key-pass pass:android             --ks-key-alias androiddebugkey             --out "$SIGNED_APK"             "$UNSIGNED_APK"
+          for UNSIGNED_APK in "${UNSIGNED_APKS[@]}"; do
+            SIGNED_APK="${UNSIGNED_APK%-unsigned.apk}.apk"
+            "$APKSIGNER" sign \
+              --ks "$KEYSTORE_PATH" \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --ks-key-alias androiddebugkey \
+              --out "$SIGNED_APK" \
+              "$UNSIGNED_APK"
 
-          "$APKSIGNER" verify "$SIGNED_APK"
+            "$APKSIGNER" verify "$SIGNED_APK"
+            echo "Signed: $SIGNED_APK"
+          done
 
-      - name: Verify JS bundle packaged in standalone APK
+      - name: Verify JS bundle packaged in standalone APK(s)
         run: |
-          RELEASE_APK=android/app/build/outputs/apk/release/app-release.apk
+          RELEASE_DIR=android/app/build/outputs/apk/release
+          mapfile -t SIGNED_APKS < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*-release.apk' ! -name '*-unsigned.apk' | sort)
 
-          if [ ! -f "$RELEASE_APK" ]; then
-            echo "Missing APK: $RELEASE_APK"
+          if [ ${#SIGNED_APKS[@]} -eq 0 ]; then
+            echo "No signed release APKs found in $RELEASE_DIR"
             exit 1
           fi
 
-          if unzip -l "$RELEASE_APK" | grep -q "assets/index.android.bundle"; then
-            echo "Verified bundle in $RELEASE_APK"
-          else
-            echo "index.android.bundle missing in $RELEASE_APK"
-            exit 1
-          fi
+          for RELEASE_APK in "${SIGNED_APKS[@]}"; do
+            if unzip -l "$RELEASE_APK" | grep -q "assets/index.android.bundle"; then
+              echo "Verified JS bundle in $RELEASE_APK"
+            else
+              echo "index.android.bundle missing in $RELEASE_APK"
+              exit 1
+            fi
+          done
 
       - name: Upload standalone APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: lsa-global-internal-standalone-release-apk
-          path: mobile-app/android/app/build/outputs/apk/release/app-release.apk
+          path: mobile-app/android/app/build/outputs/apk/release/*-release.apk
           if-no-files-found: error
