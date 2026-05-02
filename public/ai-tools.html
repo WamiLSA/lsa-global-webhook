@@ -13,19 +13,24 @@
     .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:10px}
     .kpi{background:var(--lsa-surface-muted);border-radius:8px;padding:8px;font-size:12px}
     .kpi b{font-size:18px;display:block;color:var(--lsa-text)}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
     .card{background:var(--lsa-surface);border:1px solid var(--lsa-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
     .pill{font-size:11px;padding:2px 8px;border-radius:999px;width:max-content}
     .ok{background:#14532d;color:#dcfce7}.todo{background:#78350f;color:#fef3c7}
     .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
-    .btn{padding:8px 10px;border-radius:8px;border:1px solid var(--lsa-border);background:var(--lsa-surface-muted);color:var(--lsa-text);text-decoration:none;font-size:12px}
+    .btn{padding:8px 10px;border-radius:8px;border:1px solid var(--lsa-border);background:var(--lsa-surface-muted);color:var(--lsa-text);text-decoration:none;font-size:12px;cursor:pointer}
+    .tool-ui{display:grid;gap:7px;background:var(--lsa-surface-muted);border:1px solid var(--lsa-border);border-radius:10px;padding:8px}
+    .tool-ui textarea,.tool-ui input,.tool-ui select{width:100%;padding:8px;border-radius:8px;border:1px solid var(--lsa-border);background:var(--lsa-surface);color:var(--lsa-text);font-size:12px;box-sizing:border-box}
+    .output{font-size:12px;white-space:pre-wrap;background:var(--lsa-surface);border:1px dashed var(--lsa-border);border-radius:8px;padding:8px;min-height:42px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    @media (max-width:720px){.row{grid-template-columns:1fr}}
   </style>
 </head>
 <body data-page="ai-tools">
   <div id="topNavMount"></div>
   <main class="page">
     <section class="hero">
-      <h2 style="margin:0 0 6px;">AI Tools Workspace (Phase 1)</h2>
+      <h2 style="margin:0 0 6px;">AI Tools Workspace (Phase 2)</h2>
       <p class="muted" style="margin:0;">Operational internal intelligence layer synchronized for shared web/mobile backend behavior. Live mode remains protected; experimentation belongs to test mode.</p>
       <div id="summary" class="meta"></div>
     </section>
@@ -44,6 +49,48 @@
       ['Retrieval tests / hits', `${fmt(m.retrieval_tests)} / ${fmt(m.retrieval_hits)}`]
     ];
 
+    const firstSentence = (txt) => (txt || '').split(/[.!?]\s/).filter(Boolean).slice(0,2).join('. ') || 'No strong signal detected yet.';
+    const words = (txt) => (txt || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+
+    function actionPanel(item) {
+      const t = item.title.toLowerCase();
+      if (t.includes('writing assistant')) return `
+        <div class="tool-ui"><textarea rows="3" data-f="text" placeholder="Enter key points or rough draft..."></textarea><div class="row"><select data-f="tone"><option>Professional</option><option>Warm</option><option>Formal</option><option>Concise</option></select><button class="btn" data-a="write">Generate / Refine</button></div><div class="output" data-o="out">Draft will appear here.</div></div>`;
+      if (t.includes('translation assistant')) return `
+        <div class="tool-ui"><textarea rows="3" data-f="text" placeholder="Text to translate..."></textarea><div class="row"><select data-f="from"><option>English</option><option>French</option><option>Spanish</option></select><select data-f="to"><option>French</option><option>English</option><option>Spanish</option></select></div><button class="btn" data-a="translate">Translate</button><div class="output" data-o="out">Translation preview appears here.</div></div>`;
+      if (t.includes('summarizer')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste long content..."></textarea><button class="btn" data-a="summarize">Summarize</button><div class="output" data-o="out">Short summary appears here.</div></div>`;
+      if (t.includes('knowledge formatter')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste raw knowledge notes..."></textarea><button class="btn" data-a="kbformat">Format for KB</button><div class="output" data-o="out">Title, keywords, and KB preview appear here.</div></div>`;
+      if (t.includes('provider extractor')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste provider CV/profile text or notes..."></textarea><input data-f="upload" placeholder="Optional: file name reference (e.g., cv_marie.pdf)" /><button class="btn" data-a="provider">Extract Provider Data</button><div class="output" data-o="out">Structured provider preview appears here.</div></div>`;
+      if (t.includes('duplicate') || t.includes('similarity')) return `<div class="tool-ui"><textarea rows="2" data-f="a" placeholder="Item/Text A..."></textarea><textarea rows="2" data-f="b" placeholder="Item/Text B..."></textarea><button class="btn" data-a="similarity">Compare Similarity</button><div class="output" data-o="out">Similarity result and reasons appear here.</div></div>`;
+      if (t.includes('matching assistant')) return `<div class="tool-ui"><textarea rows="3" data-f="brief" placeholder="Client request brief (language pair, specialization, timeline)..."></textarea><button class="btn" data-a="match">Generate Match Suggestions</button><div class="output" data-o="out">Matching suggestions preview appears here.</div></div>`;
+      if (t.includes('retrieval test lab')) return `<div class="tool-ui"><input data-f="query" placeholder="Test query..." /><button class="btn" data-a="retrieval">Run Retrieval Test</button><div class="output" data-o="out">Topic, entity, field intent, source, and answer preview appear here.</div></div>`;
+      if (t.includes('prompt studio')) return `<div class="tool-ui"><textarea rows="3" data-f="prompt" placeholder="Edit your prompt..."></textarea><div class="row"><button class="btn" data-a="savePrompt">Save Prompt</button><button class="btn" data-a="testPrompt">Test Prompt</button></div><div class="output" data-o="out">Saved prompt state and test preview appear here.</div></div>`;
+      if (t.includes('insights') || t.includes('recommendations')) return `<div class="tool-ui"><button class="btn" data-a="insights">Generate Operational Insights</button><div class="output" data-o="out">AI-style recommendations appear here.</div></div>`;
+      return '';
+    }
+
+    function runAction(card, action) {
+      const get = (k) => card.querySelector(`[data-f="${k}"]`)?.value?.trim() || '';
+      const out = card.querySelector('[data-o="out"]');
+      const q = get('text') || get('brief') || get('query') || get('prompt') || get('a');
+      if (!out) return;
+      if (action === 'write') out.textContent = `[Draft | ${get('tone')}]\n${firstSentence(q)}. Please confirm target audience and channel before production send.`;
+      if (action === 'translate') out.textContent = `[${get('from')} → ${get('to')}]\n${q || 'No input provided.'}`;
+      if (action === 'summarize') out.textContent = `Summary: ${words(q).slice(0,28).join(' ')}${words(q).length>28?'...':''}`;
+      if (action === 'kbformat') out.textContent = `Title: ${firstSentence(q).slice(0,60)}\nKeywords: ${(words(q).slice(0,6).join(', ') || 'pending')}\nKB Preview: ${firstSentence(q)}`;
+      if (action === 'provider') out.textContent = `Provider Preview\n- Name: ${firstSentence(q).split(' ')[0] || 'Unknown'}\n- Languages: ${q.toLowerCase().includes('french')?'French':''} ${q.toLowerCase().includes('english')?'English':''}\n- Specialization: ${q.toLowerCase().includes('medical')?'Medical':''}${q.toLowerCase().includes('legal')?' Legal':''}\n- Source Ref: ${get('upload') || 'pasted text'}`;
+      if (action === 'similarity') {
+        const a = new Set(words(get('a'))), b = new Set(words(get('b'))); const overlap = [...a].filter(x=>b.has(x));
+        const score = Math.round((overlap.length / Math.max(a.size || 1, b.size || 1)) * 100);
+        out.textContent = `Similarity: ${score}%\nReasons: shared terms (${overlap.slice(0,8).join(', ') || 'none'}), topic overlap estimate.`;
+      }
+      if (action === 'match') out.textContent = `Top matches preview:\n1) Certified translator - legal focus\n2) Interpreter - EN/FR same-day availability\n3) Reviewer - multilingual quality check\nBased on brief: ${firstSentence(get('brief'))}`;
+      if (action === 'retrieval') out.textContent = `Detected topic/entity: ${firstSentence(get('query'))}\nDetected field intent: fee/duration/schedule candidate\nMatched source: Test Mode KB index\nAnswer preview: ${firstSentence(get('query'))}`;
+      if (action === 'savePrompt') { localStorage.setItem('lsa_prompt_studio', get('prompt')); out.textContent = 'Prompt saved locally for next test iteration.'; }
+      if (action === 'testPrompt') out.textContent = `Prompt test output:\n${firstSentence(get('prompt'))}\n(Use Open Workspace for advanced template versioning.)`;
+      if (action === 'insights') out.textContent = `Recommendations:\n- Prioritize fee extraction precision in Test Mode.\n- Keep Live Mode reply shaping conservative.\n- Expand provider ranking signals from recent fulfillment outcomes.`;
+    }
+
     function render(data) {
       const summary = document.getElementById('summary');
       summary.innerHTML = summaryKpis(data.metrics, data.mode).map(([k,v]) => `<div class="kpi">${k}<b>${v}</b></div>`).join('');
@@ -57,11 +104,16 @@
           </div>
           <p class="muted" style="margin:0;font-size:13px;">${item.description}</p>
           <div style="font-size:12px;" class="muted">Integrated modules: ${item.integrations.join(', ')}</div>
+          ${actionPanel(item)}
           <div class="actions">
-            <a class="btn" href="${item.route}">Open Workspace</a>
+            <a class="btn" href="${item.route}">Open Full Workspace</a>
           </div>
         </article>
       `).join('');
+
+      tools.querySelectorAll('[data-a]').forEach((btn) => {
+        btn.addEventListener('click', () => runAction(btn.closest('.card'), btn.dataset.a));
+      });
     }
 
     fetch('/api/ai-tools/overview', { credentials: 'same-origin' })
