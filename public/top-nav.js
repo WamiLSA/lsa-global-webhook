@@ -50,7 +50,7 @@
     { key: "quick-capture", label: "Quick Capture", href: "#", placeholder: true },
     { key: "settings", label: "Settings", href: "/settings" },
     { key: "ai-tools", label: "AI Tools", href: "#", placeholder: true },
-    { key: "reports", label: "Reports", href: "#", placeholder: true },
+    { key: "reports", label: "Reports", href: "/reports" },
     { key: "logout", label: "Logout", href: "/logout", logout: true }
   ];
 
