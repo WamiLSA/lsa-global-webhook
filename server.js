@@ -10,6 +10,7 @@ const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 const { createInternalRetriever } = require("./lib/internal-retrieval");
 const { AI_TOOLS_CATALOG } = require("./lib/ai-tools-catalog");
+const { createAutomationHub } = require("./lib/automation-hub");
 
 const crypto = require("crypto");
 
@@ -56,6 +57,10 @@ const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
 const SYSTEM_MODE_CONFIG_KEY = "system_mode";
 const SYSTEM_MODE_REFRESH_MS = Number(process.env.SYSTEM_MODE_REFRESH_MS || 5000);
+const automationHub = createAutomationHub({
+  getSystemMode: () => runtimeSystemState.mode
+});
+
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
   "image/",
   "application/pdf"
@@ -3689,6 +3694,14 @@ app.post("/webhook", async (req, res) => {
       translated_language: inboundMediation.translated_language
     });
 
+    await automationHub.trigger("new_inbox_message", {
+      serviceIntent: getKnownServiceIntent(inboundBody) || null,
+      attachmentExists: Boolean(hasAttachment),
+      mode: String(activeMode || "live").toUpperCase()
+    }, {
+      source: "inbox-webhook"
+    });
+
     if (hasAttachment && !text) {
       logInboundRoutingDecision({
         mode: activeMode,
@@ -4799,6 +4812,10 @@ app.get("/reports", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "reports.html"));
 });
 
+app.get("/automation", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "automation.html"));
+});
+
 app.get("/api/reports/overview", requireAuth, async (req, res) => {
   try {
     const [conversationsRes, kbRes, captureRes, quickRes, providersRes, modeRes] = await Promise.all([
@@ -4887,6 +4904,30 @@ app.get("/kb", requireAuth, (req, res) => {
 });
 
 // ===== KB API: CATEGORIES =====
+app.get("/api/automation/workflows", requireAuth, async (req, res) => {
+  return res.json({ workflows: automationHub.listWorkflows() });
+});
+
+app.post("/api/automation/workflows/:id/state", requireAuth, async (req, res) => {
+  const workflow = automationHub.setWorkflowState(req.params.id, req.body?.active);
+  if (!workflow) return res.status(404).json({ error: "Workflow not found" });
+  return res.json({ ok: true, workflow });
+});
+
+app.get("/api/automation/history", requireAuth, async (req, res) => {
+  return res.json({ history: automationHub.listHistory(Number(req.query.limit || 100)) });
+});
+
+app.get("/api/automation/notifications", requireAuth, async (req, res) => {
+  return res.json({ notifications: automationHub.listNotifications(Number(req.query.limit || 30)) });
+});
+
+app.post("/api/automation/run/:id", requireAuth, async (req, res) => {
+  const workflowId = req.params.id;
+  await automationHub.trigger("manual_trigger", { manualAction: workflowId === "wf-manual-provider-rematch" ? "rerun_provider_matching" : workflowId }, { initiatedBy: req.session?.username || "staff" });
+  return res.json({ ok: true });
+});
+
 app.get("/api/kb/categories", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -4925,6 +4966,14 @@ app.post("/api/kb/categories", async (req, res) => {
     if (error) {
       return res.status(500).json({ error });
     }
+
+    await automationHub.trigger("new_captured_knowledge", {
+      language: "en",
+      serviceType: suggested_category || null,
+      mode: "TEST"
+    }, {
+      source: "kb-capture"
+    });
 
     return res.json({ ok: true, data });
   } catch (err) {
@@ -5590,6 +5639,14 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       });
     }
 
+    await automationHub.trigger("document_uploaded", {
+      module: "providers",
+      providerId,
+      attachmentExists: true
+    }, {
+      source: "provider-document-upload"
+    });
+
     return res.json({ ok: true, data: normalizeProviderDocumentRow(insertedRow, providerId) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -6129,6 +6186,14 @@ app.post("/api/providers/duplicate-check", async (req, res) => {
       .sort((a, b) => b.confidence_score - a.confidence_score)
       .slice(0, 8);
 
+    if (ranked.length) {
+      await automationHub.trigger("duplicate_detected", {
+        duplicateScore: Number(ranked[0].confidence_score || 0) / 100
+      }, {
+        source: "providers-duplicate-check"
+      });
+    }
+
     return res.json({
       ok: true,
       duplicates: ranked,
@@ -6303,6 +6368,14 @@ app.post("/api/providers", async (req, res) => {
     if (error) {
       return res.status(500).json({ error });
     }
+
+    await automationHub.trigger("new_captured_knowledge", {
+      language: "en",
+      serviceType: suggested_category || null,
+      mode: "TEST"
+    }, {
+      source: "kb-capture"
+    });
 
     return res.json({ ok: true, data });
   } catch (err) {
