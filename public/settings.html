@@ -7,13 +7,18 @@
   <link rel="stylesheet" href="/top-nav.css" />
   <style>
     body { margin: 0; font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; }
-    .wrap { max-width: 760px; margin: 24px auto; padding: 0 16px 24px; }
+    .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px 24px; }
     .card { background:#111827; border:1px solid #334155; border-radius:14px; padding:20px; }
-    h1 { margin:0 0 14px; }
+    h1 { margin:0 0 4px; }
+    .sub { color:#94a3b8; margin:0 0 14px; }
     .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     .field { display:flex; flex-direction:column; gap:6px; }
     label { font-size:13px; color:#94a3b8; }
     input { border:1px solid #475569; background:#0b1220; color:#e2e8f0; border-radius:8px; padding:10px; }
+    .password-row { display:flex; gap:8px; }
+    .password-row input { flex:1; }
+    .password-row button { background:#1e293b; color:#e2e8f0; border:1px solid #475569; }
+    .avatar-preview { width:64px; height:64px; border-radius:999px; border:1px solid #334155; object-fit:cover; background:#0b1220; }
     .full { grid-column:1/-1; }
     .actions { margin-top:14px; display:flex; gap:10px; }
     button { border:0; border-radius:8px; padding:10px 14px; font-weight:700; cursor:pointer; }
@@ -27,15 +32,17 @@
   <main class="wrap">
     <div class="card">
       <h1>Account Settings</h1>
+      <p class="sub">Profile and security updates are saved to one backend account source shared by web and mobile.</p>
       <div class="grid">
-        <div class="field"><label>Avatar URL (optional)</label><input id="avatar_url" /></div>
+        <div class="field full"><label>Avatar</label><img id="avatarPreview" class="avatar-preview" alt="avatar" /><input id="avatar_file" type="file" accept="image/*" /></div>
         <div class="field"><label>Email</label><input id="email" type="email" /></div>
+        <div class="field"><label>Username</label><input id="username" /></div>
         <div class="field"><label>First name</label><input id="first_name" /></div>
         <div class="field"><label>Last name</label><input id="last_name" /></div>
-        <div class="field"><label>Display name</label><input id="display_name" /></div>
-        <div class="field"><label>Username</label><input id="username" /></div>
-        <div class="field"><label>Current password</label><input id="current_password" type="password" /></div>
-        <div class="field"><label>New password</label><input id="new_password" type="password" /></div>
+        <div class="field full"><label>Display name</label><input id="display_name" /></div>
+        <div class="field"><label>Current password</label><div class="password-row"><input id="current_password" type="password" /><button type="button" data-toggle="current_password">👁</button></div></div>
+        <div class="field"><label>New password</label><div class="password-row"><input id="new_password" type="password" /><button type="button" data-toggle="new_password">👁</button></div></div>
+        <div class="field"><label>Confirm new password</label><div class="password-row"><input id="confirm_password" type="password" /><button type="button" data-toggle="confirm_password">👁</button></div></div>
       </div>
       <div class="actions"><button class="save" id="saveBtn">Save Settings</button></div>
       <div class="status" id="status"></div>
@@ -43,25 +50,40 @@
   </main>
   <script src="/top-nav.js"></script>
   <script>
-    const ids=["avatar_url","email","first_name","last_name","display_name","username"];
+    const ids=["email","first_name","last_name","display_name","username","avatar_url"];
     const statusEl=document.getElementById('status');
+    const avatarPreview=document.getElementById('avatarPreview');
     function msg(t,bad){statusEl.style.color=bad?'#fca5a5':'#86efac';statusEl.textContent=t;}
+    function refreshPreview(url){avatarPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     async function load(){
       const r=await fetch('/api/account/settings');const d=await r.json();
-      ids.forEach(k=>document.getElementById(k).value=d.user?.[k]||'');
+      ids.forEach(k=>{ if(k!=='avatar_url') document.getElementById(k).value=d.user?.[k]||''; });
+      refreshPreview(d.user?.avatar_url||'');
     }
+    document.querySelectorAll('[data-toggle]').forEach((btn)=>btn.addEventListener('click',()=>{ const input=document.getElementById(btn.dataset.toggle); input.type=input.type==='password'?'text':'password'; }));
     document.getElementById('saveBtn').addEventListener('click', async()=>{
       try{
-        const body={};ids.forEach(k=>body[k]=document.getElementById(k).value);
+        const cp=document.getElementById('current_password').value; const np=document.getElementById('new_password').value; const cnp=document.getElementById('confirm_password').value;
+        if ((np||cp) && np!==cnp) throw new Error('New password and confirmation do not match.');
+        let avatarUrl='';
+        const avatarFile=document.getElementById('avatar_file').files[0];
+        if(avatarFile){
+          const fd=new FormData(); fd.append('avatar',avatarFile);
+          const uploadRes=await fetch('/api/account/avatar',{method:'POST',body:fd});
+          const uploadData=await uploadRes.json(); if(!uploadRes.ok) throw new Error(uploadData.error||'Avatar upload failed');
+          avatarUrl=uploadData.avatar_url;
+        }
+        const body={};['email','first_name','last_name','display_name','username'].forEach(k=>body[k]=document.getElementById(k).value);
+        if(avatarUrl) body.avatar_url=avatarUrl;
         const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Save failed');
-        const cp=document.getElementById('current_password').value; const np=document.getElementById('new_password').value;
         if(cp||np){
-          const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np})});
+          const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np,confirm_password:cnp})});
           const pd=await p.json(); if(!p.ok) throw new Error(pd.error||'Password update failed');
         }
-        msg('Settings updated successfully.');
-        document.getElementById('current_password').value='';document.getElementById('new_password').value='';
+        await load();
+        msg('Settings updated successfully and synchronized.');
+        ['current_password','new_password','confirm_password','avatar_file'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
       }catch(e){msg(e.message,true);}
     });
     load().catch(()=>msg('Failed to load settings',true));
