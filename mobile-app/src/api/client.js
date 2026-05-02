@@ -9,14 +9,15 @@ async function request(path, options = {}) {
   const retries = options.retries ?? (isSafeMethod ? 1 : 0);
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
+      const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
       const response = await fetch(`${baseUrl}${path}`, {
         method,
         headers: {
-          'Content-Type': 'application/json',
+          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...options.headers
         },
-        body: options.body ? JSON.stringify(options.body) : undefined
+        body: options.body ? (isFormData ? options.body : JSON.stringify(options.body)) : undefined
       });
 
       if (response.status === 401) {
@@ -48,5 +49,8 @@ export const api = {
   },
   post(path, body, options = {}) {
     return request(path, { method: 'POST', body, ...options });
+  },
+  postForm(path, formData, options = {}) {
+    return request(path, { method: 'POST', body: formData, ...options });
   }
 };

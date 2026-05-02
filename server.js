@@ -92,6 +92,36 @@ const outboundUpload = multer({
 });
 
 
+
+const PROFILE_AVATAR_STORAGE_DIR = path.join(__dirname, "uploads", "profile-avatars");
+const avatarUploadStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(PROFILE_AVATAR_STORAGE_DIR, { recursive: true });
+      cb(null, PROFILE_AVATAR_STORAGE_DIR);
+    } catch (error) {
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    const originalName = (file.originalname || "avatar").replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}_${originalName.slice(0, 120)}`);
+  }
+});
+
+const avatarUpload = multer({
+  storage: avatarUploadStorage,
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const mimeType = String(file.mimetype || "").toLowerCase();
+    if (!mimeType.startsWith("image/")) {
+      cb(new Error("Avatar must be an image file."));
+      return;
+    }
+    cb(null, true);
+  }
+});
+
 const PROVIDER_CAPTURE_STORAGE_DIR = path.join(__dirname, "uploads", "provider-capture");
 const PROVIDER_CAPTURE_ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
@@ -4249,11 +4279,28 @@ app.post("/api/account/settings", requireAccountAuth, async (req, res) => {
   }
 });
 
+
+app.post("/api/account/avatar", requireAccountAuth, avatarUpload.single("avatar"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "Avatar file is required" });
+    const avatarUrl = `/uploads/profile-avatars/${req.file.filename}`;
+    const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
+    store.users = store.users || {};
+    store.users[normalized] = { ...record, avatar_url: avatarUrl, updated_at: new Date().toISOString() };
+    await writeAccountSettingsStore(store);
+    return res.json({ ok: true, avatar_url: avatarUrl });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
 app.post("/api/account/change-password", requireAccountAuth, async (req, res) => {
   try {
     const currentPassword = String(req.body?.current_password || "");
     const nextPassword = String(req.body?.new_password || "");
     if (nextPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+    const confirmPassword = String(req.body?.confirm_password || "");
+    if (confirmPassword && confirmPassword !== nextPassword) return res.status(400).json({ error: "Password confirmation does not match" });
     const valid = await verifyInboxCredentials(req.accountIdentifier, currentPassword);
     if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
     const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
