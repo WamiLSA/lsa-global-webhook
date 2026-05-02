@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL Automation Hub</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/top-nav.css" />
+  <style>
+    body { font-family: Arial, sans-serif; margin:0; background:var(--lsa-app-bg); color:var(--lsa-text); }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+    .card { background:var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:10px; padding:12px; }
+    .muted{color:var(--lsa-text-muted);font-size:12px}
+    button{padding:6px 10px;border:1px solid var(--lsa-input-border);background:var(--lsa-surface);border-radius:6px;cursor:pointer}
+    .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto}
+    th,td{padding:8px;border-bottom:1px solid var(--lsa-border);text-align:left;font-size:13px}
+  </style>
+</head>
+<body data-page="automation">
+  <div id="topNavMount"></div>
+  <div class="wrap">
+    <h1>Automation Hub (Phase 1)</h1>
+    <div id="workflowGrid" class="grid"></div>
+    <h2>Run History</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Time</th><th>Result</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+    <h2>Internal Notifications</h2><div id="notify"></div>
+  </div>
+  <script src="/top-nav.js"></script>
+  <script>
+    async function getJson(url, options){const r=await fetch(url,Object.assign({credentials:'same-origin'},options||{}));if(!r.ok)throw new Error('request failed');return r.json();}
+    async function load(){
+      const [w,h,n]=await Promise.all([getJson('/api/automation/workflows'),getJson('/api/automation/history'),getJson('/api/automation/notifications')]);
+      const grid=document.getElementById('workflowGrid');
+      grid.innerHTML=w.workflows.map(wf=>`<div class='card'><div class='row'><strong>${wf.name}</strong><label><input type='checkbox' ${wf.active?'checked':''} onchange='setState("${wf.id}",this.checked)'/> Active</label></div><div class='muted'>Trigger: ${wf.trigger.type}</div><div class='muted'>Runs: ${wf.stats.runCount} • Last: ${wf.stats.lastRunAt||'Never'} • State: ${wf.stats.lastState}</div><div style='margin-top:8px'><button onclick='runNow("${wf.id}")'>Run now</button></div></div>`).join('');
+      document.getElementById('historyRows').innerHTML=h.history.map(i=>`<tr><td>${i.workflowName}</td><td>${i.triggerType}</td><td>${i.startedAt}</td><td>${i.success?'Success':'Failed'}</td><td>${i.error||''}</td></tr>`).join('');
+      document.getElementById('notify').innerHTML=n.notifications.map(x=>`<div class='card'>${x.message}<div class='muted'>${x.createdAt}</div></div>`).join('');
+    }
+    async function setState(id, active){ await getJson('/api/automation/workflows/'+id+'/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}); }
+    async function runNow(id){ await getJson('/api/automation/run/'+id,{method:'POST'}); await load(); }
+    load();
+  </script>
+</body>
+</html>

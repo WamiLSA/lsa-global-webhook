@@ -48,6 +48,7 @@
     { key: "providers", label: "Providers", href: "/providers" },
     { key: "archived", label: "Archived Threads", href: "/archived" },
     { key: "quick-capture", label: "Quick Capture", href: "#", placeholder: true },
+    { key: "automation", label: "Automation Hub", href: "/automation" },
     { key: "settings", label: "Settings", href: "/settings" },
     { key: "ai-tools", label: "AI Tools", href: "/ai-tools" },
     { key: "reports", label: "Reports", href: "/reports" },
