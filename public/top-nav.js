@@ -49,7 +49,7 @@
     { key: "archived", label: "Archived Threads", href: "/archived" },
     { key: "quick-capture", label: "Quick Capture", href: "#", placeholder: true },
     { key: "settings", label: "Settings", href: "/settings" },
-    { key: "ai-tools", label: "AI Tools", href: "#", placeholder: true },
+    { key: "ai-tools", label: "AI Tools", href: "/ai-tools" },
     { key: "reports", label: "Reports", href: "/reports" },
     { key: "logout", label: "Logout", href: "/logout", logout: true }
   ];
