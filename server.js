@@ -775,6 +775,63 @@ function canChangeMode(req) {
 }
 
 const ACCOUNT_SETTINGS_FILE = path.join(__dirname, "data", "account-settings.json");
+const COMMUNICATIONS_LAYER_FILE = path.join(__dirname, "data", "communications-layer.json");
+
+function buildDefaultCommunicationsLayerState() {
+  return {
+    mail: {
+      threads: [
+        {
+          thread_id: "mail-demo-001",
+          sender: "admissions@lsaglobal.org",
+          subject: "Program inquiry - IELTS preparation",
+          preview: "Good day, I would like details on IELTS evening classes.",
+          timestamp: new Date().toISOString(),
+          is_read: false,
+          is_archived: false,
+          entries: [
+            {
+              entry_id: "mail-entry-001",
+              sender: "admissions@lsaglobal.org",
+              subject: "Program inquiry - IELTS preparation",
+              preview: "Good day, I would like details on IELTS evening classes.",
+              body: "Good day, I would like details on IELTS evening classes.",
+              timestamp: new Date().toISOString(),
+              is_read: false,
+              channel: "mail"
+            }
+          ],
+          channel: "mail",
+          source: "email"
+        }
+      ]
+    },
+    forms: { queue: [] },
+    signature_manager: {
+      default_signature_id: null,
+      signatures: [],
+      allow_no_signature: true
+    },
+    reply_templates: []
+  };
+}
+
+async function readCommunicationsLayerState() {
+  try {
+    const raw = await fs.readFile(COMMUNICATIONS_LAYER_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : buildDefaultCommunicationsLayerState();
+  } catch (error) {
+    if (error.code === "ENOENT") return buildDefaultCommunicationsLayerState();
+    throw error;
+  }
+}
+
+async function writeCommunicationsLayerState(state) {
+  await fs.mkdir(path.dirname(COMMUNICATIONS_LAYER_FILE), { recursive: true });
+  await fs.writeFile(COMMUNICATIONS_LAYER_FILE, JSON.stringify(state, null, 2));
+}
+
 
 function normalizeUserIdentifier(value) {
   return String(value || "").trim().toLowerCase();
@@ -4550,6 +4607,55 @@ app.post("/api/system/mode", async (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
+});
+
+app.get("/api/communications/overview", async (req, res) => {
+  const state = await readCommunicationsLayerState();
+  return res.json({
+    ok: true,
+    platform_identity: "LSA GLOBAL Internal OS",
+    communication_layer: {
+      channels: ["whatsapp", "mail"],
+      prepared_channels: ["forms", "all"],
+      mail_threads: state.mail?.threads?.length || 0
+    },
+    signature_manager: state.signature_manager,
+    reply_templates_count: Array.isArray(state.reply_templates) ? state.reply_templates.length : 0
+  });
+});
+
+app.get("/api/communications/mail/threads", async (req, res) => {
+  const state = await readCommunicationsLayerState();
+  const view = String(req.query.view || "active").toLowerCase();
+  const archived = view === "archived";
+  const threads = (state.mail?.threads || []).filter(t => Boolean(t.is_archived) === archived).map(t => ({
+    thread_id: t.thread_id,
+    contact_name: t.subject,
+    sender: t.sender,
+    subject: t.subject,
+    preview: t.preview,
+    timestamp: t.timestamp,
+    is_read: t.is_read,
+    label: t.is_read ? "Read" : "Unread"
+  }));
+  return res.json(threads);
+});
+
+app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
+  const state = await readCommunicationsLayerState();
+  const thread = (state.mail?.threads || []).find(t => t.thread_id === req.params.thread_id);
+  if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+  return res.json(thread.entries || []);
+});
+
+app.get("/api/communications/signatures", async (req, res) => {
+  const state = await readCommunicationsLayerState();
+  return res.json({ ok: true, signature_manager: state.signature_manager });
+});
+
+app.get("/api/communications/templates", async (req, res) => {
+  const state = await readCommunicationsLayerState();
+  return res.json({ ok: true, templates: state.reply_templates || [] });
 });
 
 app.get("/api/conversations", async (req, res) => {
