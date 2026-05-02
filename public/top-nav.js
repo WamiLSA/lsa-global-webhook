@@ -48,7 +48,7 @@
     { key: "providers", label: "Providers", href: "/providers" },
     { key: "archived", label: "Archived Threads", href: "/archived" },
     { key: "quick-capture", label: "Quick Capture", href: "#", placeholder: true },
-    { key: "settings", label: "Settings", href: "#", placeholder: true },
+    { key: "settings", label: "Settings", href: "/settings" },
     { key: "ai-tools", label: "AI Tools", href: "#", placeholder: true },
     { key: "reports", label: "Reports", href: "#", placeholder: true },
     { key: "logout", label: "Logout", href: "/logout", logout: true }

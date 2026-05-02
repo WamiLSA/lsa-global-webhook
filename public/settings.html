@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings · LSA GLOBAL Internal</title>
+  <link rel="stylesheet" href="/top-nav.css" />
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; }
+    .wrap { max-width: 760px; margin: 24px auto; padding: 0 16px 24px; }
+    .card { background:#111827; border:1px solid #334155; border-radius:14px; padding:20px; }
+    h1 { margin:0 0 14px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .field { display:flex; flex-direction:column; gap:6px; }
+    label { font-size:13px; color:#94a3b8; }
+    input { border:1px solid #475569; background:#0b1220; color:#e2e8f0; border-radius:8px; padding:10px; }
+    .full { grid-column:1/-1; }
+    .actions { margin-top:14px; display:flex; gap:10px; }
+    button { border:0; border-radius:8px; padding:10px 14px; font-weight:700; cursor:pointer; }
+    .save { background:#2563eb; color:#fff; }
+    .status { margin-top:10px; min-height:20px; font-size:14px; }
+    @media(max-width:700px){ .grid{grid-template-columns:1fr;} }
+  </style>
+</head>
+<body data-page="settings">
+  <div id="topNavMount"></div>
+  <main class="wrap">
+    <div class="card">
+      <h1>Account Settings</h1>
+      <div class="grid">
+        <div class="field"><label>Avatar URL (optional)</label><input id="avatar_url" /></div>
+        <div class="field"><label>Email</label><input id="email" type="email" /></div>
+        <div class="field"><label>First name</label><input id="first_name" /></div>
+        <div class="field"><label>Last name</label><input id="last_name" /></div>
+        <div class="field"><label>Display name</label><input id="display_name" /></div>
+        <div class="field"><label>Username</label><input id="username" /></div>
+        <div class="field"><label>Current password</label><input id="current_password" type="password" /></div>
+        <div class="field"><label>New password</label><input id="new_password" type="password" /></div>
+      </div>
+      <div class="actions"><button class="save" id="saveBtn">Save Settings</button></div>
+      <div class="status" id="status"></div>
+    </div>
+  </main>
+  <script src="/top-nav.js"></script>
+  <script>
+    const ids=["avatar_url","email","first_name","last_name","display_name","username"];
+    const statusEl=document.getElementById('status');
+    function msg(t,bad){statusEl.style.color=bad?'#fca5a5':'#86efac';statusEl.textContent=t;}
+    async function load(){
+      const r=await fetch('/api/account/settings');const d=await r.json();
+      ids.forEach(k=>document.getElementById(k).value=d.user?.[k]||'');
+    }
+    document.getElementById('saveBtn').addEventListener('click', async()=>{
+      try{
+        const body={};ids.forEach(k=>body[k]=document.getElementById(k).value);
+        const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Save failed');
+        const cp=document.getElementById('current_password').value; const np=document.getElementById('new_password').value;
+        if(cp||np){
+          const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np})});
+          const pd=await p.json(); if(!p.ok) throw new Error(pd.error||'Password update failed');
+        }
+        msg('Settings updated successfully.');
+        document.getElementById('current_password').value='';document.getElementById('new_password').value='';
+      }catch(e){msg(e.message,true);}
+    });
+    load().catch(()=>msg('Failed to load settings',true));
+  </script>
+</body>
+</html>

@@ -10,6 +10,8 @@ const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 const { createInternalRetriever } = require("./lib/internal-retrieval");
 
+const crypto = require("crypto");
+
 const app = express();
 
 app.use(express.json({ limit: "20mb" }));
@@ -710,10 +712,88 @@ function canChangeMode(req) {
   return INTERNAL_MODE_ADMIN_USERS.includes(sessionUser);
 }
 
-function verifyInboxCredentials(identifier, password) {
-  const normalizedIdentifier = String(identifier || "").trim();
+const ACCOUNT_SETTINGS_FILE = path.join(__dirname, "data", "account-settings.json");
+
+function normalizeUserIdentifier(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.pbkdf2Sync(String(password), salt, 100000, 64, "sha512").toString("hex");
+  return `pbkdf2$100000$${salt}$${derived}`;
+}
+
+function verifyPassword(password, storedHash) {
+  if (!storedHash || typeof storedHash !== "string") return false;
+  const [scheme, rounds, salt, expected] = storedHash.split("$");
+  if (scheme !== "pbkdf2" || !rounds || !salt || !expected) return false;
+  const derived = crypto.pbkdf2Sync(String(password), salt, Number(rounds), 64, "sha512").toString("hex");
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(derived, "hex"));
+}
+
+async function readAccountSettingsStore() {
+  try {
+    const raw = await fs.readFile(ACCOUNT_SETTINGS_FILE, "utf8");
+    const data = JSON.parse(raw);
+    return data && typeof data === "object" ? data : { users: {} };
+  } catch (error) {
+    if (error.code === "ENOENT") return { users: {} };
+    throw error;
+  }
+}
+
+async function writeAccountSettingsStore(store) {
+  await fs.mkdir(path.dirname(ACCOUNT_SETTINGS_FILE), { recursive: true });
+  await fs.writeFile(ACCOUNT_SETTINGS_FILE, JSON.stringify(store, null, 2));
+}
+
+function buildDefaultUserRecord(username) {
+  const normalized = normalizeUserIdentifier(username || INBOX_USERNAME);
+  return {
+    username: normalized,
+    first_name: "",
+    last_name: "",
+    display_name: normalized,
+    email: "",
+    avatar_url: "",
+    password_hash: null,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function sanitizeProfileInput(input, existing) {
+  const normalizedUsername = normalizeUserIdentifier(input.username || existing.username || INBOX_USERNAME);
+  if (!normalizedUsername) throw new Error("Username is required");
+  const email = String(input.email || "").trim();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Invalid email format");
+  return {
+    first_name: String(input.first_name || "").trim(),
+    last_name: String(input.last_name || "").trim(),
+    display_name: String(input.display_name || "").trim() || normalizedUsername,
+    username: normalizedUsername,
+    email,
+    avatar_url: String(input.avatar_url || "").trim()
+  };
+}
+
+async function getUserSettings(identifier) {
+  const normalized = normalizeUserIdentifier(identifier || INBOX_USERNAME);
+  const store = await readAccountSettingsStore();
+  const users = store.users || {};
+  const record = users[normalized] || buildDefaultUserRecord(normalized);
+  return { store, normalized, record, users };
+}
+
+async function verifyInboxCredentials(identifier, password) {
+  const normalizedIdentifier = normalizeUserIdentifier(identifier);
   if (!normalizedIdentifier || !password) return false;
-  return normalizedIdentifier === INBOX_USERNAME && password === INBOX_PASSWORD;
+  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME)) {
+    const { record } = await getUserSettings(normalizedIdentifier);
+    if (record.password_hash) return verifyPassword(password, record.password_hash);
+    return password === INBOX_PASSWORD;
+  }
+  return false;
 }
 
 function requireAuth(req, res, next) {
@@ -781,10 +861,10 @@ app.get("/login", (req, res) => {
   `);
 });
 
-app.post("/login", (req, res) => {
+app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  if (verifyInboxCredentials(username, password)) {
+  if (await verifyInboxCredentials(username, password)) {
     req.session.authenticated = true;
     req.session.username = username;
     return res.redirect("/inbox");
@@ -795,11 +875,11 @@ app.post("/login", (req, res) => {
 
 
 
-app.post("/api/mobile/auth/login", (req, res) => {
+app.post("/api/mobile/auth/login", async (req, res) => {
   const { username, email, identifier, password } = req.body || {};
   const loginIdentifier = identifier || username || email;
 
-  if (!verifyInboxCredentials(loginIdentifier, password)) {
+  if (!(await verifyInboxCredentials(loginIdentifier, password))) {
     return res.status(401).json({ error: "Invalid username or password" });
   }
 
@@ -4114,6 +4194,76 @@ app.get("/inbox", requireAuth, (req, res) => {
 
 app.get("/archived", requireAuth, (req, res) => {
   return res.redirect("/inbox?view=archived");
+});
+
+
+
+function getAuthenticatedIdentifier(req) {
+  if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
+  const authHeader = String(req.headers.authorization || "");
+  if (authHeader.startsWith("Bearer ")) {
+    const raw = authHeader.slice(7).trim();
+    try {
+      const decoded = Buffer.from(raw, "base64url").toString("utf8");
+      const identifier = decoded.split(":")[0];
+      return normalizeUserIdentifier(identifier);
+    } catch (error) {
+      return "";
+    }
+  }
+  return "";
+}
+
+function requireAccountAuth(req, res, next) {
+  const identifier = getAuthenticatedIdentifier(req);
+  if (!identifier) return res.status(401).json({ error: "Unauthorized" });
+  req.accountIdentifier = identifier;
+  return next();
+}
+
+app.get("/settings", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "settings.html"));
+});
+
+app.get("/api/account/settings", requireAccountAuth, async (req, res) => {
+  try {
+    const { record } = await getUserSettings(req.accountIdentifier);
+    const { password_hash, ...safe } = record;
+    return res.json({ ok: true, user: safe });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/account/settings", requireAccountAuth, async (req, res) => {
+  try {
+    const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
+    const next = sanitizeProfileInput(req.body || {}, record);
+    store.users = store.users || {};
+    store.users[normalized] = { ...record, ...next, updated_at: new Date().toISOString() };
+    await writeAccountSettingsStore(store);
+    const { password_hash, ...safe } = store.users[normalized];
+    return res.json({ ok: true, message: "Settings updated", user: safe });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/account/change-password", requireAccountAuth, async (req, res) => {
+  try {
+    const currentPassword = String(req.body?.current_password || "");
+    const nextPassword = String(req.body?.new_password || "");
+    if (nextPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+    const valid = await verifyInboxCredentials(req.accountIdentifier, currentPassword);
+    if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+    const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
+    store.users = store.users || {};
+    store.users[normalized] = { ...record, password_hash: hashPassword(nextPassword), updated_at: new Date().toISOString() };
+    await writeAccountSettingsStore(store);
+    return res.json({ ok: true, message: "Password updated" });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
 });
 
 app.use("/api", requireAuth);
