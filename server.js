@@ -39,6 +39,8 @@ const SUPABASE_KEY =
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const APP_ENV = String(process.env.APP_ENV || "live").toLowerCase();
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
+const MOBILE_AUTH_TOKEN_SECRET = process.env.MOBILE_AUTH_TOKEN_SECRET || process.env.SESSION_SECRET || "change_this_secret";
+const MOBILE_AUTH_TOKEN_TTL_MS = Number(process.env.MOBILE_AUTH_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000);
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const INBOX_USERNAME = process.env.INBOX_USERNAME;
@@ -884,7 +886,7 @@ app.post("/api/mobile/auth/login", async (req, res) => {
   }
 
   return res.json({
-    token: Buffer.from(`${loginIdentifier}:${Date.now()}`).toString("base64url"),
+    token: createMobileAuthToken(loginIdentifier),
     user: { username: INBOX_USERNAME }
   });
 });
@@ -4202,16 +4204,39 @@ function getAuthenticatedIdentifier(req) {
   if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
   const authHeader = String(req.headers.authorization || "");
   if (authHeader.startsWith("Bearer ")) {
-    const raw = authHeader.slice(7).trim();
-    try {
-      const decoded = Buffer.from(raw, "base64url").toString("utf8");
-      const identifier = decoded.split(":")[0];
-      return normalizeUserIdentifier(identifier);
-    } catch (error) {
-      return "";
-    }
+    return verifyMobileAuthToken(authHeader.slice(7).trim());
   }
   return "";
+}
+
+function signMobileAuthTokenPayload(payloadB64) {
+  return crypto.createHmac("sha256", MOBILE_AUTH_TOKEN_SECRET).update(payloadB64).digest("base64url");
+}
+
+function createMobileAuthToken(identifier) {
+  const normalized = normalizeUserIdentifier(identifier);
+  if (!normalized) return "";
+  const now = Date.now();
+  const payload = { sub: normalized, iat: now, exp: now + MOBILE_AUTH_TOKEN_TTL_MS };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = signMobileAuthTokenPayload(payloadB64);
+  return `${payloadB64}.${signature}`;
+}
+
+function verifyMobileAuthToken(token) {
+  const [payloadB64, providedSignature] = String(token || "").split(".");
+  if (!payloadB64 || !providedSignature) return "";
+  const expectedSignature = signMobileAuthTokenPayload(payloadB64);
+  if (providedSignature !== expectedSignature) return "";
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    const identifier = normalizeUserIdentifier(payload?.sub);
+    const exp = Number(payload?.exp || 0);
+    if (!identifier || !Number.isFinite(exp) || exp <= Date.now()) return "";
+    return identifier;
+  } catch (error) {
+    return "";
+  }
 }
 
 function requireAccountAuth(req, res, next) {
