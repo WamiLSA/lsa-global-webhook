@@ -69,7 +69,7 @@
   mountPoint.innerHTML = `
     <header class="lsa-top-nav">
       <div class="lsa-top-nav__inner">
-        <div class="lsa-top-nav__brand"><img id="topNavBrandLogo" alt="logo" style="width:28px;height:28px;object-fit:contain;border-radius:6px;display:none;" /><span id="topNavBrandText">LSA GLOBAL Internal</span></div>
+        <div class="lsa-top-nav__brand"><img id="topNavBrandLogo" alt="logo" style="width:28px;height:28px;object-fit:contain;border-radius:6px;display:none;" /><span id="topNavBrandText">LSA GLOBAL Internal OS</span></div>
         <div class="lsa-top-nav__right">
           <div class="lsa-mode-control" aria-live="polite">
             <span id="modeStatusBadge" class="lsa-mode-badge lsa-mode-badge--loading">MODE: ...</span>
@@ -175,7 +175,7 @@
       const branding = payload.branding || {};
       const text = document.getElementById("topNavBrandText");
       const logo = document.getElementById("topNavBrandLogo");
-      if (text && branding.brand_name) text.textContent = branding.brand_name;
+      if (text) text.textContent = 'LSA GLOBAL Internal OS';
       if (logo && branding.logo_url) {
         logo.src = branding.logo_url;
         logo.style.display = "block";

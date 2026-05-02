@@ -783,19 +783,21 @@ function buildDefaultCommunicationsLayerState() {
       threads: [
         {
           thread_id: "mail-demo-001",
-          sender: "admissions@lsaglobal.org",
-          subject: "Program inquiry - IELTS preparation",
-          preview: "Good day, I would like details on IELTS evening classes.",
+          sender: "contact@client-example.net",
+          recipients: ["operations@lsa.global"],
+          subject: "Request for certified translation timeline",
+          preview: "Hello, please confirm delivery timeline for three certified documents.",
           timestamp: new Date().toISOString(),
           is_read: false,
           is_archived: false,
           entries: [
             {
               entry_id: "mail-entry-001",
-              sender: "admissions@lsaglobal.org",
-              subject: "Program inquiry - IELTS preparation",
-              preview: "Good day, I would like details on IELTS evening classes.",
-              body: "Good day, I would like details on IELTS evening classes.",
+              sender: "contact@client-example.net",
+              recipients: ["operations@lsa.global"],
+              subject: "Request for certified translation timeline",
+              preview: "Hello, please confirm delivery timeline for three certified documents.",
+              body: "Hello, please confirm delivery timeline for three certified documents.",
               timestamp: new Date().toISOString(),
               is_read: false,
               channel: "mail"
@@ -4646,6 +4648,51 @@ app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
   const thread = (state.mail?.threads || []).find(t => t.thread_id === req.params.thread_id);
   if (!thread) return res.status(404).json({ error: "Mail thread not found" });
   return res.json(thread.entries || []);
+});
+
+
+app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), async (req, res) => {
+  try {
+    const state = await readCommunicationsLayerState();
+    const threadId = String(req.body?.thread_id || "").trim();
+    const body = String(req.body?.body || "").trim();
+    if (!threadId) return res.status(400).json({ error: "thread_id is required" });
+    const thread = (state.mail?.threads || []).find(t => t.thread_id === threadId);
+    if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    if (!body && !req.file) return res.status(400).json({ error: "Reply content or attachment required" });
+
+    const newEntry = {
+      entry_id: `mail-entry-${Date.now()}`,
+      direction: "out",
+      sender: "operations@lsa.global",
+      recipient: thread.sender,
+      recipients: [thread.sender],
+      subject: thread.subject,
+      body,
+      preview: body || `Attachment: ${req.file?.originalname || "file"}`,
+      timestamp: new Date().toISOString(),
+      is_read: true,
+      channel: "mail"
+    };
+    if (req.file) {
+      newEntry.attachment = {
+        file_name: req.file.originalname,
+        mime_type: req.file.mimetype,
+        size: req.file.size,
+        path: `/uploads/outbound/${req.file.filename}`
+      };
+    }
+
+    thread.entries = Array.isArray(thread.entries) ? thread.entries : [];
+    thread.entries.push(newEntry);
+    thread.preview = newEntry.preview;
+    thread.timestamp = newEntry.timestamp;
+    thread.is_read = true;
+    await writeCommunicationsLayerState(state);
+    return res.json({ ok: true, entry: newEntry });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 app.get("/api/communications/signatures", async (req, res) => {
