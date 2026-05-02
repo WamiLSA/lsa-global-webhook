@@ -1,4 +1,4 @@
-name: Android APK Build
+name: LSA GLOBAL Internal Mobile App
 
 on:
   workflow_dispatch:
