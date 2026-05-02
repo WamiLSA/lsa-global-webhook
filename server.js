@@ -40,7 +40,21 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const APP_ENV = String(process.env.APP_ENV || "live").toLowerCase();
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const MOBILE_AUTH_TOKEN_SECRET = process.env.MOBILE_AUTH_TOKEN_SECRET || process.env.SESSION_SECRET || "change_this_secret";
-const MOBILE_AUTH_TOKEN_TTL_MS = Number(process.env.MOBILE_AUTH_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+const DEFAULT_MOBILE_AUTH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+function parseMobileAuthTokenTtlMs(value) {
+  if (value == null || value === "") {
+    return DEFAULT_MOBILE_AUTH_TOKEN_TTL_MS;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn(
+      `Invalid MOBILE_AUTH_TOKEN_TTL_MS value "${value}". Falling back to default ${DEFAULT_MOBILE_AUTH_TOKEN_TTL_MS}ms.`
+    );
+    return DEFAULT_MOBILE_AUTH_TOKEN_TTL_MS;
+  }
+  return parsed;
+}
+const MOBILE_AUTH_TOKEN_TTL_MS = parseMobileAuthTokenTtlMs(process.env.MOBILE_AUTH_TOKEN_TTL_MS);
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const INBOX_USERNAME = process.env.INBOX_USERNAME;
