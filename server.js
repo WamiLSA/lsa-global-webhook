@@ -821,15 +821,46 @@ async function getUserSettings(identifier) {
   return { store, normalized, record, users };
 }
 
+function findUserRecordByIdentifier(users, identifier) {
+  const normalized = normalizeUserIdentifier(identifier);
+  if (!normalized) return null;
+  const direct = users[normalized];
+  if (direct) return { key: normalized, record: direct };
+  for (const [key, record] of Object.entries(users)) {
+    const username = normalizeUserIdentifier(record?.username);
+    const email = normalizeUserIdentifier(record?.email);
+    if (username === normalized || email === normalized) {
+      return { key, record };
+    }
+  }
+  return null;
+}
+
 async function verifyInboxCredentials(identifier, password) {
   const normalizedIdentifier = normalizeUserIdentifier(identifier);
-  if (!normalizedIdentifier || !password) return false;
-  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME)) {
-    const { record } = await getUserSettings(normalizedIdentifier);
-    if (record.password_hash) return verifyPassword(password, record.password_hash);
-    return password === INBOX_PASSWORD;
+  if (!normalizedIdentifier || !password) return { ok: false };
+
+  const store = await readAccountSettingsStore();
+  store.users = store.users || {};
+  const matchedUser = findUserRecordByIdentifier(store.users, normalizedIdentifier);
+
+  if (matchedUser) {
+    const { key, record } = matchedUser;
+    if (record.password_hash) {
+      if (!verifyPassword(password, record.password_hash)) return { ok: false };
+    } else {
+      const bootstrapMatches = normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD;
+      if (!bootstrapMatches) return { ok: false };
+    }
+    const canonicalUsername = normalizeUserIdentifier(record.username || key || normalizedIdentifier);
+    return { ok: true, username: canonicalUsername };
   }
-  return false;
+
+  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
+    return { ok: true, username: normalizeUserIdentifier(INBOX_USERNAME), bootstrap: true };
+  }
+
+  return { ok: false };
 }
 
 function requireAuth(req, res, next) {
@@ -845,7 +876,7 @@ app.get("/login", (req, res) => {
     <html>
     <head>
       <meta charset="UTF-8" />
-      <title>LSA GLOBAL Inbox Login</title>
+      <title>LSA GLOBAL House Login</title>
       <style>
         body {
           font-family: Arial, sans-serif;
@@ -884,7 +915,7 @@ app.get("/login", (req, res) => {
     </head>
     <body>
       <div class="box">
-        <h2>LSA GLOBAL Inbox</h2>
+        <h2>LSA GLOBAL House</h2>
         ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
         <form method="POST" action="/login">
           <input type="text" name="username" placeholder="Username" required />
@@ -900,9 +931,10 @@ app.get("/login", (req, res) => {
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  if (await verifyInboxCredentials(username, password)) {
+  const authResult = await verifyInboxCredentials(username, password);
+  if (authResult.ok) {
     req.session.authenticated = true;
-    req.session.username = username;
+    req.session.username = authResult.username;
     return res.redirect("/inbox");
   }
 
@@ -915,13 +947,14 @@ app.post("/api/mobile/auth/login", async (req, res) => {
   const { username, email, identifier, password } = req.body || {};
   const loginIdentifier = identifier || username || email;
 
-  if (!(await verifyInboxCredentials(loginIdentifier, password))) {
+  const authResult = await verifyInboxCredentials(loginIdentifier, password);
+  if (!authResult.ok) {
     return res.status(401).json({ error: "Invalid username or password" });
   }
 
   return res.json({
-    token: Buffer.from(`${loginIdentifier}:${Date.now()}`).toString("base64url"),
-    user: { username: INBOX_USERNAME }
+    token: Buffer.from(`${authResult.username}:${Date.now()}`).toString("base64url"),
+    user: { username: authResult.username }
   });
 });
 
@@ -4283,10 +4316,14 @@ app.post("/api/account/settings", requireAccountAuth, async (req, res) => {
   try {
     const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
     const next = sanitizeProfileInput(req.body || {}, record);
+    const nextKey = normalizeUserIdentifier(next.username || normalized);
     store.users = store.users || {};
-    store.users[normalized] = { ...record, ...next, updated_at: new Date().toISOString() };
+    const updatedRecord = { ...record, ...next, updated_at: new Date().toISOString() };
+    if (nextKey !== normalized) delete store.users[normalized];
+    store.users[nextKey] = updatedRecord;
     await writeAccountSettingsStore(store);
-    const { password_hash, ...safe } = store.users[normalized];
+    req.session.username = nextKey;
+    const { password_hash, ...safe } = store.users[nextKey];
     return res.json({ ok: true, message: "Settings updated", user: safe });
   } catch (error) {
     return res.status(400).json({ error: error.message });
@@ -4315,8 +4352,8 @@ app.post("/api/account/change-password", requireAccountAuth, async (req, res) =>
     if (nextPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
     const confirmPassword = String(req.body?.confirm_password || "");
     if (confirmPassword && confirmPassword !== nextPassword) return res.status(400).json({ error: "Password confirmation does not match" });
-    const valid = await verifyInboxCredentials(req.accountIdentifier, currentPassword);
-    if (!valid) return res.status(401).json({ error: "Current password is incorrect" });
+    const authResult = await verifyInboxCredentials(req.accountIdentifier, currentPassword);
+    if (!authResult.ok) return res.status(401).json({ error: "Current password is incorrect" });
     const { store, normalized, record } = await getUserSettings(req.accountIdentifier);
     store.users = store.users || {};
     store.users[normalized] = { ...record, password_hash: hashPassword(nextPassword), updated_at: new Date().toISOString() };
