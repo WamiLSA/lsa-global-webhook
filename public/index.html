@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>LSA GLOBAL Inbox</title>
+  <title>LSA GLOBAL Internal OS · Communications</title>
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/top-nav.css" />
   <style>
@@ -155,6 +155,14 @@
       color: var(--lsa-text-muted);
       font-size: 12px;
     }
+    
+    .channel-toggle {display:flex; gap:8px; margin-bottom:10px;}
+    .channel-toggle button{flex:1; border:1px solid var(--lsa-input-border); border-radius:8px; padding:8px 10px; cursor:pointer; font-weight:600;}
+    .channel-toggle .whatsapp{background:#ffffff;}
+    .channel-toggle .mail{background:#eef5ff; border-color:#9ec0ff; color:#1247a6;}
+    .channel-toggle button.active{box-shadow: inset 0 0 0 2px var(--lsa-border);}
+    .thread-mail{border-left:4px solid #2d6cdf; background:#f7faff;}
+
     .view-toggle {
       display: flex;
       gap: 8px;
@@ -311,7 +319,11 @@
   <div id="topNavMount"></div>
   <div id="appLayout">
   <div id="sidebar">
-    <h3>LSA GLOBAL Inbox</h3>
+    <h3>LSA GLOBAL Internal OS · Communications Hub</h3>
+    <div class="channel-toggle">
+      <button id="channelWhatsAppBtn" type="button" class="active whatsapp" onclick="setChannel('whatsapp')">💬 WhatsApp Inbox</button>
+      <button id="channelMailBtn" type="button" class="mail" onclick="setChannel('mail')">✉️ Mail Inbox</button>
+    </div>
     <div class="view-toggle">
       <button id="activeViewBtn" type="button" class="active" onclick="setInboxView('active')">Active</button>
       <button id="archivedViewBtn" type="button" onclick="setInboxView('archived')">Archived</button>
@@ -363,12 +375,25 @@
     let currentWaId = null;
     let pendingAttachment = null;
     let currentView = "active";
+    let currentChannel = "whatsapp";
+
+    function setChannel(channel) {
+      currentChannel = channel === "mail" ? "mail" : "whatsapp";
+      document.getElementById("channelWhatsAppBtn").classList.toggle("active", currentChannel === "whatsapp");
+      document.getElementById("channelMailBtn").classList.toggle("active", currentChannel === "mail");
+      const composer = document.getElementById("composer");
+      composer.style.display = currentChannel === "mail" ? "none" : "flex";
+      resetConversationPane();
+      loadThreads();
+    }
 
     function setInboxView(view) {
       currentView = view === "archived" ? "archived" : "active";
       document.getElementById("activeViewBtn").classList.toggle("active", currentView === "active");
       document.getElementById("archivedViewBtn").classList.toggle("active", currentView === "archived");
       setThreadActionButtons();
+      const isMail = currentChannel === "mail";
+      document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       loadThreads();
     }
 
@@ -615,7 +640,9 @@
     }
 
     async function loadThreads() {
-      const endpoint = currentView === "archived" ? "/api/conversations/archived" : "/api/conversations";
+      const endpoint = currentChannel === "mail"
+        ? (currentView === "archived" ? "/api/communications/mail/threads?view=archived" : "/api/communications/mail/threads")
+        : (currentView === "archived" ? "/api/conversations/archived" : "/api/conversations");
       const res = await fetch(endpoint);
       const threads = await res.json();
       console.log("[inbox-frontend] threads fetched", {
@@ -636,11 +663,12 @@
         div.className = "thread";
         div.innerHTML = `
           <div><strong>${thread.contact_name || "Unknown"}</strong></div>
-          <div>${thread.wa_id}</div>
+          <div>${currentChannel === "mail" ? (thread.sender || "") : thread.wa_id}</div>
           <div class="small">${thread.last_message || ""}</div>
           <div class="badge">${thread.label || "No label"}</div>
         `;
-        div.onclick = () => loadConversation(thread.wa_id, thread.contact_name || "Contact");
+        if (currentChannel === "mail") div.classList.add("thread-mail");
+        div.onclick = () => loadConversation(currentChannel === "mail" ? thread.thread_id : thread.wa_id, thread.contact_name || thread.subject || "Contact");
         container.appendChild(div);
       });
     }
@@ -655,15 +683,17 @@
       const conversationChanged = currentWaId !== wa_id;
       currentWaId = wa_id;
       setThreadActionButtons();
+      const isMail = currentChannel === "mail";
+      document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
 
       if (conversationChanged) {
         clearAttachmentSelection();
       }
 
       document.getElementById("chatTitle").textContent =
-        `${contactName} — ${wa_id}`;
+        currentChannel === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
 
-      const res = await fetch(`/api/conversations/${encodeURIComponent(wa_id)}`);
+      const res = await fetch(currentChannel === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(wa_id)}` : `/api/conversations/${encodeURIComponent(wa_id)}`);
       const messages = await res.json();
       console.log("[inbox-frontend] thread messages fetched", {
         wa_id,
@@ -681,8 +711,13 @@
 
       messages.forEach(msg => {
         const div = document.createElement("div");
-        div.className = `msg ${msg.direction === "out" ? "out" : "in"}`;
-        div.innerHTML = renderMessageBody(msg);
+        const direction = msg.direction || (msg.is_read ? "in" : "in");
+        div.className = `msg ${direction === "out" ? "out" : "in"}`;
+        if (currentChannel === "mail") {
+          div.innerHTML = `<div><strong>${escapeHtml(msg.subject || "(no subject)")}</strong></div><div>${escapeHtml(msg.preview || msg.body || "")}</div><div class="small">From: ${escapeHtml(msg.sender || "-")} · ${new Date(msg.timestamp || msg.created_at || Date.now()).toLocaleString()} · ${msg.is_read ? "Read" : "Unread"}</div>`;
+        } else {
+          div.innerHTML = renderMessageBody(msg);
+        }
         container.appendChild(div);
       });
 
@@ -886,6 +921,8 @@
       setInboxView("archived");
     } else {
       setThreadActionButtons();
+      const isMail = currentChannel === "mail";
+      document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       loadThreads();
     }
     setInterval(loadThreads, 5000);
