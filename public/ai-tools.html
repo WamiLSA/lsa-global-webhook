@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL AI Tools</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/top-nav.css" />
+  <style>
+    body{margin:0;font-family:Arial,sans-serif;background:var(--lsa-app-bg);color:var(--lsa-text)}
+    .page{padding:16px;max-width:1320px;margin:0 auto}
+    .hero{background:var(--lsa-surface);border:1px solid var(--lsa-border);border-radius:12px;padding:14px;margin-bottom:12px}
+    .muted{color:var(--lsa-text-muted)}
+    .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:10px}
+    .kpi{background:var(--lsa-surface-muted);border-radius:8px;padding:8px;font-size:12px}
+    .kpi b{font-size:18px;display:block;color:var(--lsa-text)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+    .card{background:var(--lsa-surface);border:1px solid var(--lsa-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+    .pill{font-size:11px;padding:2px 8px;border-radius:999px;width:max-content}
+    .ok{background:#14532d;color:#dcfce7}.todo{background:#78350f;color:#fef3c7}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+    .btn{padding:8px 10px;border-radius:8px;border:1px solid var(--lsa-border);background:var(--lsa-surface-muted);color:var(--lsa-text);text-decoration:none;font-size:12px}
+  </style>
+</head>
+<body data-page="ai-tools">
+  <div id="topNavMount"></div>
+  <main class="page">
+    <section class="hero">
+      <h2 style="margin:0 0 6px;">AI Tools Workspace (Phase 1)</h2>
+      <p class="muted" style="margin:0;">Operational internal intelligence layer synchronized for shared web/mobile backend behavior. Live mode remains protected; experimentation belongs to test mode.</p>
+      <div id="summary" class="meta"></div>
+    </section>
+    <section id="tools" class="grid"></section>
+  </main>
+  <script src="/top-nav.js"></script>
+  <script>
+    const fmt = (n) => Number(n || 0).toLocaleString();
+    const summaryKpis = (m, mode) => [
+      ['Current mode', String(mode || 'live').toUpperCase()],
+      ['Weekly inbox messages', fmt(m.weekly_conversations)],
+      ['AI-assisted outgoing drafts', fmt(m.outgoing_drafts)],
+      ['Translated internal replies', fmt(m.translated_messages)],
+      ['KB items / published', `${fmt(m.kb_articles)} / ${fmt(m.kb_published_from_capture)}`],
+      ['Provider duplicates flagged', fmt(m.providers_duplicates)],
+      ['Retrieval tests / hits', `${fmt(m.retrieval_tests)} / ${fmt(m.retrieval_hits)}`]
+    ];
+
+    function render(data) {
+      const summary = document.getElementById('summary');
+      summary.innerHTML = summaryKpis(data.metrics, data.mode).map(([k,v]) => `<div class="kpi">${k}<b>${v}</b></div>`).join('');
+
+      const tools = document.getElementById('tools');
+      tools.innerHTML = data.catalog.map(item => `
+        <article class="card">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+            <h3 style="margin:0;font-size:16px;">${item.title}</h3>
+            <span class="pill ${item.status === 'functional' ? 'ok' : 'todo'}">${item.status === 'functional' ? 'Operational' : 'Scaffolded'}</span>
+          </div>
+          <p class="muted" style="margin:0;font-size:13px;">${item.description}</p>
+          <div style="font-size:12px;" class="muted">Integrated modules: ${item.integrations.join(', ')}</div>
+          <div class="actions">
+            <a class="btn" href="${item.route}">Open Workspace</a>
+          </div>
+        </article>
+      `).join('');
+    }
+
+    fetch('/api/ai-tools/overview', { credentials: 'same-origin' })
+      .then((r) => { if (!r.ok) throw new Error('Failed to load AI tools overview'); return r.json(); })
+      .then(render)
+      .catch((error) => {
+        document.getElementById('tools').innerHTML = `<article class="card">${error.message}</article>`;
+      });
+  </script>
+</body>
+</html>

@@ -9,6 +9,7 @@ const multer = require("multer");
 const session = require("express-session");
 const { createClient } = require("@supabase/supabase-js");
 const { createInternalRetriever } = require("./lib/internal-retrieval");
+const { AI_TOOLS_CATALOG } = require("./lib/ai-tools-catalog");
 
 const crypto = require("crypto");
 
@@ -4735,6 +4736,64 @@ app.post("/api/label", async (req, res) => {
 });
 // ===== KNOWLEDGE BASE PAGE =====
 
+
+
+app.get("/ai-tools", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "ai-tools.html"));
+});
+
+app.get("/api/ai-tools/overview", requireAuth, async (req, res) => {
+  try {
+    const [conversationsRes, providersRes, captureRes, kbRes, mode] = await Promise.all([
+      supabase.from("conversations").select("id,created_at,direction,test_mode_retrieval_used,requested_entity_exists_in_kb,staff_reply_text,sent_reply_text").order("created_at", { ascending: false }).limit(2000),
+      supabase.from("providers").select("id,created_at,is_duplicate"),
+      supabase.from("kb_capture_assistant").select("id,created_at,is_published_to_kb,duplicate_check_count"),
+      supabase.from("kb_articles").select("id,created_at"),
+      getCurrentSystemMode()
+    ]);
+
+    const conversations = conversationsRes.data || [];
+    const providers = providersRes.data || [];
+    const captures = captureRes.data || [];
+    const kbArticles = kbRes.data || [];
+
+    const now = new Date();
+    const weekAgo = new Date(now); weekAgo.setUTCDate(now.getUTCDate() - 7);
+    let outgoingDrafts = 0; let translated = 0; let retrievalTests = 0; let retrievalHits = 0;
+    for (const row of conversations) {
+      if (row.direction === "out") outgoingDrafts += 1;
+      if (row.staff_reply_text && row.sent_reply_text && row.staff_reply_text !== row.sent_reply_text) translated += 1;
+      if (row.test_mode_retrieval_used) retrievalTests += 1;
+      if (row.requested_entity_exists_in_kb) retrievalHits += 1;
+    }
+
+    const providerDuplicates = providers.filter(p => p.is_duplicate).length;
+    const publishedKb = captures.filter(c => c.is_published_to_kb).length;
+    const duplicateChecks = captures.reduce((n, c) => n + Number(c.duplicate_check_count || 0), 0);
+    const weeklyConversations = conversations.filter(c => new Date(c.created_at) >= weekAgo).length;
+
+    return res.json({
+      ok: true,
+      generated_at: new Date().toISOString(),
+      mode,
+      catalog: AI_TOOLS_CATALOG,
+      metrics: {
+        weekly_conversations: weeklyConversations,
+        outgoing_drafts: outgoingDrafts,
+        translated_messages: translated,
+        kb_articles: kbArticles.length,
+        kb_published_from_capture: publishedKb,
+        kb_duplicate_checks: duplicateChecks,
+        providers_total: providers.length,
+        providers_duplicates: providerDuplicates,
+        retrieval_tests: retrievalTests,
+        retrieval_hits: retrievalHits
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 app.get("/reports", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "reports.html"));
