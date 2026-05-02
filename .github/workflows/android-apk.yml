@@ -65,39 +65,39 @@ jobs:
           fi
 
           python - <<'PY2'
-from pathlib import Path
-import re
-
-p = Path('android/app/build.gradle')
-s = p.read_text()
-
-if re.search(r'react\s*\{', s):
-    s2, n = re.subn(
-        r'(react\s*\{)(.*?)(\n\})',
-        lambda m: (
-            m.group(1)
-            + re.sub(r'\n\s*debuggableVariants\s*=\s*\[[^\]]*\]\s*', '\n', m.group(2), flags=re.S)
-            + '\n    debuggableVariants = []\n'
-            + m.group(3)
-        ),
-        s,
-        count=1,
-        flags=re.S,
-    )
-    if n == 0:
-        raise SystemExit('Failed to update existing react {} block')
-    s = s2
-    p.write_text(s)
-    print('Updated react {} with debuggableVariants = []')
-else:
-    anchor = 'android {'
-    if anchor not in s:
-        raise SystemExit('Could not find android { to insert react {} block')
-    block = 'react {\n    debuggableVariants = []\n}\n\n'
-    s = s.replace(anchor, block + anchor, 1)
-    p.write_text(s)
-    print('Inserted react {} with debuggableVariants = []')
-PY2
+          from pathlib import Path
+          import re
+          
+          p = Path('android/app/build.gradle')
+          s = p.read_text()
+          
+          if re.search(r'react\s*\{', s):
+              s2, n = re.subn(
+                  r'(react\s*\{)(.*?)(\n\})',
+                  lambda m: (
+                      m.group(1)
+                      + re.sub(r'\n\s*debuggableVariants\s*=\s*\[[^\]]*\]\s*', '\n', m.group(2), flags=re.S)
+                      + '\n    debuggableVariants = []\n'
+                      + m.group(3)
+                  ),
+                  s,
+                  count=1,
+                  flags=re.S,
+              )
+              if n == 0:
+                  raise SystemExit('Failed to update existing react {} block')
+              s = s2
+              p.write_text(s)
+              print('Updated react {} with debuggableVariants = []')
+          else:
+              anchor = 'android {'
+              if anchor not in s:
+                  raise SystemExit('Could not find android { to insert react {} block')
+              block = 'react {\n    debuggableVariants = []\n}\n\n'
+              s = s.replace(anchor, block + anchor, 1)
+              p.write_text(s)
+              print('Inserted react {} with debuggableVariants = []')
+          PY2
 
       - name: Build standalone APKs
         run: |
