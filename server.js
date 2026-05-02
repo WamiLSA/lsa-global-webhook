@@ -4734,6 +4734,95 @@ app.post("/api/label", async (req, res) => {
   }
 });
 // ===== KNOWLEDGE BASE PAGE =====
+
+
+app.get("/reports", requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "reports.html"));
+});
+
+app.get("/api/reports/overview", requireAuth, async (req, res) => {
+  try {
+    const [conversationsRes, kbRes, captureRes, quickRes, providersRes, modeRes] = await Promise.all([
+      supabase.from("conversations").select("wa_id,created_at,direction,is_archived,attachment_url,detected_language,label,service_interest,normalized_intent,test_mode_retrieval_used,requested_entity_exists_in_kb").order("created_at", { ascending: false }).limit(2000),
+      supabase.from("kb_articles").select("id,created_at"),
+      supabase.from("kb_capture_assistant").select("id,created_at,duplicate_check_count,is_published_to_kb"),
+      supabase.from("kb_quick_capture").select("id,created_at"),
+      supabase.from("providers").select("id,created_at,provider_type,provider_category,document_count,is_duplicate"),
+      getCurrentSystemMode()
+    ]);
+
+    const conversations = conversationsRes.data || [];
+    const convMap = new Map();
+    let incoming = 0; let outgoing = 0; let attachments = 0;
+    const languages = new Map(); const interests = new Map();
+    let retrievalAttempts = 0; let retrievalSuccess = 0; let retrievalFallback = 0;
+    const topics = new Map();
+    const now = new Date();
+    const dayAgo = new Date(now); dayAgo.setUTCDate(now.getUTCDate() - 1);
+    const weekAgo = new Date(now); weekAgo.setUTCDate(now.getUTCDate() - 7);
+    const monthAgo = new Date(now); monthAgo.setUTCDate(now.getUTCDate() - 30);
+    let newToday = 0; let newWeek = 0; let msg7d = 0; let conv7d=0; let conv30d=0;
+
+    for (const row of conversations) {
+      const created = new Date(row.created_at);
+      if (!convMap.has(row.wa_id)) {
+        convMap.set(row.wa_id, row);
+        if (created >= dayAgo) newToday += 1;
+        if (created >= weekAgo) newWeek += 1;
+        if (created >= weekAgo) conv7d += 1;
+        if (created >= monthAgo) conv30d += 1;
+      }
+      if (created >= weekAgo) msg7d += 1;
+      if (row.direction === "out") outgoing += 1; else incoming += 1;
+      if (row.attachment_url) attachments += 1;
+      const lang = (row.detected_language || "unknown").toLowerCase();
+      languages.set(lang, (languages.get(lang) || 0) + 1);
+      const interest = row.service_interest || row.label || row.normalized_intent || "uncategorized";
+      interests.set(interest, (interests.get(interest) || 0) + 1);
+      if (row.test_mode_retrieval_used) retrievalAttempts += 1;
+      if (row.requested_entity_exists_in_kb === true) retrievalSuccess += 1;
+      if (row.test_mode_retrieval_used && row.requested_entity_exists_in_kb === false) retrievalFallback += 1;
+      if (row.normalized_intent) topics.set(row.normalized_intent, (topics.get(row.normalized_intent)||0)+1);
+    }
+
+    const totalConversations = convMap.size;
+    const archivedConversations = Array.from(convMap.values()).filter(r => r.is_archived === true).length;
+    const activeConversations = totalConversations - archivedConversations;
+
+    const providers = providersRes.data || [];
+    const providerCats = new Map();
+    let providerNew30 = 0; let providerDuplicates = 0; let providerDocs = 0;
+    for (const p of providers) {
+      if (new Date(p.created_at) >= monthAgo) providerNew30 += 1;
+      if (p.is_duplicate) providerDuplicates += 1;
+      providerDocs += Number(p.document_count || 0);
+      const cat = p.provider_type || p.provider_category || 'other';
+      providerCats.set(cat, (providerCats.get(cat)||0)+1);
+    }
+
+    const capture = captureRes.data || [];
+    const duplicateChecks = capture.reduce((n, r) => n + Number(r.duplicate_check_count || 0), 0);
+    const officialKbItems = capture.filter(r => r.is_published_to_kb).length;
+
+    const toArray = (m, limit=6) => Array.from(m.entries()).sort((a,b)=>b[1]-a[1]).slice(0,limit).map(([label,value])=>({label,value}));
+
+    return res.json({
+      generated_at: new Date().toISOString(),
+      inbox: { total_conversations: totalConversations, active_conversations: activeConversations, archived_conversations: archivedConversations, new_today: newToday, new_this_week: newWeek },
+      messages: { incoming, outgoing, attachments, last_7_days: msg7d },
+      languages: toArray(languages),
+      service_interest: toArray(interests),
+      kb: { total_articles: (kbRes.data || []).length, captured_items: capture.length + ((quickRes.data || []).length), official_items: officialKbItems, duplicate_checks: duplicateChecks },
+      retrieval: { test_attempts: retrievalAttempts, successful: retrievalSuccess, fallbacks: retrievalFallback, top_topics: toArray(topics,4).map(x=>x.label) },
+      providers: { total_official: providers.length, new_30_days: providerNew30, duplicates: providerDuplicates, documents: providerDocs, categories: toArray(providerCats) },
+      matching: { searches: retrievalAttempts, top_language_pair: "TBD", top_service_type: toArray(interests,1)[0]?.label || "N/A" },
+      system: { current_mode: modeRes === 'test' ? 'TEST' : 'LIVE', mode_updated_at: runtimeSystemState.updatedAt || null, can_change_mode: canChangeMode(req) },
+      trends: { conversations_7d: conv7d, conversations_30d: conv30d, kb_growth_30d: (kbRes.data || []).filter(r => new Date(r.created_at) >= monthAgo).length, provider_growth_30d: providerNew30, matching_30d: retrievalAttempts }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 app.get("/kb", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "kb.html"));
 });

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LSA GLOBAL Reports</title>
+  <script src="/theme-init.js"></script>
+  <link rel="stylesheet" href="/top-nav.css" />
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; background: var(--lsa-app-bg); color: var(--lsa-text);}    
+    .page { padding: 16px; max-width: 1320px; margin:0 auto; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+    .card { background: var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:12px; padding:14px; }
+    .title { margin:0 0 10px; font-size:16px; }
+    .kpis { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .kpi { background:var(--lsa-surface-muted); border-radius:8px; padding:8px; }
+    .kpi b { display:block; font-size:18px; margin-top:3px; }
+    .row { display:flex; justify-content:space-between; margin:6px 0; font-size:14px; }
+    .bar { height:8px; border-radius:20px; background:var(--lsa-surface-muted); overflow:hidden; }
+    .bar > span { display:block; height:100%; background:#3b82f6; }
+    .muted { color:var(--lsa-text-muted); font-size:12px; }
+  </style>
+</head>
+<body data-page="reports">
+  <div id="topNavMount"></div>
+  <main class="page">
+    <h2 style="margin-top:0;">Operational Reports Dashboard</h2>
+    <p class="muted">Management and monitoring summary for inbox, knowledge, providers, and system activity.</p>
+    <div id="status" class="muted">Loading reports…</div>
+    <section class="grid" id="grid"></section>
+  </main>
+  <script src="/top-nav.js"></script>
+  <script>
+    const fmt = (n) => Number(n || 0).toLocaleString();
+    const card = (title, body) => `<article class="card"><h3 class="title">${title}</h3>${body}</article>`;
+    const rows = (obj) => Object.entries(obj).map(([k,v]) => `<div class="row"><span>${k}</span><b>${fmt(v)}</b></div>`).join('');
+    const bars = (items) => {
+      const max = Math.max(1, ...items.map(i => i.value || 0));
+      return items.map(i => `<div class="row"><span>${i.label}</span><span>${fmt(i.value)}</span></div><div class="bar"><span style="width:${Math.round((i.value||0)/max*100)}%"></span></div>`).join('');
+    };
+
+    async function loadReports() {
+      const res = await fetch('/api/reports/overview', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Failed to load reports');
+      return res.json();
+    }
+
+    function render(data) {
+      document.getElementById('status').textContent = `Updated ${new Date(data.generated_at).toLocaleString()}`;
+      const g = document.getElementById('grid');
+      g.innerHTML = [
+        card('1) Inbox Activity', `<div class="kpis"><div class="kpi">Total conversations<b>${fmt(data.inbox.total_conversations)}</b></div><div class="kpi">Active<b>${fmt(data.inbox.active_conversations)}</b></div><div class="kpi">Archived<b>${fmt(data.inbox.archived_conversations)}</b></div><div class="kpi">New today<b>${fmt(data.inbox.new_today)}</b></div></div><div class="row"><span>New this week</span><b>${fmt(data.inbox.new_this_week)}</b></div>`),
+        card('2) Message Volume', rows({'Incoming messages':data.messages.incoming,'Outgoing messages':data.messages.outgoing,'Attachments':data.messages.attachments,'Last 7 days':data.messages.last_7_days})),
+        card('3) Language Distribution', bars(data.languages)),
+        card('4) Service Interest Distribution', bars(data.service_interest)),
+        card('5) Knowledge Base Statistics', rows({'KB articles':data.kb.total_articles,'Captured knowledge items':data.kb.captured_items,'Official KB items':data.kb.official_items,'Duplicate checks':data.kb.duplicate_checks})),
+        card('6) Retrieval / AI Behavior', rows({'Test retrieval attempts':data.retrieval.test_attempts,'Successful retrievals':data.retrieval.successful,'Safe fallbacks/handoffs':data.retrieval.fallbacks}) + '<div class="muted">Top topics: '+(data.retrieval.top_topics.join(', ') || 'N/A')+'</div>'),
+        card('7) Provider Statistics', rows({'Official providers':data.providers.total_official,'New providers (30d)':data.providers.new_30_days,'Duplicate detections':data.providers.duplicates,'Document uploads':data.providers.documents}) + bars(data.providers.categories)),
+        card('8) Provider Matching Activity', rows({'Matching searches':data.matching.searches,'Top language pair':data.matching.top_language_pair,'Top service type':data.matching.top_service_type})),
+        card('9) System/Mode Summary', rows({'Current mode':data.system.current_mode,'Mode updated':data.system.mode_updated_at,'Can change mode':data.system.can_change_mode ? 'Yes':'No'})),
+        card('10) Trend Panels (7d / 30d)', rows({'Conversations (7d)':data.trends.conversations_7d,'Conversations (30d)':data.trends.conversations_30d,'KB growth (30d)':data.trends.kb_growth_30d,'Provider growth (30d)':data.trends.provider_growth_30d,'Matching activity (30d)':data.trends.matching_30d}))
+      ].join('');
+    }
+
+    loadReports().then(render).catch((err) => {
+      document.getElementById('status').textContent = err.message;
+    });
+  </script>
+</body>
+</html>
