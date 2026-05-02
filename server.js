@@ -856,7 +856,8 @@ async function verifyInboxCredentials(identifier, password) {
     return { ok: true, username: canonicalUsername };
   }
 
-  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
+  const hasStoredPasswordHashes = Object.values(store.users).some((record) => Boolean(record?.password_hash));
+  if (!hasStoredPasswordHashes && normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
     return { ok: true, username: normalizeUserIdentifier(INBOX_USERNAME), bootstrap: true };
   }
 
