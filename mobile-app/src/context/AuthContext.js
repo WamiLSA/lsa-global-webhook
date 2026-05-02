@@ -21,8 +21,8 @@ export function AuthProvider({ children }) {
     })();
   }, []);
 
-  const login = async ({ email, password }) => {
-    const response = await api.post('/api/mobile/auth/login', { email, password });
+  const login = async ({ username, password }) => {
+    const response = await api.post('/api/mobile/auth/login', { username, password });
     const nextToken = response.token;
 
     await SecureStore.setItemAsync(TOKEN_KEY, nextToken);

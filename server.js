@@ -709,6 +709,13 @@ function canChangeMode(req) {
   }
   return INTERNAL_MODE_ADMIN_USERS.includes(sessionUser);
 }
+
+function verifyInboxCredentials(identifier, password) {
+  const normalizedIdentifier = String(identifier || "").trim();
+  if (!normalizedIdentifier || !password) return false;
+  return normalizedIdentifier === INBOX_USERNAME && password === INBOX_PASSWORD;
+}
+
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
@@ -777,13 +784,29 @@ app.get("/login", (req, res) => {
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
 
-  if (username === INBOX_USERNAME && password === INBOX_PASSWORD) {
+  if (verifyInboxCredentials(username, password)) {
     req.session.authenticated = true;
     req.session.username = username;
     return res.redirect("/inbox");
   }
 
   return res.redirect("/login?error=1");
+});
+
+
+
+app.post("/api/mobile/auth/login", (req, res) => {
+  const { username, email, identifier, password } = req.body || {};
+  const loginIdentifier = identifier || username || email;
+
+  if (!verifyInboxCredentials(loginIdentifier, password)) {
+    return res.status(401).json({ error: "Invalid username or password" });
+  }
+
+  return res.json({
+    token: Buffer.from(`${loginIdentifier}:${Date.now()}`).toString("base64url"),
+    user: { username: INBOX_USERNAME }
+  });
 });
 
 app.get("/logout", (req, res) => {
