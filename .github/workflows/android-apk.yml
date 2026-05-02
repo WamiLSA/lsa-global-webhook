@@ -1,4 +1,4 @@
-name: LSA GLOBAL Internal Mobile App
+name: LSA GLOBAL OS Mobile App
 
 on:
   workflow_dispatch:
