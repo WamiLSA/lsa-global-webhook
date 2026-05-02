@@ -66,22 +66,24 @@ button {
 .lsa-top-nav__inner {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   padding: 10px 16px;
 }
 
 .lsa-top-nav__brand {
   color: var(--lsa-blue);
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.4px;
   white-space: nowrap;
+  margin-right: 16px;
 }
 
 .lsa-top-nav__right {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
 }
 
 .lsa-mode-control {
@@ -145,8 +147,9 @@ button {
 
 .lsa-top-nav__links {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  overflow-x: auto;
 }
 
 .lsa-top-nav__link {
