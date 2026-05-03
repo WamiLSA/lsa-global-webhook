@@ -1063,7 +1063,6 @@ app.get("/login", (req, res) => {
           <h2 id="brandNameText">LSA GLOBAL House</h2>
         </div>
         <div class="box">
-        <h2>LSA GLOBAL House</h2>
         ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
         <form method="POST" action="/login">
           <input type="text" name="username" placeholder="Username" required />
