@@ -765,13 +765,18 @@ async function requireAiExperimentMode(res) {
   });
   return false;
 }
-function canChangeMode(req) {
-  const sessionUser = String(req.session?.username || "").toLowerCase();
-  if (!sessionUser) return false;
+function isPrivilegedAccount(identifier) {
+  const normalizedIdentifier = normalizeUserIdentifier(identifier);
+  if (!normalizedIdentifier) return false;
   if (!INTERNAL_MODE_ADMIN_USERS.length) {
-    return sessionUser === String(INBOX_USERNAME || "").toLowerCase();
+    return normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME);
   }
-  return INTERNAL_MODE_ADMIN_USERS.includes(sessionUser);
+  return INTERNAL_MODE_ADMIN_USERS.includes(normalizedIdentifier);
+}
+
+function canChangeMode(req) {
+  const sessionUser = req.session?.username || "";
+  return isPrivilegedAccount(sessionUser);
 }
 
 const ACCOUNT_SETTINGS_FILE = path.join(__dirname, "data", "account-settings.json");
@@ -4419,6 +4424,12 @@ function requireAccountAuth(req, res, next) {
   return next();
 }
 
+function requireBrandingWriteAuth(req, res, next) {
+  const identifier = req.accountIdentifier || getAuthenticatedIdentifier(req);
+  if (!isPrivilegedAccount(identifier)) return res.status(403).json({ error: "Forbidden" });
+  return next();
+}
+
 app.get("/settings", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "settings.html"));
 });
@@ -4466,7 +4477,7 @@ app.post("/api/account/avatar", requireAccountAuth, avatarUpload.single("avatar"
   }
 });
 
-app.post("/api/branding/logo", requireAccountAuth, brandingLogoUpload.single("logo"), async (req, res) => {
+app.post("/api/branding/logo", requireAccountAuth, requireBrandingWriteAuth, brandingLogoUpload.single("logo"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "Logo file is required" });
     const logoUrl = `/uploads/branding/${req.file.filename}`;
@@ -4479,7 +4490,7 @@ app.post("/api/branding/logo", requireAccountAuth, brandingLogoUpload.single("lo
   }
 });
 
-app.post("/api/branding/settings", requireAccountAuth, async (req, res) => {
+app.post("/api/branding/settings", requireAccountAuth, requireBrandingWriteAuth, async (req, res) => {
   try {
     const store = await readAccountSettingsStore();
     store.branding = sanitizeBrandingInput(req.body || {}, store.branding || DEFAULT_BRANDING_SETTINGS);
