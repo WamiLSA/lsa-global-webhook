@@ -4008,17 +4008,29 @@ app.post("/webhook", async (req, res) => {
     let retrievalBlockedReason = "none";
     let controlledAction = "none";
 
-    const deterministicMenuDecision = resolveDeterministicMenuReply({ text, detectedLanguage: "en" });
-    const greetingIntent = deterministicMenuDecision.branch === "greeting_menu" ? { language: deterministicMenuDecision.language } : detectGreetingIntent(text);
+    const inboundTextForRouting = String(text || inboundBody || "").trim();
+    const normalizedInbound = normalizeForIntent(inboundTextForRouting);
+    const deterministicMenuDecision = resolveDeterministicMenuReply({ text: inboundTextForRouting, detectedLanguage: "en" });
+    const greetingIntent = deterministicMenuDecision.branch === "greeting_menu"
+      ? { language: deterministicMenuDecision.language }
+      : detectGreetingIntent(inboundTextForRouting);
     const detectedLanguage = resolveConversationLanguage({
       waId: from,
-      text,
+      text: inboundTextForRouting,
       greetingLanguage: greetingIntent?.language
     });
-    const deterministicDecision = resolveDeterministicMenuReply({ text, detectedLanguage });
+    const deterministicDecision = resolveDeterministicMenuReply({ text: inboundTextForRouting, detectedLanguage });
     const menuSelection = deterministicDecision.menuSelection;
-    const normalizedInbound = normalizeForIntent(text);
     const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
+    const deterministicGreetingMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "greeting_menu");
+    const deterministicMenuMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "menu_option");
+    console.log("[deterministic-menu-debug] deterministic_gate", {
+      incoming_text: inboundTextForRouting,
+      normalized_text: normalizedInbound,
+      greeting_matched: deterministicGreetingMatched,
+      local_menu_reply_sent: Boolean(deterministicDecision.matched),
+      ai_branch_skipped: Boolean(deterministicDecision.matched)
+    });
     const testRetrievalEnabledForMessage = Boolean(testModeActive && canUseTestRetrievalRouting && retrievalEligibleFreeText);
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
     const fallbackEligible = hasStoredLanguage
@@ -4444,6 +4456,9 @@ app.post("/webhook", async (req, res) => {
       controlledAction = "safe_handoff";
       suppressAutoAck = true;
     }
+    console.log("[routing-debug] runtime_reference_guard", {
+      openaiRoutingIntent_defined: typeof globalThis.openaiRoutingIntent !== "undefined"
+    });
     console.log("[routing-debug] inbound branch selected", {
       mode: activeMode.toUpperCase(),
       normalized_text: String(normalizedInbound || "").slice(0, 160),
