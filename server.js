@@ -4679,7 +4679,7 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
         file_name: req.file.originalname,
         mime_type: req.file.mimetype,
         size: req.file.size,
-        path: `/uploads/outbound/${req.file.filename}`
+        path: `/uploads/whatsapp/${req.file.filename}`
       };
     }
 
