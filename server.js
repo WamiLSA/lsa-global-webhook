@@ -3558,6 +3558,22 @@ function detectMenuSelection(text) {
   return null;
 }
 
+
+function getKnownServiceIntent(text) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return null;
+
+  const selection = detectMenuSelection(normalized);
+  if (selection) return selection;
+
+  if (/\b(translation|translate|traduction|traduccion|traduzione|übersetzung|ubersetzung|traducao|tradução)\b/i.test(normalized)) return "translation";
+  if (/\b(course|courses|cours|curso|cursos|corso|corsi|class|classes|formation|training|language\s+course)\b/i.test(normalized)) return "courses";
+  if (/\b(interpreting|interpretation|interpreter|interprétation|interpretacion|interpretazione|dolmetsch)\b/i.test(normalized)) return "interpreting";
+  if (/\b(advisor|adviser|human|agent|conseiller|asesor|berater|consulente)\b/i.test(normalized)) return "advisor";
+
+  return null;
+}
+
 function resolveDeterministicMenuReply({ text, detectedLanguage }) {
   const greetingIntent = detectGreetingIntent(text);
   const menuSelection = detectMenuSelection(text);
@@ -4048,6 +4064,11 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = deterministicDecision.branch;
       routingReason = deterministicDecision.reason;
       reply = deterministicDecision.reply;
+      console.log("[deterministic-menu-debug] menu_sent", {
+        branch: selectedRoutingBranch,
+        greeting_matched: true,
+        openai_used: false
+      });
       setCustomerState(from, {
         clarifyingAsked: false,
         liveMenuOption: null,
@@ -4058,6 +4079,10 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = deterministicDecision.branch;
       routingReason = deterministicDecision.reason;
       reply = deterministicDecision.reply;
+      console.log("[deterministic-menu-debug] numbered_option_matched", {
+        menu_selection: deterministicDecision.menuSelection,
+        openai_used: false
+      });
       controlledAction = deterministicDecision.action;
       setCustomerState(from, {
         clarifyingAsked: false,
