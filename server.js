@@ -582,12 +582,11 @@ if (!SUPABASE_KEY) {
   throw new Error("Missing Supabase key. Set SUPABASE_SERVICE_ROLE_KEY, SUPABASE_SECRET_KEY, or SUPABASE_ANON_KEY.");
 }
 
-if (!OPENAI_API_KEY) {
-  throw new Error("Missing OPENAI_API_KEY environment variable");
-}
-
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+if (!OPENAI_API_KEY) {
+  console.warn("[ai] OPENAI_API_KEY missing: AI-enhanced features disabled; deterministic messaging remains active.");
+}
 const TEST_LIKE_ENVS = new Set(["test", "testing", "staging", "development", "dev"]);
 const IS_TEST_MODE = TEST_LIKE_ENVS.has(APP_ENV);
 function resolveDefaultSystemMode() {
@@ -700,6 +699,24 @@ async function isTestRetrievalEnabled() {
 
 async function canRunTestRetrievalExperiments() {
   return await isTestRetrievalEnabled();
+}
+
+function isOpenAiQuotaOrBillingError(error) {
+  const status = Number(error?.status || error?.response?.status || 0);
+  const code = String(error?.code || error?.error?.code || error?.response?.data?.error?.code || "").toLowerCase();
+  const message = String(error?.message || error?.response?.data?.error?.message || "").toLowerCase();
+  return status === 429 || code.includes("insufficient_quota") || code.includes("billing") || message.includes("quota") || message.includes("billing");
+}
+
+function logAiLayerFailure(error, context = "unknown") {
+  const quotaRelated = isOpenAiQuotaOrBillingError(error);
+  console.warn("[ai-layer-fallback]", {
+    context,
+    quota_related: quotaRelated,
+    status: error?.status || error?.response?.status || null,
+    code: error?.code || error?.error?.code || error?.response?.data?.error?.code || null,
+    message: error?.message || error?.response?.data?.error?.message || String(error)
+  });
 }
 
 function formatRoutingBranchForModeLog(branch) {
@@ -3013,7 +3030,7 @@ function shouldTranslateText(text) {
 async function translateTextViaOpenAi({ text, sourceLanguage, targetLanguage, purpose = "translation" }) {
   const safeText = String(text || "").trim();
   if (!safeText) return "";
-  if (!OPENAI_API_KEY) return safeText;
+  if (!openai) return safeText;
   if (sourceLanguage === targetLanguage) return safeText;
 
   const response = await openai.responses.create({
@@ -3067,11 +3084,7 @@ async function detectAndTranslateInboundMessage({ text, workingLanguage = INTERN
       purpose: "Translate incoming customer message for internal staff readability."
     });
   } catch (error) {
-    console.warn("[inbound-translation] fallback to original text after translation failure", {
-      source_language: detected,
-      target_language: workingLanguage,
-      error_message: error?.message || String(error)
-    });
+    logAiLayerFailure(error, "inbound_translation");
   }
 
   return {
@@ -3721,6 +3734,9 @@ function enforceReplyStyle(text, language = "en") {
 }
 
 async function generateAIAnswerMessage({ customerMessage, kbMatches, retrievalResult = null, specificIntent = null }) {
+  if (!openai) {
+    return getSafeHandoffMessage(detectMessageLanguage(customerMessage));
+  }
   const retrievalMatches = retrievalResult?.matches || [];
   const kbContext = retrievalMatches.length
     ? retrievalMatches
@@ -4366,7 +4382,7 @@ app.post("/webhook", async (req, res) => {
           reply = getLocalizedAck(detectedLanguage);
         }
       } catch (err) {
-        console.error("AI fallback error:", err.message || err);
+        logAiLayerFailure(err, "whatsapp_test_retrieval");
         selectedRoutingBranch = "test_retrieval_error_fallback";
         routingReason = "retrieval_exception_fallback";
         reply = kbMatches.length ? enforceReplyStyle(kbMatches[0]?.answer || "", detectedLanguage) : getLocalizedAck(detectedLanguage);
