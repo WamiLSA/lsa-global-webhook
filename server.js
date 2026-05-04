@@ -3559,6 +3559,11 @@ function detectMenuSelection(text) {
 }
 
 
+function isLocalMenuTrigger(text) {
+  const normalized = normalizeForIntent(text);
+  return normalized === "menu";
+}
+
 function getKnownServiceIntent(text) {
   const normalized = normalizeForIntent(text);
   if (!normalized) return null;
@@ -3577,7 +3582,8 @@ function getKnownServiceIntent(text) {
 function resolveDeterministicMenuReply({ text, detectedLanguage }) {
   const greetingIntent = detectGreetingIntent(text);
   const menuSelection = detectMenuSelection(text);
-  const greetingMatched = Boolean(greetingIntent || isGreetingMessage(text));
+  const menuTrigger = isLocalMenuTrigger(text);
+  const greetingMatched = Boolean(greetingIntent || isGreetingMessage(text) || menuTrigger);
   const menuMatched = Boolean(menuSelection);
 
   console.log("[deterministic-menu-debug] incoming_message_received", {
@@ -3587,7 +3593,8 @@ function resolveDeterministicMenuReply({ text, detectedLanguage }) {
   console.log("[deterministic-menu-debug] greeting_match", {
     matched: greetingMatched,
     language: greetingIntent?.language || null,
-    phrase: greetingIntent?.phrase || null
+    phrase: greetingIntent?.phrase || null,
+    menu_keyword_triggered: menuTrigger
   });
   console.log("[deterministic-menu-debug] menu_option_match", {
     matched: menuMatched,
@@ -4023,6 +4030,7 @@ app.post("/webhook", async (req, res) => {
     let retrievalBlockedForSafety = false;
     let retrievalBlockedReason = "none";
     let controlledAction = "none";
+    let openaiCalledForMessage = false;
 
     const inboundTextForRouting = String(text || inboundBody || "").trim();
     const normalizedInbound = normalizeForIntent(inboundTextForRouting);
@@ -4040,12 +4048,14 @@ app.post("/webhook", async (req, res) => {
     const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
     const deterministicGreetingMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "greeting_menu");
     const deterministicMenuMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "menu_option");
-    console.log("[deterministic-menu-debug] deterministic_gate", {
+    console.log("[routing] deterministic_gate", {
       incoming_text: inboundTextForRouting,
       normalized_text: normalizedInbound,
       greeting_matched: deterministicGreetingMatched,
+      menu_matched: deterministicMenuMatched,
       local_menu_reply_sent: Boolean(deterministicDecision.matched),
-      ai_branch_skipped: Boolean(deterministicDecision.matched)
+      openai_called: false,
+      openai_skipped: Boolean(deterministicDecision.matched)
     });
     const testRetrievalEnabledForMessage = Boolean(testModeActive && canUseTestRetrievalRouting && retrievalEligibleFreeText);
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
@@ -4064,10 +4074,11 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = deterministicDecision.branch;
       routingReason = deterministicDecision.reason;
       reply = deterministicDecision.reply;
-      console.log("[deterministic-menu-debug] menu_sent", {
+      console.log("[routing] route=local_greeting_menu", {
         branch: selectedRoutingBranch,
         greeting_matched: true,
-        openai_used: false
+        openai_called: false,
+        openai_skipped: true
       });
       setCustomerState(from, {
         clarifyingAsked: false,
@@ -4079,9 +4090,10 @@ app.post("/webhook", async (req, res) => {
       selectedRoutingBranch = deterministicDecision.branch;
       routingReason = deterministicDecision.reason;
       reply = deterministicDecision.reply;
-      console.log("[deterministic-menu-debug] numbered_option_matched", {
+      console.log("[routing] route=local_numbered_menu", {
         menu_selection: deterministicDecision.menuSelection,
-        openai_used: false
+        openai_called: false,
+        openai_skipped: true
       });
       controlledAction = deterministicDecision.action;
       setCustomerState(from, {
@@ -4115,12 +4127,14 @@ app.post("/webhook", async (req, res) => {
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       controlledAction = "controlled_fallback_template";
+      console.log("[routing] route=fallback_ack", { openai_called: false, openai_skipped: true, reason: routingReason });
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       controlledAction = "safe_handoff";
+      console.log("[routing] route=fallback_ack", { openai_called: false, openai_skipped: true, reason: routingReason });
       suppressAutoAck = true;
     } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
@@ -4415,6 +4429,8 @@ app.post("/webhook", async (req, res) => {
             });
           }
           if (!reply) {
+            openaiCalledForMessage = true;
+            console.log("[routing] route=openai_assistant", { openai_called: true, openai_skipped: false, reason: "retrieval_answer_ai_generation" });
             reply = await generateAIAnswerMessage({
               customerMessage: text,
               kbMatches,
@@ -4440,6 +4456,8 @@ app.post("/webhook", async (req, res) => {
         } else {
           selectedRoutingBranch = "test_retrieval_ai_fallback";
           routingReason = "retrieval_ai_fallback";
+          openaiCalledForMessage = true;
+          console.log("[routing] route=openai_assistant", { openai_called: true, openai_skipped: false, reason: routingReason });
           reply = await generateAIAnswerMessage({
             customerMessage: text,
             kbMatches,
@@ -4505,6 +4523,7 @@ app.post("/webhook", async (req, res) => {
     });
     if (reply) {
   const deterministicReplyFlow = selectedRoutingBranch === "greeting_menu" || selectedRoutingBranch === "menu_option";
+  console.log("[routing] final_route_summary", { route: selectedRoutingBranch, openai_called: openaiCalledForMessage, openai_skipped: !openaiCalledForMessage, reason: routingReason });
   console.log("[deterministic-menu-debug] fixed_reply_send_attempt", {
     deterministic_flow: deterministicReplyFlow,
     branch: selectedRoutingBranch,
