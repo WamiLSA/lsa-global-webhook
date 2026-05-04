@@ -1239,9 +1239,9 @@ const MENU_KEYWORDS = {
 };
 
 const GREETING_PHRASES = {
-  en: ["hello", "hi", "hey", "greetings", "good morning", "good afternoon", "good evening"],
-  fr: ["bonjour", "bonsoir", "salut", "coucou"],
-  es: ["hola", "buenos días", "buenos dias", "buenas tardes", "buenas noches"],
+  en: ["hello", "hi", "hey", "heya", "greetings", "good morning", "good afternoon", "good evening", "good day"],
+  fr: ["bonjour", "bonsoir", "salut", "coucou", "allo"],
+  es: ["hola", "holaa", "buenos días", "buenos dias", "buenas tardes", "buenas noches"],
   de: ["guten tag", "guten morgen", "guten abend", "hallo"],
   it: ["ciao", "buongiorno", "buonasera", "salve"],
   pt: ["olá", "ola", "bom dia", "boa tarde", "boa noite", "oi"],
@@ -1467,7 +1467,13 @@ function normalizeForIntent(text) {
 }
 
 function normalizeGreetingText(text) {
-  return normalizeForIntent(text);
+  return normalizeDeterministicText(text);
+}
+
+function normalizeDeterministicText(text) {
+  return normalizeForIntent(text)
+    .replace(/([\p{L}])\1{2,}/gu, "$1$1")
+    .trim();
 }
 
 function detectNarrowIntent(message) {
@@ -1993,7 +1999,7 @@ function setCustomerState(waId, state) {
 }
 
 function detectRequestedSubVariant(text, recentContext = {}) {
-  const normalized = normalizeForIntent(text);
+  const normalized = normalizeDeterministicText(text);
   if (!normalized) return { subVariant: recentContext.topicSubVariant || null, correctionOverrideApplied: false };
 
   let best = null;
@@ -3537,7 +3543,7 @@ function detectGreetingIntent(text) {
 }
 
 function detectMenuSelection(text) {
-  const normalized = normalizeForIntent(text);
+  const normalized = normalizeDeterministicText(text);
   if (!normalized) return null;
   const tokenCount = normalized.split(/\s+/).filter(Boolean).length;
   for (const [selection, terms] of Object.entries(MENU_KEYWORDS)) {
@@ -3560,7 +3566,7 @@ function detectMenuSelection(text) {
 
 
 function isLocalMenuTrigger(text) {
-  const normalized = normalizeForIntent(text);
+  const normalized = normalizeDeterministicText(text);
   return normalized === "menu";
 }
 
@@ -3586,18 +3592,14 @@ function resolveDeterministicMenuReply({ text, detectedLanguage }) {
   const greetingMatched = Boolean(greetingIntent || isGreetingMessage(text) || menuTrigger);
   const menuMatched = Boolean(menuSelection);
 
-  console.log("[deterministic-menu-debug] incoming_message_received", {
+  console.log("[deterministic-menu] route_evaluation", {
     inbound_text: text || "",
-    normalized_text: normalizeForIntent(text || "")
-  });
-  console.log("[deterministic-menu-debug] greeting_match", {
-    matched: greetingMatched,
-    language: greetingIntent?.language || null,
-    phrase: greetingIntent?.phrase || null,
-    menu_keyword_triggered: menuTrigger
-  });
-  console.log("[deterministic-menu-debug] menu_option_match", {
-    matched: menuMatched,
+    normalized_text: normalizeDeterministicText(text || ""),
+    greeting_matched: greetingMatched,
+    greeting_language: greetingIntent?.language || null,
+    greeting_phrase: greetingIntent?.phrase || null,
+    menu_keyword_triggered: menuTrigger,
+    menu_option_matched: menuMatched,
     menu_selection: menuSelection || null
   });
 
@@ -4499,9 +4501,6 @@ app.post("/webhook", async (req, res) => {
       controlledAction = "safe_handoff";
       suppressAutoAck = true;
     }
-    console.log("[routing-debug] runtime_reference_guard", {
-      openaiRoutingIntent_defined: typeof globalThis.openaiRoutingIntent !== "undefined"
-    });
     console.log("[routing-debug] inbound branch selected", {
       mode: activeMode.toUpperCase(),
       normalized_text: String(normalizedInbound || "").slice(0, 160),
