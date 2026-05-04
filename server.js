@@ -3639,6 +3639,42 @@ function resolveDeterministicMenuReply({ text, detectedLanguage }) {
   };
 }
 
+async function attemptLocalKnowledgeReply({ text, language = "en", userState = {} }) {
+  const normalized = normalizeForIntent(text || "");
+  if (!normalized) return null;
+
+  const specificIntent = detectSpecificIntent(text);
+  const narrowIntent = detectNarrowIntent(text);
+  const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
+  const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
+  const retrievalResult = await retrieveInternalKnowledgeForTestMode(text, {
+    debug: true,
+    maxMatches: 6,
+    preferredCourseLanguage: currentCourseLanguage,
+    courseTopicActive: isLanguageCourseQuery(text, userState),
+    contextMemory: {
+      entity: userState.topicEntity || null,
+      intent: userState.topicIntent || null,
+      domain: userState.topicDomain || null,
+      topicLabel: userState.topicLabel || null
+    }
+  });
+
+  if (!retrievalResult.matches?.length) return null;
+  const reply = await buildReplyFromUnifiedRetrieval({
+    retrievalResult,
+    language,
+    specificIntent: resolvedIntent
+  });
+  if (!reply) return null;
+
+  return {
+    reply,
+    intent: resolvedIntent || retrievalResult.intent || null,
+    entity: retrievalResult.entity || null
+  };
+}
+
 function getLocalizedEscalationMessage(language) {
   const byLang = {
     fr: "Merci. Ce point doit être validé par un conseiller LSA GLOBAL. Partagez votre nom et numéro WhatsApp, nous revenons vite vers vous.",
@@ -4104,6 +4140,36 @@ app.post("/webhook", async (req, res) => {
         liveKnownSlots: {}
       });
       suppressAutoAck = true;
+    } else if (liveModeControlledCandidate && getKnownServiceIntent(inboundTextForRouting)) {
+      const localKnowledge = await attemptLocalKnowledgeReply({
+        text: inboundTextForRouting,
+        language: detectedLanguage,
+        userState
+      });
+      if (localKnowledge?.reply) {
+        selectedRoutingBranch = "local_known_service";
+        routingReason = "known_service_local_kb";
+        reply = localKnowledge.reply;
+        console.log("[routing] route=local_known_service", {
+          intent: localKnowledge.intent,
+          entity: localKnowledge.entity,
+          openai_called: false,
+          openai_skipped: true
+        });
+        suppressAutoAck = true;
+      } else {
+        selectedRoutingBranch = "live_safe_slot_clarification";
+        routingReason = "live_mode_general_slot_aware_clarification";
+        const detectedLiveDomain = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
+        const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
+        reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
+        controlledAction = "controlled_clarification";
+        setCustomerState(from, {
+          liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
+          liveKnownSlots: knownSlots
+        });
+        suppressAutoAck = true;
+      }
     } else if (!testModeActive && liveModeControlledCandidate) {
       selectedRoutingBranch = "live_safe_slot_clarification";
       routingReason = "live_mode_general_slot_aware_clarification";
@@ -4195,6 +4261,24 @@ app.post("/webhook", async (req, res) => {
       }));
 
       try {
+        if (retrievalResult.matches.length) {
+          const localKbReply = await buildReplyFromUnifiedRetrieval({
+            retrievalResult,
+            language: detectedLanguage,
+            specificIntent: resolvedIntent
+          });
+          if (localKbReply) {
+            selectedRoutingBranch = "test_retrieval_local_kb_answer";
+            routingReason = "local_kb_answer";
+            reply = localKbReply;
+            console.log("[routing] route=local_kb_answer", {
+              openai_called: false,
+              openai_skipped: true,
+              intent: resolvedIntent || retrievalResult.intent || null
+            });
+          }
+        }
+
         if (shouldEscalateToHuman(text)) {
           selectedRoutingBranch = "test_retrieval_human_escalation";
           routingReason = "human_escalation_request";
