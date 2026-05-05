@@ -2996,7 +2996,16 @@ async function saveMessage({
   staff_reply_text = null,
   staff_reply_language = null,
   sent_reply_text = null,
-  sent_reply_language = null
+  sent_reply_language = null,
+  conversation_owner = null,
+  human_takeover = null,
+  last_human_reply_at = null,
+  last_customer_message_at = null,
+  conversation_type = null,
+  followup_eligible = null,
+  automation_policy = null,
+  bot_suppressed_reason = null,
+  ownership_event = null
 }) {
   const payload = {
     wa_id,
@@ -3010,7 +3019,16 @@ async function saveMessage({
     staff_reply_text,
     staff_reply_language,
     sent_reply_text,
-    sent_reply_language
+    sent_reply_language,
+    conversation_owner,
+    human_takeover,
+    last_human_reply_at,
+    last_customer_message_at,
+    conversation_type,
+    followup_eligible,
+    automation_policy,
+    bot_suppressed_reason,
+    ownership_event
   };
   const result = await insertConversationPayload(payload);
   if (!result.ok) {
@@ -3126,7 +3144,16 @@ async function saveMessageWithMetadata({
   staff_reply_text = null,
   staff_reply_language = null,
   sent_reply_text = null,
-  sent_reply_language = null
+  sent_reply_language = null,
+  conversation_owner = null,
+  human_takeover = null,
+  last_human_reply_at = null,
+  last_customer_message_at = null,
+  conversation_type = null,
+  followup_eligible = null,
+  automation_policy = null,
+  bot_suppressed_reason = null,
+  ownership_event = null
 }) {
   const payload = {
     wa_id,
@@ -3146,7 +3173,16 @@ async function saveMessageWithMetadata({
     staff_reply_text,
     staff_reply_language,
     sent_reply_text,
-    sent_reply_language
+    sent_reply_language,
+    conversation_owner,
+    human_takeover,
+    last_human_reply_at,
+    last_customer_message_at,
+    conversation_type,
+    followup_eligible,
+    automation_policy,
+    bot_suppressed_reason,
+    ownership_event
   };
 
   const result = await insertConversationPayload(payload);
@@ -3492,6 +3528,272 @@ async function getLatestCustomerLanguage(waId) {
   const fromStored = String(inbound?.original_language || "").toLowerCase();
   if (SUPPORTED_LIVE_MODE_LANGUAGES.includes(fromStored)) return fromStored;
   return detectMessageLanguage(inbound?.body || "");
+}
+
+
+const CONVERSATION_TYPES = Object.freeze([
+  "prospect",
+  "client",
+  "support",
+  "provider",
+  "freelancer",
+  "job_seeker",
+  "other_business_contact"
+]);
+
+const FOLLOWUP_ELIGIBLE_TYPES = new Set(["prospect", "client"]);
+
+function hasAnyKeyword(value, keywords) {
+  const textValue = String(value || "").toLowerCase();
+  return keywords.some((keyword) => textValue.includes(keyword));
+}
+
+function classifyConversationType({ text = "", previousType = null } = {}) {
+  const normalizedPreviousType = CONVERSATION_TYPES.includes(previousType) ? previousType : null;
+  const value = String(text || "").toLowerCase();
+
+  if (hasAnyKeyword(value, ["freelance", "freelancer", "translator cv", "interpreter cv", "linguist", "vendor application", "available for translation", "i offer translation", "je suis traducteur", "je suis traductrice"])) {
+    return "freelancer";
+  }
+  if (hasAnyKeyword(value, ["provider", "supplier", "vendor", "partnership", "outsourcing", "collaboration proposal", "agency partnership"])) {
+    return "provider";
+  }
+  if (hasAnyKeyword(value, ["job", "vacancy", "career", "cv", "resume", "application", "internship", "recruitment", "hiring", "emploi", "stage"])) {
+    return "job_seeker";
+  }
+  if (hasAnyKeyword(value, ["support", "issue", "problem", "complaint", "not working", "refund", "invoice", "receipt", "my order", "existing project", "ticket"])) {
+    return "support";
+  }
+  if (hasAnyKeyword(value, ["my course", "my class", "my translation", "our account", "existing client", "we worked", "previous order", "ongoing project"])) {
+    return "client";
+  }
+  if (hasAnyKeyword(value, ["quote", "price", "fee", "fees", "cost", "course", "training", "translation", "translate", "interpreting", "service", "exam", "ielts", "toefl", "register", "enrol", "enroll", "devis", "tarif", "prix", "cours", "formation", "traduction"])) {
+    return "prospect";
+  }
+
+  return normalizedPreviousType || "other_business_contact";
+}
+
+function determineFollowupEligibility(conversationType, { humanTakeover = false } = {}) {
+  if (humanTakeover) {
+    return {
+      eligible: false,
+      policy: "human_owned_silence_default"
+    };
+  }
+  if (FOLLOWUP_ELIGIBLE_TYPES.has(conversationType)) {
+    return {
+      eligible: true,
+      policy: "eligible_after_meaningful_inactivity"
+    };
+  }
+  return {
+    eligible: false,
+    policy: `not_eligible_for_${conversationType || "unknown"}`
+  };
+}
+
+function isManualHumanReplyRow(row) {
+  if (!row) return false;
+  if (String(row.direction || "") !== "out") return false;
+  if (row.staff_reply_text || row.sent_reply_text) return true;
+  if (row.ownership_event === "human_takeover") return true;
+  return false;
+}
+
+async function getConversationOwnershipState(waId) {
+  const emptyState = {
+    exists: false,
+    owner: "bot",
+    humanTakeover: false,
+    lastHumanReplyAt: null,
+    lastCustomerMessageAt: null,
+    conversationType: "other_business_contact",
+    followupEligible: false,
+    automationPolicy: "new_conversation_default",
+    latestOwnershipEvent: null
+  };
+  if (!waId) return emptyState;
+
+  const fullSelect = "id, created_at, direction, body, staff_reply_text, sent_reply_text, conversation_owner, human_takeover, last_human_reply_at, last_customer_message_at, conversation_type, followup_eligible, automation_policy, ownership_event";
+  let { data, error } = await supabase
+    .from("conversations")
+    .select(fullSelect)
+    .eq("wa_id", waId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  if (error && extractMissingColumnName(error)) {
+    console.warn("[ownership] ownership columns unavailable; using legacy conversation scan", {
+      wa_id: waId,
+      missing_column: extractMissingColumnName(error)
+    });
+    const retry = await supabase
+      .from("conversations")
+      .select("id, created_at, direction, body, staff_reply_text, sent_reply_text")
+      .eq("wa_id", waId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    data = retry.data;
+    error = retry.error;
+
+    if (error && extractMissingColumnName(error)) {
+      const coreRetry = await supabase
+        .from("conversations")
+        .select("id, created_at, direction, body")
+        .eq("wa_id", waId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      data = coreRetry.data;
+      error = coreRetry.error;
+    }
+  }
+
+  if (error || !Array.isArray(data) || !data.length) return emptyState;
+
+  const latest = data[0] || {};
+  const latestExplicitOwner = String(latest.conversation_owner || "").toLowerCase();
+  const latestOwnershipEvent = latest.ownership_event || null;
+  const latestHumanTakeover = latest.human_takeover === true;
+  const manualResetActive = latestOwnershipEvent === "manual_reset" && latestExplicitOwner === "bot" && latest.human_takeover === false;
+  const lastManualReply = data.find(isManualHumanReplyRow);
+  const lastInbound = data.find((row) => String(row.direction || "") === "in");
+  const inferredHumanTakeover = !manualResetActive && Boolean(lastManualReply);
+  const humanTakeover = latestHumanTakeover || inferredHumanTakeover || latestExplicitOwner === "human";
+  const owner = humanTakeover ? "human" : "bot";
+  const previousType = CONVERSATION_TYPES.includes(latest.conversation_type) ? latest.conversation_type : null;
+  const conversationType = previousType || classifyConversationType({ text: lastInbound?.body || latest.body || "" });
+  const followup = determineFollowupEligibility(conversationType, { humanTakeover });
+
+  return {
+    exists: true,
+    owner,
+    humanTakeover,
+    lastHumanReplyAt: latest.last_human_reply_at || lastManualReply?.created_at || null,
+    lastCustomerMessageAt: latest.last_customer_message_at || lastInbound?.created_at || null,
+    conversationType,
+    followupEligible: latest.followup_eligible ?? followup.eligible,
+    automationPolicy: latest.automation_policy || followup.policy,
+    latestOwnershipEvent
+  };
+}
+
+function buildInboundOwnershipState(previousState, inboundText, receivedAt = new Date().toISOString()) {
+  const conversationType = classifyConversationType({
+    text: inboundText,
+    previousType: previousState?.conversationType
+  });
+  const humanTakeover = Boolean(previousState?.humanTakeover);
+  const owner = humanTakeover ? "human" : "bot";
+  const followup = determineFollowupEligibility(conversationType, { humanTakeover });
+  return {
+    conversation_owner: owner,
+    human_takeover: humanTakeover,
+    last_human_reply_at: previousState?.lastHumanReplyAt || null,
+    last_customer_message_at: receivedAt,
+    conversation_type: conversationType,
+    followup_eligible: followup.eligible,
+    automation_policy: followup.policy,
+    bot_suppressed_reason: humanTakeover ? "human_takeover_active" : null,
+    ownership_event: humanTakeover ? "human_owned_inbound" : (previousState?.exists ? "bot_owned_inbound" : "new_bot_owned_inbound")
+  };
+}
+
+function buildBotOutboundOwnershipState(currentState) {
+  const conversationType = currentState?.conversation_type || currentState?.conversationType || "other_business_contact";
+  const followup = determineFollowupEligibility(conversationType, { humanTakeover: false });
+  return {
+    conversation_owner: "bot",
+    human_takeover: false,
+    last_human_reply_at: currentState?.last_human_reply_at || currentState?.lastHumanReplyAt || null,
+    last_customer_message_at: currentState?.last_customer_message_at || currentState?.lastCustomerMessageAt || null,
+    conversation_type: conversationType,
+    followup_eligible: followup.eligible,
+    automation_policy: followup.policy,
+    bot_suppressed_reason: null,
+    ownership_event: "bot_auto_reply"
+  };
+}
+
+function buildHumanOutboundOwnershipState({ conversationType = "other_business_contact", lastCustomerMessageAt = null } = {}) {
+  const now = new Date().toISOString();
+  const followup = determineFollowupEligibility(conversationType, { humanTakeover: true });
+  return {
+    conversation_owner: "human",
+    human_takeover: true,
+    last_human_reply_at: now,
+    last_customer_message_at: lastCustomerMessageAt,
+    conversation_type: conversationType,
+    followup_eligible: followup.eligible,
+    automation_policy: followup.policy,
+    bot_suppressed_reason: null,
+    ownership_event: "human_takeover"
+  };
+}
+
+async function updateConversationOwnershipRows(waId, ownershipPatch) {
+  if (!waId || !ownershipPatch || typeof ownershipPatch !== "object") return;
+  const safePatch = { ...ownershipPatch };
+  while (Object.keys(safePatch).length) {
+    const { error } = await supabase
+      .from("conversations")
+      .update(safePatch)
+      .eq("wa_id", waId);
+    if (!error) return;
+    const missingColumn = extractMissingColumnName(error);
+    if (missingColumn && missingColumn in safePatch) {
+      delete safePatch[missingColumn];
+      continue;
+    }
+    console.warn("[ownership] update skipped", {
+      wa_id: waId,
+      error_message: error?.message || String(error)
+    });
+    return;
+  }
+}
+
+function logOwnershipDecision({ waId, channel = "whatsapp", state, event = "state_selected" }) {
+  console.log("[ownership] conversation owner selected", {
+    channel,
+    wa_id: waId,
+    event,
+    conversation_owner: state?.conversation_owner || state?.owner || null,
+    human_takeover: state?.human_takeover ?? state?.humanTakeover ?? null,
+    last_human_reply_at: state?.last_human_reply_at || state?.lastHumanReplyAt || null,
+    last_customer_message_at: state?.last_customer_message_at || state?.lastCustomerMessageAt || null,
+    conversation_type: state?.conversation_type || state?.conversationType || null,
+    followup_eligible: state?.followup_eligible ?? state?.followupEligible ?? null,
+    automation_policy: state?.automation_policy || state?.automationPolicy || null
+  });
+}
+
+function applyMailHumanTakeover(thread, replyText) {
+  if (!thread) return null;
+  const currentType = classifyConversationType({
+    text: [thread.subject, thread.preview, replyText].filter(Boolean).join(" "),
+    previousType: thread.conversation_type
+  });
+  const takeover = buildHumanOutboundOwnershipState({
+    conversationType: currentType,
+    lastCustomerMessageAt: thread.last_customer_message_at || thread.timestamp || null
+  });
+  Object.assign(thread, {
+    conversation_owner: takeover.conversation_owner,
+    human_takeover: takeover.human_takeover,
+    last_human_reply_at: takeover.last_human_reply_at,
+    conversation_type: takeover.conversation_type,
+    followup_eligible: takeover.followup_eligible,
+    automation_policy: takeover.automation_policy,
+    ownership_event: takeover.ownership_event
+  });
+  logOwnershipDecision({
+    channel: "mail",
+    waId: thread.thread_id,
+    state: takeover,
+    event: "human_takeover_activated"
+  });
+  return takeover;
 }
 
 function getLocalizedAck(language) {
@@ -4376,6 +4678,22 @@ app.post("/webhook", async (req, res) => {
     markMessageProcessed(inboundMessageId);
 
     console.log("Message received from:", from, "| text:", inboundBody);
+    const previousOwnershipState = await getConversationOwnershipState(from);
+    const inboundOwnershipState = buildInboundOwnershipState(previousOwnershipState, inboundBody);
+    logOwnershipDecision({
+      waId: from,
+      channel: "whatsapp",
+      state: inboundOwnershipState,
+      event: previousOwnershipState.humanTakeover ? "human_owned_inbound" : (previousOwnershipState.exists ? "existing_bot_owned_inbound" : "new_bot_owned_inbound")
+    });
+    if (!previousOwnershipState.humanTakeover && inboundOwnershipState.human_takeover) {
+      console.log("[ownership] human takeover activated", {
+        channel: "whatsapp",
+        wa_id: from,
+        last_human_reply_at: inboundOwnershipState.last_human_reply_at
+      });
+    }
+
     const inboundMediation = await detectAndTranslateInboundMessage({
       text: inboundBody,
       workingLanguage: INTERNAL_WORKING_LANGUAGE_DEFAULT
@@ -4395,7 +4713,8 @@ app.post("/webhook", async (req, res) => {
       caption: attachment?.caption || null,
       original_language: inboundMediation.original_language,
       translated_text: inboundMediation.translated_text,
-      translated_language: inboundMediation.translated_language
+      translated_language: inboundMediation.translated_language,
+      ...inboundOwnershipState
     });
 
     await automationHub.trigger("new_inbox_message", {
@@ -4405,6 +4724,25 @@ app.post("/webhook", async (req, res) => {
     }, {
       source: "inbox-webhook"
     });
+
+    if (inboundOwnershipState.human_takeover) {
+      console.log("[ownership] bot suppressed because thread is human-owned", {
+        channel: "whatsapp",
+        wa_id: from,
+        conversation_owner: inboundOwnershipState.conversation_owner,
+        conversation_type: inboundOwnershipState.conversation_type,
+        followup_eligible: inboundOwnershipState.followup_eligible,
+        reason: inboundOwnershipState.bot_suppressed_reason
+      });
+      logInboundRoutingDecision({
+        mode: activeMode,
+        branch: "suppressed_human_owned",
+        text: inboundBody,
+        reason: inboundOwnershipState.bot_suppressed_reason,
+        controlledAction: "bot_silence"
+      });
+      return res.sendStatus(200);
+    }
 
     if (hasAttachment && !text) {
       logInboundRoutingDecision({
@@ -5160,7 +5498,8 @@ app.post("/webhook", async (req, res) => {
       contact_name: contactName,
       direction: "out",
       body: ack,
-      message_type: "text"
+      message_type: "text",
+      ...buildBotOutboundOwnershipState(inboundOwnershipState)
     });
 
     await sendWhatsAppText(from, reply, 0);
@@ -5170,7 +5509,8 @@ app.post("/webhook", async (req, res) => {
       contact_name: contactName,
       direction: "out",
       body: reply,
-      message_type: "text"
+      message_type: "text",
+      ...buildBotOutboundOwnershipState(inboundOwnershipState)
     });
   } else {
     await sendWhatsAppText(from, reply, 0);
@@ -5180,7 +5520,8 @@ app.post("/webhook", async (req, res) => {
       contact_name: contactName,
       direction: "out",
       body: reply,
-      message_type: "text"
+      message_type: "text",
+      ...buildBotOutboundOwnershipState(inboundOwnershipState)
     });
   }
   console.log("[deterministic-menu-debug] fixed_reply_send_success", {
@@ -5450,6 +5791,8 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
     }
 
     thread.entries = Array.isArray(thread.entries) ? thread.entries : [];
+    const mailOwnershipState = applyMailHumanTakeover(thread, body || newEntry.preview);
+    Object.assign(newEntry, mailOwnershipState || {});
     thread.entries.push(newEntry);
     thread.preview = newEntry.preview;
     thread.timestamp = newEntry.timestamp;
@@ -5478,14 +5821,14 @@ app.get("/api/conversations", async (req, res) => {
 
     const activeOnlyResponse = await supabase
       .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction, label")
+      .select("wa_id, contact_name, body, created_at, direction, label, conversation_owner, human_takeover, conversation_type, followup_eligible")
       .or("is_archived.is.false,is_archived.is.null")
       .order("created_at", { ascending: false });
 
     data = activeOnlyResponse.data;
     error = activeOnlyResponse.error;
 
-    if (error && String(error.message || "").toLowerCase().includes("is_archived")) {
+    if (error && (String(error.message || "").toLowerCase().includes("is_archived") || extractMissingColumnName(error))) {
       const fallbackResponse = await supabase
         .from("conversations")
         .select("wa_id, contact_name, body, created_at, direction, label")
@@ -5509,7 +5852,11 @@ app.get("/api/conversations", async (req, res) => {
           last_message: row.body,
           last_direction: row.direction,
           last_time: row.created_at,
-          label: row.label || ""
+          label: row.label || "",
+          conversation_owner: row.conversation_owner || null,
+          human_takeover: row.human_takeover ?? null,
+          conversation_type: row.conversation_type || null,
+          followup_eligible: row.followup_eligible ?? null
         });
       }
     }
@@ -5523,11 +5870,21 @@ app.get("/api/conversations", async (req, res) => {
 
 app.get("/api/conversations/archived", async (req, res) => {
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction, label")
+      .select("wa_id, contact_name, body, created_at, direction, label, conversation_owner, human_takeover, conversation_type, followup_eligible")
       .eq("is_archived", true)
       .order("created_at", { ascending: false });
+
+    if (error && extractMissingColumnName(error) && extractMissingColumnName(error) !== "is_archived") {
+      const retry = await supabase
+        .from("conversations")
+        .select("wa_id, contact_name, body, created_at, direction, label")
+        .eq("is_archived", true)
+        .order("created_at", { ascending: false });
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       return res.status(500).json({ error });
@@ -5543,7 +5900,11 @@ app.get("/api/conversations/archived", async (req, res) => {
           last_message: row.body,
           last_direction: row.direction,
           last_time: row.created_at,
-          label: row.label || ""
+          label: row.label || "",
+          conversation_owner: row.conversation_owner || null,
+          human_takeover: row.human_takeover ?? null,
+          conversation_type: row.conversation_type || null,
+          followup_eligible: row.followup_eligible ?? null
         });
       }
     }
@@ -5695,6 +6056,45 @@ app.post("/api/conversations/:wa_id/unarchive", async (req, res) => {
   }
 });
 
+app.post("/api/conversations/:wa_id/ownership/reset", async (req, res) => {
+  try {
+    const wa_id = req.params.wa_id;
+    if (!wa_id) {
+      return res.status(400).json({ error: "wa_id is required" });
+    }
+
+    const existingOwnershipState = await getConversationOwnershipState(wa_id);
+    const conversationType = classifyConversationType({
+      text: String(req.body?.conversation_type || ""),
+      previousType: existingOwnershipState.conversationType
+    });
+    const followup = determineFollowupEligibility(conversationType, { humanTakeover: false });
+    const resetState = {
+      conversation_owner: "bot",
+      human_takeover: false,
+      last_human_reply_at: existingOwnershipState.lastHumanReplyAt,
+      last_customer_message_at: existingOwnershipState.lastCustomerMessageAt,
+      conversation_type: conversationType,
+      followup_eligible: followup.eligible,
+      automation_policy: `manual_reset_${followup.policy}`,
+      bot_suppressed_reason: null,
+      ownership_event: "manual_reset"
+    };
+
+    await updateConversationOwnershipRows(wa_id, resetState);
+    logOwnershipDecision({
+      waId: wa_id,
+      channel: "whatsapp",
+      state: resetState,
+      event: "manual_reset"
+    });
+
+    return res.json({ ok: true, ownership: resetState });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/send", async (req, res) => {
   try {
     const { wa_id, body } = req.body;
@@ -5704,6 +6104,23 @@ app.post("/api/send", async (req, res) => {
     }
 
     const staffReplyText = String(body || "").trim();
+    const existingOwnershipState = await getConversationOwnershipState(wa_id);
+    const humanOwnershipState = buildHumanOutboundOwnershipState({
+      conversationType: existingOwnershipState.conversationType,
+      lastCustomerMessageAt: existingOwnershipState.lastCustomerMessageAt
+    });
+    logOwnershipDecision({
+      waId: wa_id,
+      channel: "whatsapp",
+      state: humanOwnershipState,
+      event: "human_takeover_activated"
+    });
+    console.log("[ownership] human takeover activated", {
+      channel: "whatsapp",
+      wa_id,
+      trigger: "manual_text_send",
+      last_human_reply_at: humanOwnershipState.last_human_reply_at
+    });
     const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
     const customerLanguage = await getLatestCustomerLanguage(wa_id);
     const sentReplyText = shouldTranslateText(staffReplyText)
@@ -5725,8 +6142,10 @@ app.post("/api/send", async (req, res) => {
       staff_reply_text: staffReplyText,
       staff_reply_language: staffReplyLanguage,
       sent_reply_text: sentReplyText,
-      sent_reply_language: customerLanguage
+      sent_reply_language: customerLanguage,
+      ...humanOwnershipState
     });
+    await updateConversationOwnershipRows(wa_id, humanOwnershipState);
 
     return res.json({
       ok: true,
@@ -5771,6 +6190,23 @@ app.post("/api/send-attachment", outboundUpload.single("attachment"), async (req
     }
 
     const trimmedCaption = typeof caption === "string" ? caption.trim() : "";
+    const existingOwnershipState = await getConversationOwnershipState(wa_id);
+    const humanOwnershipState = buildHumanOutboundOwnershipState({
+      conversationType: existingOwnershipState.conversationType,
+      lastCustomerMessageAt: existingOwnershipState.lastCustomerMessageAt
+    });
+    logOwnershipDecision({
+      waId: wa_id,
+      channel: "whatsapp",
+      state: humanOwnershipState,
+      event: "human_takeover_activated"
+    });
+    console.log("[ownership] human takeover activated", {
+      channel: "whatsapp",
+      wa_id,
+      trigger: "manual_attachment_send",
+      last_human_reply_at: humanOwnershipState.last_human_reply_at
+    });
     const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
     const customerLanguage = await getLatestCustomerLanguage(wa_id);
     const sentCaption = trimmedCaption
@@ -5805,8 +6241,10 @@ app.post("/api/send-attachment", outboundUpload.single("attachment"), async (req
       staff_reply_text: trimmedCaption || null,
       staff_reply_language: trimmedCaption ? staffReplyLanguage : null,
       sent_reply_text: sentCaption || null,
-      sent_reply_language: sentCaption ? customerLanguage : null
+      sent_reply_language: sentCaption ? customerLanguage : null,
+      ...humanOwnershipState
     });
+    await updateConversationOwnershipRows(wa_id, humanOwnershipState);
 
     return res.json({ ok: true, sendResult });
   } catch (error) {
