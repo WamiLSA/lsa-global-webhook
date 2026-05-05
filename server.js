@@ -5814,102 +5814,198 @@ app.get("/api/communications/templates", async (req, res) => {
   return res.json({ ok: true, templates: state.reply_templates || [] });
 });
 
-app.get("/api/conversations", async (req, res) => {
-  try {
-    let data;
-    let error;
+const CONVERSATION_THREAD_SELECT_COLUMNS = [
+  "wa_id",
+  "contact_name",
+  "body",
+  "created_at",
+  "direction",
+  "label",
+  "is_archived",
+  "conversation_owner",
+  "human_takeover",
+  "conversation_type",
+  "followup_eligible"
+];
 
-    const activeOnlyResponse = await supabase
+function buildConversationThreadSummary(rows) {
+  const map = new Map();
+
+  for (const row of rows || []) {
+    if (!row?.wa_id || map.has(row.wa_id)) continue;
+    map.set(row.wa_id, {
+      wa_id: row.wa_id,
+      contact_name: row.contact_name,
+      last_message: row.body,
+      last_direction: row.direction,
+      last_time: row.created_at,
+      label: row.label || "",
+      is_archived: row.is_archived === true,
+      conversation_owner: row.conversation_owner || null,
+      human_takeover: row.human_takeover ?? null,
+      conversation_type: row.conversation_type || null,
+      followup_eligible: row.followup_eligible ?? null
+    });
+  }
+
+  return Array.from(map.values());
+}
+
+async function queryConversationRowsForThreadView({ archived = false } = {}) {
+  const blockedColumns = new Set();
+  let archiveFilterAvailable = true;
+  const attempts = [];
+
+  for (let attempt = 1; attempt <= CONVERSATION_THREAD_SELECT_COLUMNS.length + 3; attempt += 1) {
+    const selectColumns = CONVERSATION_THREAD_SELECT_COLUMNS.filter((column) => !blockedColumns.has(column));
+    let query = supabase
       .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction, label, conversation_owner, human_takeover, conversation_type, followup_eligible")
-      .or("is_archived.is.false,is_archived.is.null")
+      .select(selectColumns.join(", "))
       .order("created_at", { ascending: false });
 
-    data = activeOnlyResponse.data;
-    error = activeOnlyResponse.error;
-
-    if (error && (String(error.message || "").toLowerCase().includes("is_archived") || extractMissingColumnName(error))) {
-      const fallbackResponse = await supabase
-        .from("conversations")
-        .select("wa_id, contact_name, body, created_at, direction, label")
-        .order("created_at", { ascending: false });
-      data = fallbackResponse.data;
-      error = fallbackResponse.error;
+    if (archiveFilterAvailable) {
+      query = archived
+        ? query.eq("is_archived", true)
+        : query.or("is_archived.is.false,is_archived.is.null");
     }
 
-    if (error) {
-      return res.status(500).json({ error });
+    const { data, error } = await query;
+    attempts.push({
+      attempt,
+      archived,
+      archive_filter_available: archiveFilterAvailable,
+      selected_columns: selectColumns,
+      row_count: Array.isArray(data) ? data.length : null,
+      error_code: error?.code || null,
+      error_message: error?.message || null,
+      missing_column: extractMissingColumnName(error)
+    });
+
+    if (!error) {
+      const rows = Array.isArray(data) ? data : [];
+      console.log("[inbox-api] conversation thread query succeeded", {
+        view: archived ? "archived" : "active",
+        rows: rows.length,
+        blocked_columns: Array.from(blockedColumns),
+        archive_filter_available: archiveFilterAvailable
+      });
+      return { rows, attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
     }
-    console.log("[inbox-api] /api/conversations rows returned", Array.isArray(data) ? data.length : 0);
 
-    const map = new Map();
+    const missingColumn = extractMissingColumnName(error);
+    const message = String(error?.message || "").toLowerCase();
+    const archiveFilterFailed = missingColumn === "is_archived" || message.includes("is_archived");
 
-    for (const row of data) {
-      if (!map.has(row.wa_id)) {
-        map.set(row.wa_id, {
-          wa_id: row.wa_id,
-          contact_name: row.contact_name,
-          last_message: row.body,
-          last_direction: row.direction,
-          last_time: row.created_at,
-          label: row.label || "",
-          conversation_owner: row.conversation_owner || null,
-          human_takeover: row.human_takeover ?? null,
-          conversation_type: row.conversation_type || null,
-          followup_eligible: row.followup_eligible ?? null
-        });
+    if (archiveFilterFailed && archiveFilterAvailable) {
+      archiveFilterAvailable = false;
+      blockedColumns.add("is_archived");
+      console.warn("[inbox-api] archive status column unavailable; using legacy active inbox fallback", {
+        view: archived ? "archived" : "active",
+        error_code: error?.code || null,
+        error_message: error?.message || String(error)
+      });
+      if (archived) {
+        return { rows: [], attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
       }
+      continue;
     }
 
-    return res.json(Array.from(map.values()));
+    if (missingColumn && selectColumns.includes(missingColumn)) {
+      blockedColumns.add(missingColumn);
+      console.warn("[inbox-api] optional conversation thread column unavailable; retrying without it", {
+        view: archived ? "archived" : "active",
+        missing_column: missingColumn,
+        error_code: error?.code || null,
+        error_message: error?.message || String(error)
+      });
+      continue;
+    }
+
+    console.error("[inbox-api] conversation thread query failed", {
+      view: archived ? "archived" : "active",
+      error_code: error?.code || null,
+      error_message: error?.message || String(error),
+      attempts
+    });
+    return { rows: null, error, attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
+  }
+
+  return {
+    rows: null,
+    attempts,
+    blockedColumns: Array.from(blockedColumns),
+    archiveFilterAvailable,
+    error: { message: "Conversation thread query failed after repeated schema fallback attempts." }
+  };
+}
+
+async function getConversationVisibilityDiagnostics() {
+  const diagnostics = {
+    checked_at: new Date().toISOString(),
+    total_rows: null,
+    active_rows: null,
+    archived_rows: null,
+    latest_rows: [],
+    warnings: []
+  };
+
+  const [totalRes, activeRes, archivedRes, latestRes] = await Promise.all([
+    supabase.from("conversations").select("wa_id", { count: "exact", head: true }),
+    supabase.from("conversations").select("wa_id", { count: "exact", head: true }).or("is_archived.is.false,is_archived.is.null"),
+    supabase.from("conversations").select("wa_id", { count: "exact", head: true }).eq("is_archived", true),
+    supabase.from("conversations").select("wa_id, created_at, direction, is_archived").order("created_at", { ascending: false }).limit(10)
+  ]);
+
+  diagnostics.total_rows = totalRes.count ?? null;
+  if (totalRes.error) diagnostics.warnings.push(`total count failed: ${totalRes.error.message || totalRes.error}`);
+  diagnostics.active_rows = activeRes.count ?? null;
+  if (activeRes.error) diagnostics.warnings.push(`active count failed: ${activeRes.error.message || activeRes.error}`);
+  diagnostics.archived_rows = archivedRes.count ?? null;
+  if (archivedRes.error) diagnostics.warnings.push(`archived count failed: ${archivedRes.error.message || archivedRes.error}`);
+  diagnostics.latest_rows = Array.isArray(latestRes.data) ? latestRes.data : [];
+  if (latestRes.error) diagnostics.warnings.push(`latest rows failed: ${latestRes.error.message || latestRes.error}`);
+
+  return diagnostics;
+}
+
+app.get("/api/conversations", async (req, res) => {
+  try {
+    const result = await queryConversationRowsForThreadView({ archived: false });
+    if (result.error) {
+      return res.status(500).json({ error: result.error, diagnostics: { attempts: result.attempts } });
+    }
+
+    const threads = buildConversationThreadSummary(result.rows);
+    if (!threads.length) {
+      const diagnostics = await getConversationVisibilityDiagnostics();
+      console.warn("[inbox-api] active conversation thread view returned zero threads", diagnostics);
+      res.set("X-LSA-Inbox-Active-Rows", String(diagnostics.active_rows ?? "unknown"));
+      res.set("X-LSA-Inbox-Total-Rows", String(diagnostics.total_rows ?? "unknown"));
+    }
+
+    return res.json(threads);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-
 app.get("/api/conversations/archived", async (req, res) => {
   try {
-    let { data, error } = await supabase
-      .from("conversations")
-      .select("wa_id, contact_name, body, created_at, direction, label, conversation_owner, human_takeover, conversation_type, followup_eligible")
-      .eq("is_archived", true)
-      .order("created_at", { ascending: false });
-
-    if (error && extractMissingColumnName(error) && extractMissingColumnName(error) !== "is_archived") {
-      const retry = await supabase
-        .from("conversations")
-        .select("wa_id, contact_name, body, created_at, direction, label")
-        .eq("is_archived", true)
-        .order("created_at", { ascending: false });
-      data = retry.data;
-      error = retry.error;
+    const result = await queryConversationRowsForThreadView({ archived: true });
+    if (result.error) {
+      return res.status(500).json({ error: result.error, diagnostics: { attempts: result.attempts } });
     }
 
-    if (error) {
-      return res.status(500).json({ error });
-    }
+    return res.json(buildConversationThreadSummary(result.rows));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
-    const map = new Map();
-
-    for (const row of data) {
-      if (!map.has(row.wa_id)) {
-        map.set(row.wa_id, {
-          wa_id: row.wa_id,
-          contact_name: row.contact_name,
-          last_message: row.body,
-          last_direction: row.direction,
-          last_time: row.created_at,
-          label: row.label || "",
-          conversation_owner: row.conversation_owner || null,
-          human_takeover: row.human_takeover ?? null,
-          conversation_type: row.conversation_type || null,
-          followup_eligible: row.followup_eligible ?? null
-        });
-      }
-    }
-
-    return res.json(Array.from(map.values()));
+app.get("/api/conversations/diagnostics/visibility", async (req, res) => {
+  try {
+    const diagnostics = await getConversationVisibilityDiagnostics();
+    return res.json({ ok: true, diagnostics });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
