@@ -642,16 +642,25 @@
         ? (currentView === "archived" ? "/api/communications/mail/threads?view=archived" : "/api/communications/mail/threads")
         : (currentView === "archived" ? "/api/conversations/archived" : "/api/conversations");
       const res = await fetch(endpoint);
-      const threads = await res.json();
+      const payload = await res.json();
+      if (!res.ok || !Array.isArray(payload)) {
+        console.error("[inbox-frontend] thread fetch failed", { endpoint, status: res.status, payload });
+        const message = payload?.error?.message || payload?.error || "Unable to load threads.";
+        document.getElementById("threads").innerHTML = `<div class="small">Thread loading error: ${escapeHtml(String(message))}</div>`;
+        return;
+      }
+      const threads = payload;
       console.log("[inbox-frontend] threads fetched", {
         endpoint,
-        count: Array.isArray(threads) ? threads.length : 0
+        count: threads.length,
+        active_rows: res.headers.get("X-LSA-Inbox-Active-Rows"),
+        total_rows: res.headers.get("X-LSA-Inbox-Total-Rows")
       });
 
       const container = document.getElementById("threads");
       container.innerHTML = "";
 
-      if (!Array.isArray(threads) || threads.length === 0) {
+      if (threads.length === 0) {
         container.innerHTML = `<div class="small">No ${currentView} threads.</div>`;
         return;
       }
