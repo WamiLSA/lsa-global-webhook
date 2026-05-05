@@ -888,6 +888,14 @@ async function writeLocalAccountSettingsStore(store) {
   await fs.writeFile(ACCOUNT_SETTINGS_FILE, JSON.stringify(store, null, 2));
 }
 
+function parseAccountSettingsStoreValue(value) {
+  if (typeof value === "string") {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  }
+  return value && typeof value === "object" ? value : null;
+}
+
 async function readAccountSettingsStoreFromDatabase() {
   try {
     const { data, error } = await supabase
@@ -897,14 +905,23 @@ async function readAccountSettingsStoreFromDatabase() {
       .maybeSingle();
     if (error) {
       console.warn("[settings] Failed to read account settings from app_config:", error.message);
-      return null;
+      return { status: "error", store: null, error };
     }
-    if (!data?.value) return null;
-    const parsed = JSON.parse(data.value);
-    return parsed && typeof parsed === "object" ? parsed : null;
+    if (!data || data.value === null || data.value === undefined || data.value === "") {
+      return { status: "missing", store: null, error: null };
+    }
+    const store = parseAccountSettingsStoreValue(data.value);
+    if (!store) {
+      return {
+        status: "error",
+        store: null,
+        error: new Error("app_config account settings value is not a valid object")
+      };
+    }
+    return { status: "ok", store, error: null };
   } catch (error) {
     console.warn("[settings] Unexpected app_config settings read failure:", error.message || error);
-    return null;
+    return { status: "error", store: null, error };
   }
 }
 
@@ -923,8 +940,11 @@ async function persistAccountSettingsStoreToDatabase(store) {
 }
 
 async function readAccountSettingsStore() {
-  const databaseStore = await readAccountSettingsStoreFromDatabase();
-  if (databaseStore) return databaseStore;
+  const databaseResult = await readAccountSettingsStoreFromDatabase();
+  if (databaseResult.status === "ok") return databaseResult.store;
+  if (databaseResult.status === "error") {
+    throw new Error("Unable to read durable account settings from app_config; refusing to use local fallback for a writeable settings operation.");
+  }
 
   const localStore = await readLocalAccountSettingsStore();
   if (Object.keys(localStore.users || {}).length || localStore.branding) {
