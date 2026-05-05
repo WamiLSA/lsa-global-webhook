@@ -71,14 +71,6 @@ button {
   padding: 10px 16px;
 }
 
-.lsa-top-nav__brand {
-  color: var(--lsa-blue);
-  font-weight: 800;
-  letter-spacing: 0.4px;
-  white-space: nowrap;
-  margin-right: 16px;
-}
-
 .lsa-top-nav__right {
   display: flex;
   align-items: center;

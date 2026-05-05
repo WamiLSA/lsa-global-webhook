@@ -161,9 +161,8 @@
       font-size: 12px;
     }
     
-        .hub-identity { margin-bottom: 10px; }
-    .platform-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--lsa-text-muted); }
-    .hub-identity h3 { margin: 4px 0 0; }
+        .hub-identity { margin-bottom: 12px; }
+    .hub-identity h3 { margin: 0; }
     .channel-toggle {display:flex; gap:8px; margin-bottom:10px;}
     .channel-toggle button{flex:1; border:1px solid var(--lsa-input-border); border-radius:10px; padding:10px 10px; cursor:pointer; font-weight:700;}
     .channel-toggle .whatsapp{background:#ffffff; color:#1f2937; border-color:#d0d7e2;}
@@ -329,7 +328,7 @@
   <div id="topNavMount"></div>
   <div id="appLayout">
   <div id="sidebar">
-    <div class="hub-identity"><div class="platform-title">LSA GLOBAL Internal OS</div><h3>Communications Hub</h3></div>
+    <div class="hub-identity"><h3>Communications Hub</h3></div>
     <div class="channel-toggle">
       <button id="channelWhatsAppBtn" type="button" class="active whatsapp" onclick="setChannel('whatsapp')">💬 WhatsApp Inbox</button>
       <button id="channelMailBtn" type="button" class="mail" onclick="setChannel('mail')">✉️ Mail Inbox</button>
