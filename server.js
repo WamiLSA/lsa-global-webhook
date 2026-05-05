@@ -1974,27 +1974,59 @@ const retrieveInternalKnowledge = createInternalRetriever({
 });
 
 const customerState = new Map();
+const LIVE_PROMPT_REPEAT_THRESHOLD = 2;
+
+function getDefaultCustomerState() {
+  return {
+    clarifyingAsked: false,
+    preferredCourseLanguage: null,
+    topicType: null,
+    topicLanguage: null,
+    topicEntity: null,
+    topicIntent: null,
+    topicDomain: null,
+    topicLabel: null,
+    topicSubVariant: null,
+    liveMenuOption: null,
+    liveKnownSlots: {},
+    lastPromptKey: null,
+    repeatedPromptCount: 0,
+    lastRoute: null,
+    intentShiftDetected: false
+  };
+}
 
 function getCustomerState(waId) {
-  if (!waId) return { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null, liveKnownSlots: {} };
-  return customerState.get(waId) || { clarifyingAsked: false, preferredCourseLanguage: null, topicType: null, topicLanguage: null, topicEntity: null, topicIntent: null, topicDomain: null, topicLabel: null, topicSubVariant: null, liveMenuOption: null, liveKnownSlots: {} };
+  if (!waId) return getDefaultCustomerState();
+  return { ...getDefaultCustomerState(), ...(customerState.get(waId) || {}) };
+}
+
+function mergeStateValue(state, current, key, fallback = null) {
+  if (Object.prototype.hasOwnProperty.call(state || {}, key)) return state[key];
+  return Object.prototype.hasOwnProperty.call(current || {}, key) ? current[key] : fallback;
 }
 
 function setCustomerState(waId, state) {
   if (!waId) return;
   const current = getCustomerState(waId);
   customerState.set(waId, {
-    clarifyingAsked: Boolean(state?.clarifyingAsked),
-    preferredCourseLanguage: state?.preferredCourseLanguage || current.preferredCourseLanguage || null,
-    topicType: state?.topicType || current.topicType || null,
-    topicLanguage: state?.topicLanguage || current.topicLanguage || null,
-    topicEntity: state?.topicEntity || current.topicEntity || null,
-    topicIntent: state?.topicIntent || current.topicIntent || null,
-    topicDomain: state?.topicDomain || current.topicDomain || null,
-    topicLabel: state?.topicLabel || current.topicLabel || null,
-    topicSubVariant: state?.topicSubVariant || current.topicSubVariant || null,
-    liveMenuOption: state?.liveMenuOption || current.liveMenuOption || null,
-    liveKnownSlots: state?.liveKnownSlots || current.liveKnownSlots || {}
+    clarifyingAsked: Object.prototype.hasOwnProperty.call(state || {}, "clarifyingAsked") ? Boolean(state.clarifyingAsked) : Boolean(current.clarifyingAsked),
+    preferredCourseLanguage: mergeStateValue(state, current, "preferredCourseLanguage"),
+    topicType: mergeStateValue(state, current, "topicType"),
+    topicLanguage: mergeStateValue(state, current, "topicLanguage"),
+    topicEntity: mergeStateValue(state, current, "topicEntity"),
+    topicIntent: mergeStateValue(state, current, "topicIntent"),
+    topicDomain: mergeStateValue(state, current, "topicDomain"),
+    topicLabel: mergeStateValue(state, current, "topicLabel"),
+    topicSubVariant: mergeStateValue(state, current, "topicSubVariant"),
+    liveMenuOption: mergeStateValue(state, current, "liveMenuOption"),
+    liveKnownSlots: mergeStateValue(state, current, "liveKnownSlots", {}),
+    lastPromptKey: mergeStateValue(state, current, "lastPromptKey"),
+    repeatedPromptCount: Number(mergeStateValue(state, current, "repeatedPromptCount", 0)) || 0,
+    lastRoute: mergeStateValue(state, current, "lastRoute"),
+    intentShiftDetected: Object.prototype.hasOwnProperty.call(state || {}, "intentShiftDetected")
+      ? Boolean(state.intentShiftDetected)
+      : Boolean(current.intentShiftDetected)
   });
 }
 
@@ -2061,7 +2093,8 @@ const LIVE_SERVICE_LANGUAGE_KEYWORDS = {
   arabic: ["arabic", "arabe", "árabe", "arabo"],
   russian: ["russian", "russe", "ruso", "russo"],
   dutch: ["dutch", "néerlandais", "neerlandais", "holandés", "olandese"],
-  japanese: ["japanese", "japonais", "japonés", "giapponese"]
+  japanese: ["japanese", "japonais", "japonés", "giapponese"],
+  ukrainian: ["ukrainian", "ukrainien", "ucraniano", "ucraino", "ukrainisch", "українська", "украинский"]
 };
 
 function detectServiceLanguages(text = "") {
@@ -2077,6 +2110,142 @@ function detectServiceLanguages(text = "") {
     }
   }
   return found;
+}
+
+function detectProviderCollaborationIntent(text = "") {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return { detected: false, reason: "empty" };
+  const patterns = [
+    { reason: "translator_identity", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?(translator|interpreter|linguist|freelancer|language provider)\b/i },
+    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language)\s+work\b/i },
+    { reason: "send_work_request", pattern: /\b(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
+    { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(you\s+to\s+)?(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
+    { reason: "work_with_lsa", pattern: /\b(i\s+)?want\s+to\s+(work\s+with\s+you|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
+    { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work)\b/i },
+    { reason: "provider_application", pattern: /\b(provider|freelancer|translator|interpreter)\s+(application|registration|intake|collaboration)\b/i }
+  ];
+  const match = patterns.find(({ pattern }) => pattern.test(normalized));
+  return { detected: Boolean(match), reason: match?.reason || "none" };
+}
+
+function detectTranslationClientIntent(text = "") {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return { detected: false, reason: "empty" };
+  const patterns = [
+    { reason: "direct_service_request", pattern: /\b(i\s+)?(need|want|request|require|looking\s+for)\s+(a\s+)?(certified\s+|sworn\s+)?translation\b/i },
+    { reason: "translate_my_document", pattern: /\b(translate|translation)\s+(my|a|the)?\s*(document|certificate|passport|contract|transcript|diploma|degree|file|pdf)\b/i },
+    { reason: "quote_request", pattern: /\b(quote|quotation|price|cost|fee|deadline|turnaround)\b.*\b(translation|translate|document|certificate)\b/i },
+    { reason: "language_pair_request", pattern: /\b(from\s+)?[a-z][a-z\s-]{1,30}\s+(to|into|-)\s+[a-z][a-z\s-]{1,30}\b/i }
+  ];
+  const match = patterns.find(({ pattern }) => pattern.test(normalized));
+  return { detected: Boolean(match), reason: match?.reason || "none" };
+}
+
+function extractLooseLanguagePair(text = "") {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return null;
+  const directPair = normalized.match(/\b(?:from\s+)?([a-z][a-z\s-]{1,30})\s+(?:to|into|-)\s+([a-z][a-z\s-]{1,30})\b/i);
+  if (!directPair) return null;
+  const clean = (value) => String(value || "")
+    .replace(/\b(i|need|want|translation|translate|document|from|to|into)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const source = clean(directPair[1]);
+  const target = clean(directPair[2]);
+  if (!source || !target || source === target) return null;
+  return `${source}-${target}`;
+}
+
+function isAmbiguousTranslationFollowUp(text = "", userState = {}) {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return false;
+  const activeTranslationFlow = normalizeLiveDomain(userState?.liveMenuOption || userState?.topicDomain || "") === "translation";
+  if (!activeTranslationFlow) return false;
+  return /\b(anything|any|whatever|both|yes|ok|okay|not sure|i do not know|i don't know)\b/i.test(normalized);
+}
+
+function getProviderCollaborationIntakeReply(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  const messages = {
+    en: "Thank you for your interest in working with LSA GLOBAL. To be reviewed for translation/interpreting collaboration, please send your full name, working languages/language pairs, country/city, service areas, availability, and CV or profile link if available. Our team will review and follow up.",
+    fr: "Merci pour votre intérêt à collaborer avec LSA GLOBAL. Pour l’étude de votre profil en traduction/interprétation, envoyez votre nom complet, langues/paires de langues, pays/ville, domaines de service, disponibilités, et CV ou lien de profil si disponible. Notre équipe examinera et reviendra vers vous.",
+    es: "Gracias por su interés en colaborar con LSA GLOBAL. Para revisar su perfil de traducción/interpretación, envíe nombre completo, idiomas/pares de idiomas, país/ciudad, áreas de servicio, disponibilidad y CV o enlace de perfil si lo tiene. Nuestro equipo revisará y responderá.",
+    de: "Vielen Dank für Ihr Interesse an einer Zusammenarbeit mit LSA GLOBAL. Für die Prüfung Ihres Übersetzungs-/Dolmetschprofils senden Sie bitte Namen, Arbeitssprachen/Sprachpaare, Land/Stadt, Leistungsbereiche, Verfügbarkeit und ggf. Lebenslauf oder Profil-Link. Unser Team prüft dies und meldet sich.",
+    it: "Grazie per l’interesse a collaborare con LSA GLOBAL. Per valutare il suo profilo di traduzione/interpretariato, invii nome completo, lingue/coppie linguistiche, paese/città, aree di servizio, disponibilità e CV o link profilo se disponibile. Il team esaminerà e risponderà.",
+    pt: "Obrigado pelo interesse em colaborar com a LSA GLOBAL. Para avaliação do seu perfil de tradução/interpretação, envie nome completo, línguas/pares de línguas, país/cidade, áreas de serviço, disponibilidade e CV ou link de perfil se disponível. A nossa equipa analisará e responderá."
+  };
+  return messages[language] || messages.en;
+}
+
+function getTranslationRoleClarificationReply(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  const messages = {
+    en: "Are you requesting a translation service, or are you a translator/freelancer looking to work with LSA GLOBAL?",
+    fr: "Souhaitez-vous demander un service de traduction, ou êtes-vous traducteur/freelance souhaitant collaborer avec LSA GLOBAL ?",
+    es: "¿Solicita un servicio de traducción, o es traductor/freelancer y desea trabajar con LSA GLOBAL?",
+    de: "Benötigen Sie einen Übersetzungsservice, oder sind Sie Übersetzer/Freelancer und möchten mit LSA GLOBAL zusammenarbeiten?",
+    it: "Sta richiedendo un servizio di traduzione, oppure è un traduttore/freelancer che desidera collaborare con LSA GLOBAL?",
+    pt: "Está a solicitar um serviço de tradução, ou é tradutor/freelancer e deseja colaborar com a LSA GLOBAL?"
+  };
+  return messages[language] || messages.en;
+}
+
+function getPromptKey(reply = "") {
+  const normalized = normalizeForIntent(reply);
+  if (!normalized) return "empty";
+  if (/\b(for translation|pour la traduction|para traduccion|para tradução|übersetzung|traduzione).*\b(language pair|paire de langues|par de idiomas|coppia linguistica|sprachpaar|par de linguas)\b/i.test(normalized)) {
+    return "translation_language_pair";
+  }
+  return normalized.slice(0, 120);
+}
+
+function applyLiveLoopProtection({ waId, userState, branch, reply, language, intentShiftDetected = false, detectedDomain = "general" }) {
+  const promptKey = getPromptKey(reply);
+  const previousPromptKey = userState?.lastPromptKey || null;
+  const previousCount = Number(userState?.repeatedPromptCount || 0);
+  const nextCount = previousPromptKey === promptKey ? previousCount + 1 : 1;
+  let finalReply = reply;
+  let finalBranch = branch;
+  let finalAction = "none";
+  let finalPromptKey = promptKey;
+  let finalRepeatedPromptCount = nextCount;
+
+  if (nextCount > LIVE_PROMPT_REPEAT_THRESHOLD) {
+    finalBranch = detectedDomain === "translation" ? "live_translation_loop_role_clarification" : "live_loop_manual_review";
+    finalReply = detectedDomain === "translation"
+      ? getTranslationRoleClarificationReply(language)
+      : getSafeHandoffMessage(language);
+    finalAction = detectedDomain === "translation" ? "role_clarification" : "manual_review";
+    finalPromptKey = getPromptKey(finalReply);
+    finalRepeatedPromptCount = 1;
+  }
+
+  setCustomerState(waId, {
+    lastPromptKey: finalPromptKey,
+    repeatedPromptCount: finalRepeatedPromptCount,
+    lastRoute: finalBranch,
+    intentShiftDetected
+  });
+
+  console.log("[conversation-flow-guard]", JSON.stringify({
+    current_branch: branch,
+    detected_domain: detectedDomain,
+    previous_prompt_key: previousPromptKey,
+    prompt_key: finalPromptKey,
+    repeated_prompt_count: finalRepeatedPromptCount,
+    max_repetition_threshold: LIVE_PROMPT_REPEAT_THRESHOLD,
+    intent_shift_detected: Boolean(intentShiftDetected),
+    loop_protection_action: finalAction,
+    final_route_chosen: finalBranch
+  }));
+
+  return {
+    reply: finalReply,
+    branch: finalBranch,
+    controlledAction: finalAction,
+    repeatedPromptCount: finalRepeatedPromptCount,
+    promptKey: finalPromptKey
+  };
 }
 
 function normalizeLiveDomain(menuOption) {
@@ -2134,10 +2303,12 @@ function extractLiveClarificationSlots(menuOption, text = "", state = {}) {
 
   if (resolvedDomain === "translation") {
     const languages = detectServiceLanguages(text);
+    const looseLanguagePair = extractLooseLanguagePair(text);
     const dateMatch = normalized.match(/\b(\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|today|tomorrow|aujourd hui|demain)\b/i);
     const docMatch = normalized.match(/\b(passport|contract|certificate|transcript|birth certificate|diploma|degree|marriage certificate|bank statement|invoice|document|pdf|docx?)\b/i);
     const pageMatch = normalized.match(/\b(\d{1,3})\s*(pages?|p|pp)\b/i);
     if (languages.length >= 2) slots.language_pair = `${languages[0]}-${languages[1]}`;
+    if (!slots.language_pair && looseLanguagePair) slots.language_pair = looseLanguagePair;
     if (docMatch) slots.document_type = docMatch[1].toLowerCase();
     if (dateMatch) slots.deadline = dateMatch[1].toLowerCase();
     if (pageMatch) slots.pages = pageMatch[1];
@@ -4140,6 +4311,90 @@ app.post("/webhook", async (req, res) => {
         liveKnownSlots: {}
       });
       suppressAutoAck = true;
+    } else if (liveModeControlledCandidate && detectProviderCollaborationIntent(inboundTextForRouting).detected) {
+      const providerIntent = detectProviderCollaborationIntent(inboundTextForRouting);
+      selectedRoutingBranch = "live_provider_collaboration_intake";
+      routingReason = `provider_intent_shift_${providerIntent.reason}`;
+      reply = getProviderCollaborationIntakeReply(detectedLanguage);
+      controlledAction = "provider_collaboration_intake";
+      setCustomerState(from, {
+        clarifyingAsked: false,
+        liveMenuOption: "provider_collaboration",
+        topicDomain: "provider",
+        liveKnownSlots: {},
+        lastPromptKey: getPromptKey(reply),
+        repeatedPromptCount: 1,
+        lastRoute: selectedRoutingBranch,
+        intentShiftDetected: true
+      });
+      console.log("[conversation-flow-guard]", JSON.stringify({
+        current_branch: userState.liveMenuOption || userState.topicDomain || "unknown",
+        repeated_prompt_count: 1,
+        max_repetition_threshold: LIVE_PROMPT_REPEAT_THRESHOLD,
+        intent_shift_detected: true,
+        intent_shift_reason: providerIntent.reason,
+        final_route_chosen: selectedRoutingBranch
+      }));
+      suppressAutoAck = true;
+    } else if (liveModeControlledCandidate && isAmbiguousTranslationFollowUp(inboundTextForRouting, userState)) {
+      selectedRoutingBranch = "live_translation_role_clarification";
+      routingReason = "ambiguous_translation_follow_up";
+      reply = getTranslationRoleClarificationReply(detectedLanguage);
+      controlledAction = "role_clarification";
+      const guarded = applyLiveLoopProtection({
+        waId: from,
+        userState,
+        branch: selectedRoutingBranch,
+        reply,
+        language: detectedLanguage,
+        intentShiftDetected: false,
+        detectedDomain: "translation"
+      });
+      reply = guarded.reply;
+      selectedRoutingBranch = guarded.branch;
+      controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
+      setCustomerState(from, {
+        liveMenuOption: "translation",
+        topicDomain: "translation"
+      });
+      suppressAutoAck = true;
+    } else if (liveModeControlledCandidate
+      && normalizeLiveDomain(userState.liveMenuOption || userState.topicDomain || "") === "translation"
+      && detectTranslationClientIntent(inboundTextForRouting).detected) {
+      const clientIntent = detectTranslationClientIntent(inboundTextForRouting);
+      selectedRoutingBranch = "live_translation_client_slot_intake";
+      routingReason = `translation_client_intent_${clientIntent.reason}`;
+      const knownSlots = extractLiveClarificationSlots("translation", text, userState);
+      const missingSlots = getLiveDomainMissingSlots("translation", knownSlots);
+      reply = getLiveSafeMenuClarificationReply(detectedLanguage, "translation", knownSlots);
+      controlledAction = "controlled_clarification";
+      console.log("[live-mode-debug]", JSON.stringify({
+        detected_domain: "translation",
+        client_intent_detected: true,
+        client_intent_reason: clientIntent.reason,
+        known_slots: knownSlots,
+        missing_slots: missingSlots,
+        clarification_question_selected: reply,
+        language_used: detectedLanguage
+      }));
+      const guarded = applyLiveLoopProtection({
+        waId: from,
+        userState,
+        branch: selectedRoutingBranch,
+        reply,
+        language: detectedLanguage,
+        intentShiftDetected: false,
+        detectedDomain: "translation"
+      });
+      reply = guarded.reply;
+      selectedRoutingBranch = guarded.branch;
+      controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
+      setCustomerState(from, {
+        liveMenuOption: "translation",
+        topicDomain: "translation",
+        liveKnownSlots: knownSlots
+      });
+      suppressAutoAck = true;
     } else if (liveModeControlledCandidate && getKnownServiceIntent(inboundTextForRouting)) {
       const localKnowledge = await attemptLocalKnowledgeReply({
         text: inboundTextForRouting,
@@ -4164,6 +4419,18 @@ app.post("/webhook", async (req, res) => {
         const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
         reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
         controlledAction = "controlled_clarification";
+        const guarded = applyLiveLoopProtection({
+          waId: from,
+          userState,
+          branch: selectedRoutingBranch,
+          reply,
+          language: detectedLanguage,
+          intentShiftDetected: false,
+          detectedDomain: detectedLiveDomain
+        });
+        reply = guarded.reply;
+        selectedRoutingBranch = guarded.branch;
+        controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
         setCustomerState(from, {
           liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
           liveKnownSlots: knownSlots
@@ -4185,6 +4452,18 @@ app.post("/webhook", async (req, res) => {
         language_used: detectedLanguage
       }));
       controlledAction = "controlled_clarification";
+      const guarded = applyLiveLoopProtection({
+        waId: from,
+        userState,
+        branch: selectedRoutingBranch,
+        reply,
+        language: detectedLanguage,
+        intentShiftDetected: false,
+        detectedDomain: detectedLiveDomain
+      });
+      reply = guarded.reply;
+      selectedRoutingBranch = guarded.branch;
+      controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
       setCustomerState(from, {
         liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
         liveKnownSlots: knownSlots
