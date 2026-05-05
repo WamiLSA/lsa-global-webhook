@@ -4781,9 +4781,10 @@ app.post("/api/account/change-password", requireAccountAuth, async (req, res) =>
   try {
     const currentPassword = String(req.body?.current_password || "");
     const nextPassword = String(req.body?.new_password || "");
-    if (nextPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
     const confirmPassword = String(req.body?.confirm_password || "");
-    if (confirmPassword && confirmPassword !== nextPassword) return res.status(400).json({ error: "Password confirmation does not match" });
+    if (!currentPassword || !nextPassword || !confirmPassword) return res.status(400).json({ error: "Current, new, and confirm password are required" });
+    if (nextPassword.length < 8) return res.status(400).json({ error: "New password must be at least 8 characters" });
+    if (confirmPassword !== nextPassword) return res.status(400).json({ error: "Password confirmation does not match" });
     const authResult = await verifyInboxCredentials(req.accountIdentifier, currentPassword);
     if (!authResult.ok) return res.status(401).json({ error: "Current password is incorrect" });
     const { store, normalized, record } = await getUserSettings(req.accountIdentifier);

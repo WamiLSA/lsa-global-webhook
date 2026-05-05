@@ -44,7 +44,6 @@
         <div class="field"><label>New password</label><div class="password-row"><input id="new_password" type="password" /><button type="button" data-toggle="new_password">👁</button></div></div>
         <div class="field"><label>Confirm new password</label><div class="password-row"><input id="confirm_password" type="password" /><button type="button" data-toggle="confirm_password">👁</button></div></div>
       </div>
-      <div class="actions"><button class="save" id="saveBtn">Save Settings</button></div>
       <div class="status" id="status"></div>
     </div>
     <div class="card" style="margin-top:16px;">
@@ -59,6 +58,7 @@
         <div class="field"><label>Text on blue</label><input id="branding_text_on_primary" type="color" /></div>
       </div>
     </div>
+    <div class="actions"><button class="save" id="saveBtn">Save Settings</button></div>
   </main>
   <script src="/top-nav.js"></script>
   <script src="/global-progress.js"></script>
@@ -68,12 +68,21 @@
     const avatarPreview=document.getElementById('avatarPreview');
     const brandingPreview=document.getElementById('brandingLogoPreview');
     let brandingState={};
+    let initialFormState={};
+    let initialBrandingState={};
     function msg(t,bad){statusEl.style.color=bad?'#fca5a5':'#86efac';statusEl.textContent=t;}
     function refreshPreview(url){avatarPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     function refreshBrandingPreview(url){brandingPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     async function load(){
       const r=await fetch('/api/account/settings');const d=await r.json();
       ids.forEach(k=>{ if(k!=='avatar_url') document.getElementById(k).value=d.user?.[k]||''; });
+      initialFormState = {
+        email: d.user?.email || '',
+        username: d.user?.username || '',
+        first_name: d.user?.first_name || '',
+        last_name: d.user?.last_name || '',
+        display_name: d.user?.display_name || ''
+      };
       refreshPreview(d.user?.avatar_url||'');
       const br=await fetch('/api/branding/settings'); const bd=await br.json(); brandingState=bd.branding||{};
       document.getElementById('branding_brand_name').value=brandingState.brand_name||'LSA GLOBAL House';
@@ -81,6 +90,13 @@
       document.getElementById('branding_dark_primary_color').value=brandingState.dark_primary_color||'#072C70';
       document.getElementById('branding_accent_color').value=brandingState.accent_color||'#C81E1E';
       document.getElementById('branding_text_on_primary').value=brandingState.text_on_primary||'#FFFFFF';
+      initialBrandingState = {
+        brand_name: brandingState.brand_name || 'LSA GLOBAL House',
+        primary_color: brandingState.primary_color || '#0B3A8C',
+        dark_primary_color: brandingState.dark_primary_color || '#072C70',
+        accent_color: brandingState.accent_color || '#C81E1E',
+        text_on_primary: brandingState.text_on_primary || '#FFFFFF'
+      };
       refreshBrandingPreview(brandingState.logo_url||'');
     }
     document.querySelectorAll('[data-toggle]').forEach((btn)=>btn.addEventListener('click',()=>{ const input=document.getElementById(btn.dataset.toggle); input.type=input.type==='password'?'text':'password'; }));
@@ -88,39 +104,53 @@
       try{
         await LSAGlobalProgress.withProgress('Save settings and branding', async (progress)=>{
           progress.update(10, 'Validating form...');
-        const cp=document.getElementById('current_password').value; const np=document.getElementById('new_password').value; const cnp=document.getElementById('confirm_password').value;
-        if ((np||cp) && np!==cnp) throw new Error('New password and confirmation do not match.');
-        let avatarUrl='';
-        progress.update(22, 'Uploading profile assets if needed...');
+        const cp=document.getElementById('current_password').value.trim(); const np=document.getElementById('new_password').value; const cnp=document.getElementById('confirm_password').value;
+        const wantsPasswordChange = Boolean(cp || np || cnp);
+        if (wantsPasswordChange && (!cp || !np || !cnp)) throw new Error('To change password, current/new/confirm password are all required.');
+        if (wantsPasswordChange && np!==cnp) throw new Error('New password and confirmation do not match.');
+
+        progress.update(22, 'Saving account/profile updates...');
+        const accountBody={};
+        ['email','first_name','last_name','display_name','username'].forEach((k)=>{
+          const value = document.getElementById(k).value;
+          if (value !== initialFormState[k]) accountBody[k] = value;
+        });
+        if (Object.keys(accountBody).length) {
+          const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(accountBody)});
+          const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Account settings save failed');
+        }
+
         const avatarFile=document.getElementById('avatar_file').files[0];
         if(avatarFile){
+          progress.update(40, 'Uploading profile avatar...');
           const fd=new FormData(); fd.append('avatar',avatarFile);
           const uploadRes=await fetch('/api/account/avatar',{method:'POST',body:fd});
           const uploadData=await uploadRes.json(); if(!uploadRes.ok) throw new Error(uploadData.error||'Avatar upload failed');
-          avatarUrl=uploadData.avatar_url;
         }
-        const body={};['email','first_name','last_name','display_name','username'].forEach(k=>body[k]=document.getElementById(k).value);
-        if(avatarUrl) body.avatar_url=avatarUrl;
-        progress.update(48, 'Saving account settings...');
-        const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Save failed');
+
         const logoFile=document.getElementById('branding_logo_file').files[0];
         if(logoFile){
+          progress.update(58, 'Uploading branding logo...');
           const fd=new FormData(); fd.append('logo',logoFile);
           const logoRes=await fetch('/api/branding/logo',{method:'POST',body:fd});
           const logoData=await logoRes.json(); if(!logoRes.ok) throw new Error(logoData.error||'Logo upload failed');
         }
-        const brandingBody={
+
+        const brandingBody={};
+        const brandingNext={
           brand_name:document.getElementById('branding_brand_name').value,
           primary_color:document.getElementById('branding_primary_color').value,
           dark_primary_color:document.getElementById('branding_dark_primary_color').value,
           accent_color:document.getElementById('branding_accent_color').value,
           text_on_primary:document.getElementById('branding_text_on_primary').value
         };
-        progress.update(72, 'Saving branding settings...');
-        const bs=await fetch('/api/branding/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brandingBody)});
-        const bsd=await bs.json(); if(!bs.ok) throw new Error(bsd.error||'Branding save failed');
-        if(cp||np){
+        Object.keys(brandingNext).forEach((k)=>{ if (brandingNext[k] !== initialBrandingState[k]) brandingBody[k] = brandingNext[k]; });
+        if (Object.keys(brandingBody).length) {
+          progress.update(72, 'Saving branding settings...');
+          const bs=await fetch('/api/branding/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brandingBody)});
+          const bsd=await bs.json(); if(!bs.ok) throw new Error(bsd.error||'Branding save failed');
+        }
+        if(wantsPasswordChange){
           progress.update(84, 'Updating password...');
           const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np,confirm_password:cnp})});
           const pd=await p.json(); if(!p.ok) throw new Error(pd.error||'Password update failed');

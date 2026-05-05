@@ -24,13 +24,31 @@ export function SettingsScreen() {
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [branding, setBranding] = useState({});
+  const [initialForm, setInitialForm] = useState({});
+  const [initialBranding, setInitialBranding] = useState({});
   const [brandingLogoAsset, setBrandingLogoAsset] = useState(null);
 
   const loadSettings = useCallback(async () => {
     const data = await api.get('/api/account/settings');
-    setForm(data.user || {});
+    const user = data.user || {};
+    setForm(user);
+    setInitialForm({
+      email: user.email || '',
+      username: user.username || '',
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
+      display_name: user.display_name || ''
+    });
     const brandingData = await api.get('/api/branding/settings');
-    setBranding(brandingData.branding || {});
+    const currentBranding = brandingData.branding || {};
+    setBranding(currentBranding);
+    setInitialBranding({
+      brand_name: currentBranding.brand_name || '',
+      primary_color: currentBranding.primary_color || '',
+      dark_primary_color: currentBranding.dark_primary_color || '',
+      accent_color: currentBranding.accent_color || '',
+      text_on_primary: currentBranding.text_on_primary || ''
+    });
   }, []);
 
   useEffect(() => { loadSettings().catch(() => setStatus('Failed to load settings.')); }, [loadSettings]);
@@ -52,26 +70,50 @@ export function SettingsScreen() {
     try {
       await runWithProgress('Save settings', async (progress) => {
         progress.update(16, 'Preparing payload...');
-      let avatarUrl = '';
+      const wantsPasswordChange = Boolean(currentPassword || newPassword || confirmPassword);
+      if (wantsPasswordChange && (!currentPassword || !newPassword || !confirmPassword)) {
+        throw new Error('To change password, current/new/confirm password are all required.');
+      }
+      if (wantsPasswordChange && newPassword !== confirmPassword) {
+        throw new Error('New password and confirmation do not match.');
+      }
+
+      const payload = {};
+      fields.forEach((key) => {
+        const value = form[key] || '';
+        if (value !== (initialForm[key] || '')) payload[key] = value;
+      });
+      if (Object.keys(payload).length) {
+        progress.update(28, 'Saving account settings...');
+        await api.post('/api/account/settings', payload);
+      }
+
       if (avatarAsset) {
-        progress.update(28, 'Uploading avatar...');
+        progress.update(44, 'Uploading avatar...');
         const fd = new FormData();
         fd.append('avatar', { uri: avatarAsset.uri, name: avatarAsset.name || 'avatar.jpg', type: avatarAsset.mimeType || 'image/jpeg' });
-        const upload = await api.postForm('/api/account/avatar', fd);
-        avatarUrl = upload.avatar_url;
+        await api.postForm('/api/account/avatar', fd);
       }
-      const payload = { ...form, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) };
-      progress.update(52, 'Saving account settings...');
-      await api.post('/api/account/settings', payload);
+
       if (brandingLogoAsset) {
-        progress.update(68, 'Uploading branding logo...');
+        progress.update(62, 'Uploading branding logo...');
         const bfd = new FormData();
         bfd.append('logo', { uri: brandingLogoAsset.uri, name: brandingLogoAsset.name || 'branding-logo.jpg', type: brandingLogoAsset.mimeType || 'image/jpeg' });
         await api.postForm('/api/branding/logo', bfd);
       }
-      progress.update(82, 'Saving branding profile...');
-      await api.post('/api/branding/settings', branding);
-      if (currentPassword || newPassword || confirmPassword) {
+
+      const brandingPayload = {};
+      ['brand_name', 'primary_color', 'dark_primary_color', 'accent_color', 'text_on_primary'].forEach((key) => {
+        const value = branding[key] || '';
+        if (value !== (initialBranding[key] || '')) brandingPayload[key] = value;
+      });
+      if (Object.keys(brandingPayload).length) {
+        progress.update(78, 'Saving branding profile...');
+        await api.post('/api/branding/settings', brandingPayload);
+      }
+
+      if (wantsPasswordChange) {
+        progress.update(88, 'Updating password...');
         await api.post('/api/account/change-password', { current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword });
       }
       setAvatarAsset(null);
