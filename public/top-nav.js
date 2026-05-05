@@ -47,7 +47,6 @@
     { key: "capture", label: "Capture Assistant", href: "/kb-capture" },
     { key: "providers", label: "Providers", href: "/providers" },
     { key: "archived", label: "Archived Threads", href: "/archived" },
-    { key: "quick-capture", label: "Quick Capture", href: "#", placeholder: true },
     { key: "automation", label: "Automation Hub", href: "/automation" },
     { key: "settings", label: "Settings", href: "/settings" },
     { key: "ai-tools", label: "AI Tools", href: "/ai-tools" },
