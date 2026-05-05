@@ -97,7 +97,7 @@ If omitted, the internal working language defaults to English (`en`).
 
 ## Manual SQL migration (required for conversation ownership / human takeover)
 
-Run this in Supabase SQL editor to persist durable conversation ownership and follow-up policy state:
+Run `migrations/20260505_add_conversation_ownership_columns.sql` in the Supabase SQL editor to persist durable conversation ownership and follow-up policy state. The migration is idempotent and safe to run on a live schema because every column and index uses `if not exists`:
 
 ```sql
 alter table public.conversations
