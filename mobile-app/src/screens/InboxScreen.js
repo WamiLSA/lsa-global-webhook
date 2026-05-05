@@ -28,7 +28,7 @@ export function InboxScreen({ navigation }) {
 
   return (
     <Screen>
-      <View style={styles.brandRow}>{branding.logo_url ? <Image source={{ uri: `${api.config.baseUrl}${branding.logo_url}` }} style={styles.brandLogo} /> : null}<Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL House'}</Text></View>
+      <View style={styles.brandRow}>{branding.logo_url ? <Image source={{ uri: api.resolveAssetUrl(branding.logo_url) }} style={styles.brandLogo} /> : null}<Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL'}</Text></View>
       <ModeBadge mode={mode} />
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="Search contact or last message" placeholderTextColor={colors.textMuted} />
       {loading ? <ActivityIndicator color={colors.primary} size="large" style={styles.loader} /> : (
