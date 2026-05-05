@@ -3647,7 +3647,7 @@ async function attemptLocalKnowledgeReply({ text, language = "en", userState = {
   const narrowIntent = detectNarrowIntent(text);
   const resolvedIntent = resolveNarrowIntent(narrowIntent || specificIntent);
   const currentCourseLanguage = detectRequestedCourseLanguage(text, userState);
-  const retrievalResult = await retrieveInternalKnowledgeForTestMode(text, {
+  const retrievalResult = await retrieveInternalKnowledge(text, {
     debug: true,
     maxMatches: 6,
     preferredCourseLanguage: currentCourseLanguage,
@@ -4261,22 +4261,13 @@ app.post("/webhook", async (req, res) => {
       }));
 
       try {
+        let prefilledLocalKbReply = null;
         if (retrievalResult.matches.length) {
-          const localKbReply = await buildReplyFromUnifiedRetrieval({
+          prefilledLocalKbReply = await buildReplyFromUnifiedRetrieval({
             retrievalResult,
             language: detectedLanguage,
             specificIntent: resolvedIntent
           });
-          if (localKbReply) {
-            selectedRoutingBranch = "test_retrieval_local_kb_answer";
-            routingReason = "local_kb_answer";
-            reply = localKbReply;
-            console.log("[routing] route=local_kb_answer", {
-              openai_called: false,
-              openai_skipped: true,
-              intent: resolvedIntent || retrievalResult.intent || null
-            });
-          }
         }
 
         if (shouldEscalateToHuman(text)) {
@@ -4501,6 +4492,16 @@ app.post("/webhook", async (req, res) => {
         } else if (retrievalResult.matches.length && !vagueMessage) {
           selectedRoutingBranch = "test_retrieval_answer";
           routingReason = "retrieval_matches_found";
+          if (prefilledLocalKbReply) {
+            reply = prefilledLocalKbReply;
+            selectedRoutingBranch = "test_retrieval_local_kb_answer";
+            routingReason = "local_kb_answer";
+            console.log("[routing] route=local_kb_answer", {
+              openai_called: false,
+              openai_skipped: true,
+              intent: resolvedIntent || retrievalResult.intent || null
+            });
+          }
           const safeMatches = currentCourseLanguage
             ? retrievalResult.matches.filter((match) => {
               if (match.source !== "kb_articles") return true;
