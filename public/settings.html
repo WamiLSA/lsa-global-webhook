@@ -104,13 +104,13 @@
       };
       refreshPreview(d.user?.avatar_url||'');
       const br=await fetch('/api/branding/settings'); const bd=await br.json(); brandingState=bd.branding||{};
-      document.getElementById('branding_brand_name').value=brandingState.brand_name||'LSA GLOBAL House';
+      document.getElementById('branding_brand_name').value=brandingState.brand_name||'LSA GLOBAL';
       document.getElementById('branding_primary_color').value=brandingState.primary_color||'#0B3A8C';
       document.getElementById('branding_dark_primary_color').value=brandingState.dark_primary_color||'#072C70';
       document.getElementById('branding_accent_color').value=brandingState.accent_color||'#C81E1E';
       document.getElementById('branding_text_on_primary').value=brandingState.text_on_primary||'#FFFFFF';
       initialBrandingState = {
-        brand_name: brandingState.brand_name || 'LSA GLOBAL House',
+        brand_name: brandingState.brand_name || 'LSA GLOBAL',
         primary_color: brandingState.primary_color || '#0B3A8C',
         dark_primary_color: brandingState.dark_primary_color || '#072C70',
         accent_color: brandingState.accent_color || '#C81E1E',

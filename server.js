@@ -56,6 +56,8 @@ const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS |
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
 const SYSTEM_MODE_CONFIG_KEY = "system_mode";
+const ACCOUNT_SETTINGS_CONFIG_KEY = "account_settings_store";
+const FALLBACK_BRAND_NAME = "LSA GLOBAL";
 const SYSTEM_MODE_REFRESH_MS = Number(process.env.SYSTEM_MODE_REFRESH_MS || 5000);
 const automationHub = createAutomationHub({
   getSystemMode: () => runtimeSystemState.mode
@@ -870,7 +872,7 @@ function verifyPassword(password, storedHash) {
   return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(derived, "hex"));
 }
 
-async function readAccountSettingsStore() {
+async function readLocalAccountSettingsStore() {
   try {
     const raw = await fs.readFile(ACCOUNT_SETTINGS_FILE, "utf8");
     const data = JSON.parse(raw);
@@ -881,9 +883,74 @@ async function readAccountSettingsStore() {
   }
 }
 
-async function writeAccountSettingsStore(store) {
+async function writeLocalAccountSettingsStore(store) {
   await fs.mkdir(path.dirname(ACCOUNT_SETTINGS_FILE), { recursive: true });
   await fs.writeFile(ACCOUNT_SETTINGS_FILE, JSON.stringify(store, null, 2));
+}
+
+async function readAccountSettingsStoreFromDatabase() {
+  try {
+    const { data, error } = await supabase
+      .from("app_config")
+      .select("value")
+      .eq("key", ACCOUNT_SETTINGS_CONFIG_KEY)
+      .maybeSingle();
+    if (error) {
+      console.warn("[settings] Failed to read account settings from app_config:", error.message);
+      return null;
+    }
+    if (!data?.value) return null;
+    const parsed = JSON.parse(data.value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.warn("[settings] Unexpected app_config settings read failure:", error.message || error);
+    return null;
+  }
+}
+
+async function persistAccountSettingsStoreToDatabase(store) {
+  const payload = {
+    key: ACCOUNT_SETTINGS_CONFIG_KEY,
+    value: JSON.stringify(store || { users: {} }),
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supabase
+    .from("app_config")
+    .upsert(payload, { onConflict: "key" });
+  if (error) {
+    throw new Error(`Unable to persist account settings in app_config: ${error.message}`);
+  }
+}
+
+async function readAccountSettingsStore() {
+  const databaseStore = await readAccountSettingsStoreFromDatabase();
+  if (databaseStore) return databaseStore;
+
+  const localStore = await readLocalAccountSettingsStore();
+  if (Object.keys(localStore.users || {}).length || localStore.branding) {
+    try {
+      await persistAccountSettingsStoreToDatabase(localStore);
+      console.log("[settings] Migrated local account settings store to app_config.");
+    } catch (error) {
+      console.warn("[settings] Local settings migration to app_config failed:", error.message || error);
+    }
+  }
+  return localStore;
+}
+
+async function writeAccountSettingsStore(store) {
+  await persistAccountSettingsStoreToDatabase(store);
+  try {
+    await writeLocalAccountSettingsStore(store);
+  } catch (error) {
+    console.warn("[settings] Local settings mirror write failed after app_config persistence:", error.message || error);
+  }
+}
+
+async function brandingLogoFileToDataUrl(file) {
+  const mimeType = String(file?.mimetype || "image/png").toLowerCase();
+  const raw = await fs.readFile(file.path);
+  return `data:${mimeType};base64,${raw.toString("base64")}`;
 }
 
 function buildDefaultUserRecord(username) {
@@ -915,32 +982,40 @@ function sanitizeProfileInput(input, existing) {
   };
 }
 
-const DEFAULT_BRANDING_SETTINGS = {
-  brand_name: "LSA GLOBAL House",
+const DEFAULT_BRANDING_SETTINGS = Object.freeze({
+  brand_name: FALLBACK_BRAND_NAME,
   logo_url: "",
+  logo_file_url: "",
   primary_color: "#0B3A8C",
   dark_primary_color: "#072C70",
   accent_color: "#C81E1E",
   text_on_primary: "#FFFFFF",
   animation_style: "fade-zoom"
-};
+});
 
-function sanitizeBrandingInput(input, existing) {
-  const previous = existing && typeof existing === "object" ? existing : DEFAULT_BRANDING_SETTINGS;
+function pickPersistedValue(input, previous, key, fallback) {
+  if (Object.prototype.hasOwnProperty.call(input || {}, key)) return input[key];
+  if (Object.prototype.hasOwnProperty.call(previous || {}, key)) return previous[key];
+  return fallback;
+}
+
+function sanitizeBrandingInput(input = {}, existing = {}) {
+  const previous = existing && typeof existing === "object" ? existing : {};
   const next = {
-    brand_name: String(input.brand_name || previous.brand_name || DEFAULT_BRANDING_SETTINGS.brand_name).trim() || DEFAULT_BRANDING_SETTINGS.brand_name,
-    logo_url: String(input.logo_url || previous.logo_url || "").trim(),
-    primary_color: String(input.primary_color || previous.primary_color || DEFAULT_BRANDING_SETTINGS.primary_color).trim(),
-    dark_primary_color: String(input.dark_primary_color || previous.dark_primary_color || DEFAULT_BRANDING_SETTINGS.dark_primary_color).trim(),
-    accent_color: String(input.accent_color || previous.accent_color || DEFAULT_BRANDING_SETTINGS.accent_color).trim(),
-    text_on_primary: String(input.text_on_primary || previous.text_on_primary || DEFAULT_BRANDING_SETTINGS.text_on_primary).trim(),
-    animation_style: String(input.animation_style || previous.animation_style || DEFAULT_BRANDING_SETTINGS.animation_style).trim() || "fade-zoom"
+    brand_name: String(pickPersistedValue(input, previous, "brand_name", DEFAULT_BRANDING_SETTINGS.brand_name) || "").trim() || DEFAULT_BRANDING_SETTINGS.brand_name,
+    logo_url: String(pickPersistedValue(input, previous, "logo_url", DEFAULT_BRANDING_SETTINGS.logo_url) || "").trim(),
+    logo_file_url: String(pickPersistedValue(input, previous, "logo_file_url", DEFAULT_BRANDING_SETTINGS.logo_file_url) || "").trim(),
+    primary_color: String(pickPersistedValue(input, previous, "primary_color", DEFAULT_BRANDING_SETTINGS.primary_color) || "").trim() || DEFAULT_BRANDING_SETTINGS.primary_color,
+    dark_primary_color: String(pickPersistedValue(input, previous, "dark_primary_color", DEFAULT_BRANDING_SETTINGS.dark_primary_color) || "").trim() || DEFAULT_BRANDING_SETTINGS.dark_primary_color,
+    accent_color: String(pickPersistedValue(input, previous, "accent_color", DEFAULT_BRANDING_SETTINGS.accent_color) || "").trim() || DEFAULT_BRANDING_SETTINGS.accent_color,
+    text_on_primary: String(pickPersistedValue(input, previous, "text_on_primary", DEFAULT_BRANDING_SETTINGS.text_on_primary) || "").trim() || DEFAULT_BRANDING_SETTINGS.text_on_primary,
+    animation_style: String(pickPersistedValue(input, previous, "animation_style", DEFAULT_BRANDING_SETTINGS.animation_style) || "").trim() || DEFAULT_BRANDING_SETTINGS.animation_style
   };
   return next;
 }
 
 function getBrandingSettings(store) {
-  return sanitizeBrandingInput(store?.branding || {}, DEFAULT_BRANDING_SETTINGS);
+  return sanitizeBrandingInput(store?.branding || {}, {});
 }
 
 async function getUserSettings(identifier) {
@@ -1006,7 +1081,7 @@ app.get("/login", (req, res) => {
     <html>
     <head>
       <meta charset="UTF-8" />
-      <title>LSA GLOBAL House Login</title>
+      <title>LSA GLOBAL Login</title>
       <style>
         :root {
           --brand-primary: #0B3A8C;
@@ -1077,7 +1152,7 @@ app.get("/login", (req, res) => {
       <div class="entry-wrap">
         <div class="brand-stage">
           <img id="brandLogo" class="brand-logo" alt="LSA GLOBAL logo" hidden />
-          <h2 id="brandNameText">LSA GLOBAL House</h2>
+          <h2 id="brandNameText">LSA GLOBAL</h2>
         </div>
         <div class="box">
         ${req.query.error ? '<div class="err">Invalid username or password.</div>' : ""}
@@ -1099,7 +1174,7 @@ app.get("/login", (req, res) => {
             if (branding.dark_primary_color) root.style.setProperty('--brand-primary-dark', branding.dark_primary_color);
             if (branding.text_on_primary) root.style.setProperty('--brand-text', branding.text_on_primary);
             if (branding.accent_color) root.style.setProperty('--brand-accent', branding.accent_color);
-            const brandText = branding.brand_name || 'LSA GLOBAL House';
+            const brandText = branding.brand_name || 'LSA GLOBAL';
             const title = document.getElementById('brandNameText');
             if (title) title.textContent = brandText;
             const logo = document.getElementById('brandLogo');
@@ -5634,11 +5709,15 @@ app.post("/api/account/avatar", requireAccountAuth, avatarUpload.single("avatar"
 app.post("/api/branding/logo", requireAccountAuth, brandingLogoUpload.single("logo"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "Logo file is required" });
-    const logoUrl = `/uploads/branding/${req.file.filename}`;
+    const logoFileUrl = `/uploads/branding/${req.file.filename}`;
+    const logoDataUrl = await brandingLogoFileToDataUrl(req.file);
     const store = await readAccountSettingsStore();
-    store.branding = sanitizeBrandingInput({ ...(store.branding || {}), logo_url: logoUrl }, store.branding || DEFAULT_BRANDING_SETTINGS);
+    store.branding = sanitizeBrandingInput(
+      { ...(store.branding || {}), logo_url: logoDataUrl, logo_file_url: logoFileUrl },
+      store.branding || {}
+    );
     await writeAccountSettingsStore(store);
-    return res.json({ ok: true, logo_url: logoUrl, branding: store.branding });
+    return res.json({ ok: true, logo_url: logoDataUrl, logo_file_url: logoFileUrl, branding: store.branding });
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
@@ -5647,7 +5726,7 @@ app.post("/api/branding/logo", requireAccountAuth, brandingLogoUpload.single("lo
 app.post("/api/branding/settings", requireAccountAuth, async (req, res) => {
   try {
     const store = await readAccountSettingsStore();
-    store.branding = sanitizeBrandingInput(req.body || {}, store.branding || DEFAULT_BRANDING_SETTINGS);
+    store.branding = sanitizeBrandingInput(req.body || {}, store.branding || {});
     await writeAccountSettingsStore(store);
     return res.json({ ok: true, branding: store.branding });
   } catch (error) {

@@ -31,8 +31,8 @@ export function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      {branding.logo_url ? <Animated.Image source={{ uri: `${api.config.baseUrl}${branding.logo_url}` }} style={[styles.logo, { opacity: anim, transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }]} /> : null}
-      <Text style={styles.title}>{branding.brand_name || 'LSA GLOBAL House'}</Text>
+      {branding.logo_url ? <Animated.Image source={{ uri: api.resolveAssetUrl(branding.logo_url) }} style={[styles.logo, { opacity: anim, transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }] }]} /> : null}
+      <Text style={styles.title}>{branding.brand_name || 'LSA GLOBAL'}</Text>
       <TextInput placeholder="Username" autoCapitalize="none" style={styles.input} value={username} onChangeText={setUsername} />
       <TextInput placeholder="Password" secureTextEntry style={styles.input} value={password} onChangeText={setPassword} />
       {error ? <Text style={styles.error}>{error}</Text> : null}

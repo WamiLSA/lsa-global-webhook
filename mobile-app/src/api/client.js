@@ -3,6 +3,13 @@ import Constants from 'expo-constants';
 const baseUrl = Constants.expoConfig?.extra?.apiBaseUrl;
 let token = null;
 
+function resolveAssetUrl(value) {
+  if (!value) return '';
+  const assetUrl = String(value);
+  if (/^(data:|https?:)/i.test(assetUrl)) return assetUrl;
+  return `${baseUrl}${assetUrl}`;
+}
+
 async function request(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const isSafeMethod = method === 'GET' || method === 'HEAD';
@@ -41,6 +48,7 @@ async function request(path, options = {}) {
 
 export const api = {
   config: { baseUrl },
+  resolveAssetUrl,
   setToken(nextToken) {
     token = nextToken;
   },
