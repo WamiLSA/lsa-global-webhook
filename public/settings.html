@@ -61,6 +61,7 @@
     </div>
   </main>
   <script src="/top-nav.js"></script>
+  <script src="/global-progress.js"></script>
   <script>
     const ids=["email","first_name","last_name","display_name","username","avatar_url"];
     const statusEl=document.getElementById('status');
@@ -85,9 +86,12 @@
     document.querySelectorAll('[data-toggle]').forEach((btn)=>btn.addEventListener('click',()=>{ const input=document.getElementById(btn.dataset.toggle); input.type=input.type==='password'?'text':'password'; }));
     document.getElementById('saveBtn').addEventListener('click', async()=>{
       try{
+        await LSAGlobalProgress.withProgress('Save settings and branding', async (progress)=>{
+          progress.update(10, 'Validating form...');
         const cp=document.getElementById('current_password').value; const np=document.getElementById('new_password').value; const cnp=document.getElementById('confirm_password').value;
         if ((np||cp) && np!==cnp) throw new Error('New password and confirmation do not match.');
         let avatarUrl='';
+        progress.update(22, 'Uploading profile assets if needed...');
         const avatarFile=document.getElementById('avatar_file').files[0];
         if(avatarFile){
           const fd=new FormData(); fd.append('avatar',avatarFile);
@@ -97,6 +101,7 @@
         }
         const body={};['email','first_name','last_name','display_name','username'].forEach(k=>body[k]=document.getElementById(k).value);
         if(avatarUrl) body.avatar_url=avatarUrl;
+        progress.update(48, 'Saving account settings...');
         const s=await fetch('/api/account/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         const sd=await s.json();if(!s.ok) throw new Error(sd.error||'Save failed');
         const logoFile=document.getElementById('branding_logo_file').files[0];
@@ -112,15 +117,19 @@
           accent_color:document.getElementById('branding_accent_color').value,
           text_on_primary:document.getElementById('branding_text_on_primary').value
         };
+        progress.update(72, 'Saving branding settings...');
         const bs=await fetch('/api/branding/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brandingBody)});
         const bsd=await bs.json(); if(!bs.ok) throw new Error(bsd.error||'Branding save failed');
         if(cp||np){
+          progress.update(84, 'Updating password...');
           const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np,confirm_password:cnp})});
           const pd=await p.json(); if(!p.ok) throw new Error(pd.error||'Password update failed');
         }
+        progress.update(95, 'Refreshing synchronized profile data...');
         await load();
         msg('Settings updated successfully and synchronized.');
         ['current_password','new_password','confirm_password','avatar_file','branding_logo_file'].forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+        });
       }catch(e){msg(e.message,true);}
     });
     load().catch(()=>msg('Failed to load settings',true));

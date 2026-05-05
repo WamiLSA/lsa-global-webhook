@@ -5,8 +5,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import { ModeBadge } from '../components/ModeBadge';
 import { Screen } from '../components/Screen';
 import { colors } from '../theme';
+import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
 export function ConversationScreen({ route }) {
+  const { runWithProgress } = useGlobalProgress();
   const { conversationId, mode, contact } = route.params;
   const [messages, setMessages] = useState([]);
   const [reply, setReply] = useState('');
@@ -25,7 +27,11 @@ export function ConversationScreen({ route }) {
     try {
       setSending(true);
       setError('');
-      await api.post(`/api/mobile/inbox/${conversationId}/reply`, { text: reply });
+      await runWithProgress('Send reply', async (progress) => {
+        progress.update(30, 'Sending message...');
+        await api.post(`/api/mobile/inbox/${conversationId}/reply`, { text: reply });
+        progress.update(78, 'Reloading conversation...');
+      });
       setReply('');
       await loadThread();
     } catch {

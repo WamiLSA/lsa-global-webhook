@@ -6,6 +6,8 @@ import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { colors } from './src/theme';
+import { GlobalProgressProvider } from './src/progress/GlobalProgressContext';
+import { GlobalProgressOverlay } from './src/progress/GlobalProgressOverlay';
 
 const isExpoUpdatesEnabled = Updates.isEnabled && !__DEV__;
 
@@ -133,7 +135,10 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <AppShell />
+        <GlobalProgressProvider>
+          <AppShell />
+          <GlobalProgressOverlay />
+        </GlobalProgressProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

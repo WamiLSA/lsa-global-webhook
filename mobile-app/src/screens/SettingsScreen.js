@@ -6,10 +6,12 @@ import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { Screen } from '../components/Screen';
 import { colors } from '../theme';
+import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
 const fields = ['first_name', 'last_name', 'display_name', 'username', 'email'];
 
 export function SettingsScreen() {
+  const { runWithProgress } = useGlobalProgress();
   const { logout } = useAuth();
   const [form, setForm] = useState({});
   const [avatarAsset, setAvatarAsset] = useState(null);
@@ -48,20 +50,26 @@ export function SettingsScreen() {
     setSaving(true);
     setStatus('');
     try {
+      await runWithProgress('Save settings', async (progress) => {
+        progress.update(16, 'Preparing payload...');
       let avatarUrl = '';
       if (avatarAsset) {
+        progress.update(28, 'Uploading avatar...');
         const fd = new FormData();
         fd.append('avatar', { uri: avatarAsset.uri, name: avatarAsset.name || 'avatar.jpg', type: avatarAsset.mimeType || 'image/jpeg' });
         const upload = await api.postForm('/api/account/avatar', fd);
         avatarUrl = upload.avatar_url;
       }
       const payload = { ...form, ...(avatarUrl ? { avatar_url: avatarUrl } : {}) };
+      progress.update(52, 'Saving account settings...');
       await api.post('/api/account/settings', payload);
       if (brandingLogoAsset) {
+        progress.update(68, 'Uploading branding logo...');
         const bfd = new FormData();
         bfd.append('logo', { uri: brandingLogoAsset.uri, name: brandingLogoAsset.name || 'branding-logo.jpg', type: brandingLogoAsset.mimeType || 'image/jpeg' });
         await api.postForm('/api/branding/logo', bfd);
       }
+      progress.update(82, 'Saving branding profile...');
       await api.post('/api/branding/settings', branding);
       if (currentPassword || newPassword || confirmPassword) {
         await api.post('/api/account/change-password', { current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword });
@@ -69,8 +77,10 @@ export function SettingsScreen() {
       setAvatarAsset(null);
       setBrandingLogoAsset(null);
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      progress.update(95, 'Refreshing settings...');
       await loadSettings();
       setStatus('Settings updated and synchronized.');
+      });
     } catch (error) {
       setStatus(String(error.message || 'Save failed'));
     } finally {
