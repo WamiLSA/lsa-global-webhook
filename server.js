@@ -1975,6 +1975,18 @@ const retrieveInternalKnowledge = createInternalRetriever({
 
 const customerState = new Map();
 const LIVE_PROMPT_REPEAT_THRESHOLD = 2;
+const CONTROLLED_AI_ESCALATION_ROUTES = new Set([
+  "translation_client",
+  "provider_collaboration",
+  "courses",
+  "interpreting",
+  "registration",
+  "location",
+  "certificates",
+  "policy",
+  "clarification",
+  "manual_review"
+]);
 
 function getDefaultCustomerState() {
   return {
@@ -2162,6 +2174,182 @@ function isAmbiguousTranslationFollowUp(text = "", userState = {}) {
   const activeTranslationFlow = normalizeLiveDomain(userState?.liveMenuOption || userState?.topicDomain || "") === "translation";
   if (!activeTranslationFlow) return false;
   return /\b(anything|any|whatever|both|yes|ok|okay|not sure|i do not know|i don't know)\b/i.test(normalized);
+}
+
+
+function getManualReviewReasonReply(languageCode) {
+  const language = normalizeLanguageCode(languageCode);
+  const messages = {
+    en: "Thank you. I want to avoid sending you the wrong automated path. An LSA GLOBAL team member will review this conversation and follow up shortly.",
+    fr: "Merci. Je veux éviter de vous orienter vers le mauvais parcours automatique. Un membre de l’équipe LSA GLOBAL examinera cette conversation et reviendra vers vous rapidement.",
+    es: "Gracias. Para evitar dirigirle al flujo automático equivocado, un miembro del equipo de LSA GLOBAL revisará esta conversación y responderá pronto.",
+    de: "Danke. Damit Sie nicht in den falschen automatischen Ablauf geraten, prüft ein Mitglied des LSA GLOBAL-Teams diese Unterhaltung und meldet sich zeitnah.",
+    it: "Grazie. Per evitare di indirizzarla al percorso automatico sbagliato, un membro del team LSA GLOBAL esaminerà questa conversazione e risponderà presto.",
+    pt: "Obrigado. Para evitar encaminhá-lo para o fluxo automático errado, um membro da equipa LSA GLOBAL irá rever esta conversa e responder em breve."
+  };
+  return messages[language] || messages.en;
+}
+
+function hasSlotProgress(previousSlots = {}, nextSlots = {}) {
+  const keys = new Set([...Object.keys(previousSlots || {}), ...Object.keys(nextSlots || {})]);
+  for (const key of keys) {
+    const previous = previousSlots?.[key];
+    const next = nextSlots?.[key];
+    if (!previous && next) return true;
+    if (previous && next && String(previous) !== String(next)) return true;
+  }
+  return false;
+}
+
+function detectControlledAiEscalationNeed({ text = "", userState = {}, detectedDomain = "general", knownSlots = {} }) {
+  const normalized = normalizeForIntent(text);
+  const activeDomain = normalizeLiveDomain(userState?.liveMenuOption || userState?.topicDomain || "") || "general";
+  const currentDomain = normalizeLiveDomain(detectedDomain) || detectedDomain || "general";
+  const textDomain = detectLiveDomainTopic(text, {}) || "general";
+  const providerIntent = detectProviderCollaborationIntent(text);
+  const clientIntent = detectTranslationClientIntent(text);
+  const missingSlots = getLiveDomainMissingSlots(currentDomain, knownSlots);
+  const previousSlots = userState?.liveKnownSlots || {};
+  const slotProgress = hasSlotProgress(previousSlots, knownSlots);
+  const repeatedPromptCount = Number(userState?.repeatedPromptCount || 0) || 0;
+  const reasons = [];
+
+  if (!normalized) return { shouldEscalate: false, reasons, activeDomain, currentDomain, missingSlots, providerIntent, clientIntent };
+
+  if (repeatedPromptCount >= LIVE_PROMPT_REPEAT_THRESHOLD && missingSlots.length) reasons.push("repeated_same_prompt_threshold_reached");
+  if (activeDomain !== "general" && missingSlots.length && !slotProgress && normalized.split(/\s+/).length >= 3) reasons.push("slot_filling_failure");
+  if (activeDomain === "translation" && providerIntent.detected) reasons.push(`conflicting_user_statement_${providerIntent.reason}`);
+  if (activeDomain === "provider" && clientIntent.detected) reasons.push(`conflicting_user_statement_${clientIntent.reason}`);
+  if (activeDomain !== "general" && textDomain !== "general" && textDomain !== activeDomain) reasons.push(`conversation_drift_${activeDomain}_to_${textDomain}`);
+  if (activeDomain === "translation" && !providerIntent.detected && !clientIntent.detected && /\b(translator|freelancer|provider|work|jobs?|projects?|assignments?|collaborate|available)\b/i.test(normalized)) reasons.push("unclear_client_vs_provider_role");
+  if (activeDomain === "general" && textDomain === "general" && normalized.split(/\s+/).length >= 8) reasons.push("natural_language_outside_rigid_menu");
+
+  return {
+    shouldEscalate: reasons.length > 0,
+    reasons,
+    activeDomain,
+    currentDomain,
+    textDomain,
+    missingSlots,
+    providerIntent,
+    clientIntent
+  };
+}
+
+function parseControlledAiJson(output = "") {
+  const raw = String(output || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+async function classifyControlledAiIntent({ text, language, userState = {}, trigger = {} }) {
+  if (!openai) {
+    return { used: false, route: "manual_review", confidence: 0, reason: "openai_unavailable", recommended_action: "manual_review" };
+  }
+
+  const safeState = {
+    active_domain: trigger.activeDomain || normalizeLiveDomain(userState?.liveMenuOption || userState?.topicDomain || "") || "general",
+    last_route: userState?.lastRoute || null,
+    repeated_prompt_count: Number(userState?.repeatedPromptCount || 0) || 0,
+    known_slots: userState?.liveKnownSlots || {},
+    trigger_reasons: trigger.reasons || []
+  };
+
+  const response = await openai.responses.create({
+    model: "gpt-5-mini",
+    input: [{
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: `You are a controlled routing repair layer for LSA GLOBAL Internal OS WhatsApp handling.\nDeterministic routing already ran first. Do not write a customer reply. Choose one safe route only.\nAllowed routes: translation_client, provider_collaboration, courses, interpreting, registration, location, certificates, policy, clarification, manual_review.\nBusiness rule: if the user appears to be a translator/freelancer/provider asking for work, choose provider_collaboration. If they clearly request a translation service for their document, choose translation_client. Sensitive, complaint, legal, refund exception, or low confidence cases must be manual_review.\nReturn strict JSON only with keys: route, confidence, reason, recommended_action. recommended_action must be one of reroute_existing_flow, ask_better_clarification, manual_review.\nLanguage code: ${language || "en"}\nRouting state: ${JSON.stringify(safeState)}\nCustomer message: ${String(text || "").slice(0, 1200)}`
+      }]
+    }]
+  });
+
+  const parsed = parseControlledAiJson(response.output_text);
+  const route = CONTROLLED_AI_ESCALATION_ROUTES.has(parsed?.route) ? parsed.route : "manual_review";
+  const confidence = Math.max(0, Math.min(1, Number(parsed?.confidence || 0)));
+  const recommendedAction = ["reroute_existing_flow", "ask_better_clarification", "manual_review"].includes(parsed?.recommended_action)
+    ? parsed.recommended_action
+    : "manual_review";
+
+  if (confidence < 0.55 && route !== "manual_review") {
+    return {
+      used: true,
+      route: "clarification",
+      confidence,
+      reason: parsed?.reason || "low_confidence_needs_clarification",
+      recommended_action: "ask_better_clarification"
+    };
+  }
+
+  return {
+    used: true,
+    route,
+    confidence,
+    reason: parsed?.reason || "controlled_ai_classification",
+    recommended_action: recommendedAction
+  };
+}
+
+function buildControlledAiRerouteReply({ aiDecision, text, language, userState = {} }) {
+  const route = aiDecision?.route || "manual_review";
+  if (route === "provider_collaboration") {
+    return {
+      branch: "live_ai_provider_collaboration_reroute",
+      reply: getProviderCollaborationIntakeReply(language),
+      action: "provider_collaboration_intake",
+      state: { liveMenuOption: "provider_collaboration", topicDomain: "provider", liveKnownSlots: {}, intentShiftDetected: true }
+    };
+  }
+
+  if (route === "translation_client") {
+    const knownSlots = extractLiveClarificationSlots("translation", text, userState);
+    return {
+      branch: "live_ai_translation_client_reroute",
+      reply: getLiveSafeMenuClarificationReply(language, "translation", knownSlots),
+      action: "controlled_clarification",
+      state: { liveMenuOption: "translation", topicDomain: "translation", liveKnownSlots: knownSlots, intentShiftDetected: true }
+    };
+  }
+
+  const domainRoutes = new Set(["courses", "interpreting", "registration", "location", "certificates", "policy"]);
+  if (domainRoutes.has(route)) {
+    const knownSlots = extractLiveClarificationSlots(route, text, userState);
+    return {
+      branch: `live_ai_${route}_reroute`,
+      reply: getLiveSafeMenuClarificationReply(language, route, knownSlots),
+      action: "controlled_clarification",
+      state: { liveMenuOption: route, topicDomain: route, liveKnownSlots: knownSlots, intentShiftDetected: true }
+    };
+  }
+
+  if (route === "clarification") {
+    const activeDomain = normalizeLiveDomain(userState?.liveMenuOption || userState?.topicDomain || "") || "general";
+    return {
+      branch: "live_ai_better_clarification",
+      reply: activeDomain === "translation" ? getTranslationRoleClarificationReply(language) : getLiveSafeMenuClarificationReply(language, activeDomain, userState?.liveKnownSlots || {}),
+      action: "controlled_clarification",
+      state: { liveMenuOption: activeDomain === "general" ? null : activeDomain, intentShiftDetected: true }
+    };
+  }
+
+  return {
+    branch: "live_ai_manual_review",
+    reply: getManualReviewReasonReply(language),
+    action: "manual_review",
+    state: { liveMenuOption: null, topicDomain: "manual_review", intentShiftDetected: true }
+  };
 }
 
 function getProviderCollaborationIntakeReply(languageCode) {
@@ -4395,29 +4583,131 @@ app.post("/webhook", async (req, res) => {
         liveKnownSlots: knownSlots
       });
       suppressAutoAck = true;
-    } else if (liveModeControlledCandidate && getKnownServiceIntent(inboundTextForRouting)) {
-      const localKnowledge = await attemptLocalKnowledgeReply({
+    } else if (liveModeControlledCandidate) {
+      const detectedLiveDomainForAi = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
+      const knownSlotsForAi = extractLiveClarificationSlots(detectedLiveDomainForAi, text, userState);
+      const aiEscalationTrigger = detectControlledAiEscalationNeed({
         text: inboundTextForRouting,
-        language: detectedLanguage,
-        userState
+        userState,
+        detectedDomain: detectedLiveDomainForAi,
+        knownSlots: knownSlotsForAi
       });
-      if (localKnowledge?.reply) {
-        selectedRoutingBranch = "local_known_service";
-        routingReason = "known_service_local_kb";
-        reply = localKnowledge.reply;
-        console.log("[routing] route=local_known_service", {
-          intent: localKnowledge.intent,
-          entity: localKnowledge.entity,
-          openai_called: false,
-          openai_skipped: true
+
+      if (aiEscalationTrigger.shouldEscalate) {
+        console.log("[controlled-ai-escalation] trigger", JSON.stringify({
+          deterministic_route_chosen: userState.lastRoute || userState.liveMenuOption || "live_safe_slot_clarification_candidate",
+          active_domain: aiEscalationTrigger.activeDomain,
+          detected_domain: aiEscalationTrigger.currentDomain,
+          repetition_count: Number(userState.repeatedPromptCount || 0) || 0,
+          max_repetition_threshold: LIVE_PROMPT_REPEAT_THRESHOLD,
+          trigger_reasons: aiEscalationTrigger.reasons,
+          openai_available: Boolean(openai)
+        }));
+
+        let aiDecision;
+        try {
+          aiDecision = await classifyControlledAiIntent({
+            text: inboundTextForRouting,
+            language: detectedLanguage,
+            userState,
+            trigger: aiEscalationTrigger
+          });
+          if (aiDecision.used) openaiCalledForMessage = true;
+        } catch (error) {
+          aiDecision = {
+            used: false,
+            route: "manual_review",
+            confidence: 0,
+            reason: `controlled_ai_error_${error.message || "unknown"}`,
+            recommended_action: "manual_review"
+          };
+          console.error("[controlled-ai-escalation] classification_error", error.message || error);
+        }
+
+        const reroute = buildControlledAiRerouteReply({
+          aiDecision,
+          text: inboundTextForRouting,
+          language: detectedLanguage,
+          userState
         });
+        selectedRoutingBranch = reroute.branch;
+        routingReason = `controlled_ai_escalation_${aiDecision.reason}`;
+        reply = reroute.reply;
+        controlledAction = reroute.action;
+        setCustomerState(from, {
+          ...reroute.state,
+          lastPromptKey: getPromptKey(reply),
+          repeatedPromptCount: 1,
+          lastRoute: selectedRoutingBranch
+        });
+        console.log("[controlled-ai-escalation] result", JSON.stringify({
+          deterministic_route_chosen: userState.lastRoute || "live_safe_slot_clarification_candidate",
+          repetition_count: Number(userState.repeatedPromptCount || 0) || 0,
+          ai_escalation_triggered: true,
+          ai_used: Boolean(aiDecision.used),
+          ai_reclassified_intent: aiDecision.route,
+          ai_confidence: aiDecision.confidence,
+          ai_recommended_action: aiDecision.recommended_action,
+          final_route_after_reclassification: selectedRoutingBranch,
+          openai_called: Boolean(aiDecision.used)
+        }));
         suppressAutoAck = true;
+      } else if (getKnownServiceIntent(inboundTextForRouting)) {
+        const localKnowledge = await attemptLocalKnowledgeReply({
+          text: inboundTextForRouting,
+          language: detectedLanguage,
+          userState
+        });
+        if (localKnowledge?.reply) {
+          selectedRoutingBranch = "local_known_service";
+          routingReason = "known_service_local_kb";
+          reply = localKnowledge.reply;
+          console.log("[routing] route=local_known_service", {
+            intent: localKnowledge.intent,
+            entity: localKnowledge.entity,
+            openai_called: false,
+            openai_skipped: true
+          });
+          suppressAutoAck = true;
+        } else {
+          selectedRoutingBranch = "live_safe_slot_clarification";
+          routingReason = "live_mode_general_slot_aware_clarification";
+          const detectedLiveDomain = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
+          const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
+          reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
+          controlledAction = "controlled_clarification";
+          const guarded = applyLiveLoopProtection({
+            waId: from,
+            userState,
+            branch: selectedRoutingBranch,
+            reply,
+            language: detectedLanguage,
+            intentShiftDetected: false,
+            detectedDomain: detectedLiveDomain
+          });
+          reply = guarded.reply;
+          selectedRoutingBranch = guarded.branch;
+          controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
+          setCustomerState(from, {
+            liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
+            liveKnownSlots: knownSlots
+          });
+          suppressAutoAck = true;
+        }
       } else {
         selectedRoutingBranch = "live_safe_slot_clarification";
         routingReason = "live_mode_general_slot_aware_clarification";
         const detectedLiveDomain = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
         const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
+        const missingSlots = getLiveDomainMissingSlots(detectedLiveDomain, knownSlots);
         reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
+        console.log("[live-mode-debug]", JSON.stringify({
+          detected_domain: detectedLiveDomain,
+          known_slots: knownSlots,
+          missing_slots: missingSlots,
+          clarification_question_selected: reply,
+          language_used: detectedLanguage
+        }));
         controlledAction = "controlled_clarification";
         const guarded = applyLiveLoopProtection({
           waId: from,
@@ -4437,38 +4727,6 @@ app.post("/webhook", async (req, res) => {
         });
         suppressAutoAck = true;
       }
-    } else if (!testModeActive && liveModeControlledCandidate) {
-      selectedRoutingBranch = "live_safe_slot_clarification";
-      routingReason = "live_mode_general_slot_aware_clarification";
-      const detectedLiveDomain = normalizeLiveDomain(userState.liveMenuOption) || detectLiveDomainTopic(text, userState) || "general";
-      const knownSlots = extractLiveClarificationSlots(detectedLiveDomain, text, userState);
-      const missingSlots = getLiveDomainMissingSlots(detectedLiveDomain, knownSlots);
-      reply = getLiveSafeMenuClarificationReply(detectedLanguage, detectedLiveDomain, knownSlots);
-      console.log("[live-mode-debug]", JSON.stringify({
-        detected_domain: detectedLiveDomain,
-        known_slots: knownSlots,
-        missing_slots: missingSlots,
-        clarification_question_selected: reply,
-        language_used: detectedLanguage
-      }));
-      controlledAction = "controlled_clarification";
-      const guarded = applyLiveLoopProtection({
-        waId: from,
-        userState,
-        branch: selectedRoutingBranch,
-        reply,
-        language: detectedLanguage,
-        intentShiftDetected: false,
-        detectedDomain: detectedLiveDomain
-      });
-      reply = guarded.reply;
-      selectedRoutingBranch = guarded.branch;
-      controlledAction = guarded.controlledAction === "none" ? controlledAction : guarded.controlledAction;
-      setCustomerState(from, {
-        liveMenuOption: detectedLiveDomain === "general" ? (userState.liveMenuOption || null) : detectedLiveDomain,
-        liveKnownSlots: knownSlots
-      });
-      suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed && fallbackEligible) {
       selectedRoutingBranch = "live_menu_fallback";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
