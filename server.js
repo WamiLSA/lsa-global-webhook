@@ -3410,15 +3410,18 @@ function extractMissingColumnName(error) {
   const details = String(error?.details || "");
   const hint = String(error?.hint || "");
   const combined = [message, details, hint].filter(Boolean).join(" | ");
+  const normalized = combined.replace(/["']/g, "");
   const patterns = [
-    /column ["']?([a-zA-Z0-9_]+)["']? does not exist/i,
-    /Could not find the ['"]([a-zA-Z0-9_]+)['"] column of ['"][a-zA-Z0-9_]+['"] in the schema cache/i,
-    /["']([a-zA-Z0-9_]+)["']\s+column/i
+    /column (?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+) does not exist/i,
+    /Could not find the ([a-zA-Z0-9_]+) column of [a-zA-Z0-9_]+ in the schema cache/i,
+    /([a-zA-Z0-9_]+)\s+column/i
   ];
 
-  for (const pattern of patterns) {
-    const match = combined.match(pattern);
-    if (match?.[1]) return match[1];
+  for (const source of [combined, normalized]) {
+    for (const pattern of patterns) {
+      const match = source.match(pattern);
+      if (match?.[1]) return match[1];
+    }
   }
   return "";
 }
@@ -6025,22 +6028,56 @@ async function getConversationVisibilityDiagnostics() {
     active_rows: null,
     archived_rows: null,
     latest_rows: [],
+    archive_filter_available: true,
     warnings: []
   };
 
-  const [totalRes, activeRes, archivedRes, latestRes] = await Promise.all([
-    supabase.from("conversations").select("wa_id", { count: "exact", head: true }),
-    supabase.from("conversations").select("wa_id", { count: "exact", head: true }).or("is_archived.is.false,is_archived.is.null"),
-    supabase.from("conversations").select("wa_id", { count: "exact", head: true }).eq("is_archived", true),
-    supabase.from("conversations").select("wa_id, created_at, direction, is_archived").order("created_at", { ascending: false }).limit(10)
-  ]);
-
+  const totalRes = await supabase.from("conversations").select("wa_id", { count: "exact", head: true });
   diagnostics.total_rows = totalRes.count ?? null;
   if (totalRes.error) diagnostics.warnings.push(`total count failed: ${totalRes.error.message || totalRes.error}`);
-  diagnostics.active_rows = activeRes.count ?? null;
-  if (activeRes.error) diagnostics.warnings.push(`active count failed: ${activeRes.error.message || activeRes.error}`);
-  diagnostics.archived_rows = archivedRes.count ?? null;
-  if (archivedRes.error) diagnostics.warnings.push(`archived count failed: ${archivedRes.error.message || archivedRes.error}`);
+
+  const activeRes = await supabase
+    .from("conversations")
+    .select("wa_id", { count: "exact", head: true })
+    .or("is_archived.is.false,is_archived.is.null");
+  if (!activeRes.error) {
+    diagnostics.active_rows = activeRes.count ?? null;
+  } else if (extractMissingColumnName(activeRes.error) === "is_archived") {
+    diagnostics.archive_filter_available = false;
+    diagnostics.active_rows = diagnostics.total_rows;
+    diagnostics.warnings.push("active count used legacy fallback because is_archived is missing");
+  } else {
+    diagnostics.warnings.push(`active count failed: ${activeRes.error.message || activeRes.error}`);
+  }
+
+  const archivedRes = await supabase
+    .from("conversations")
+    .select("wa_id", { count: "exact", head: true })
+    .eq("is_archived", true);
+  if (!archivedRes.error) {
+    diagnostics.archived_rows = archivedRes.count ?? null;
+  } else if (extractMissingColumnName(archivedRes.error) === "is_archived") {
+    diagnostics.archive_filter_available = false;
+    diagnostics.archived_rows = null;
+    diagnostics.warnings.push("archived count skipped because is_archived is missing");
+  } else {
+    diagnostics.warnings.push(`archived count failed: ${archivedRes.error.message || archivedRes.error}`);
+  }
+
+  let latestRes = await supabase
+    .from("conversations")
+    .select("wa_id, created_at, direction, is_archived")
+    .order("created_at", { ascending: false })
+    .limit(10);
+  if (latestRes.error && extractMissingColumnName(latestRes.error) === "is_archived") {
+    diagnostics.archive_filter_available = false;
+    diagnostics.warnings.push("latest rows used legacy fallback because is_archived is missing");
+    latestRes = await supabase
+      .from("conversations")
+      .select("wa_id, created_at, direction")
+      .order("created_at", { ascending: false })
+      .limit(10);
+  }
   diagnostics.latest_rows = Array.isArray(latestRes.data) ? latestRes.data : [];
   if (latestRes.error) diagnostics.warnings.push(`latest rows failed: ${latestRes.error.message || latestRes.error}`);
 
