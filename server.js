@@ -2104,6 +2104,7 @@ function getDefaultCustomerState() {
     topicDomain: null,
     topicLabel: null,
     topicSubVariant: null,
+    collaboratorSubtype: null,
     liveMenuOption: null,
     liveKnownSlots: {},
     lastPromptKey: null,
@@ -2139,6 +2140,7 @@ function setCustomerState(waId, state) {
     topicDomain: mergeStateValue(state, current, "topicDomain"),
     topicLabel: mergeStateValue(state, current, "topicLabel"),
     topicSubVariant: mergeStateValue(state, current, "topicSubVariant"),
+    collaboratorSubtype: mergeStateValue(state, current, "collaboratorSubtype"),
     liveMenuOption: mergeStateValue(state, current, "liveMenuOption"),
     liveKnownSlots: mergeStateValue(state, current, "liveKnownSlots", {}),
     lastPromptKey: mergeStateValue(state, current, "lastPromptKey"),
@@ -2235,6 +2237,21 @@ function detectServiceLanguages(text = "") {
   return found;
 }
 
+const COLLABORATOR_SUBTYPES = [
+  "translator",
+  "interpreter",
+  "teacher_trainer",
+  "examiner_coach",
+  "tech_provider",
+  "ai_automation_provider",
+  "general_collaborator",
+  "unknown_provider"
+];
+
+function hasAnyRegexMatch(value, patterns = []) {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
 function detectProviderCollaborationIntent(text = "") {
   const generalized = resolveGeneralizedRouting({ text, platform: "server_detector" });
   if (generalized.route === "provider_collaboration") {
@@ -2249,18 +2266,124 @@ function detectProviderCollaborationIntent(text = "") {
   const normalized = normalizeForIntent(text);
   if (!normalized) return { detected: false, reason: "empty" };
   const patterns = [
-    { reason: "translator_identity", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?(translator|interpreter|linguist|freelancer|language provider)\b/i },
-    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language)?\s*(work|jobs?|projects?|assignments?)\b/i },
-    { reason: "available_for_assignments", pattern: /\b(i\s+am\s+)?available\s+for\s+(assignments?|projects?|jobs?|work)\b/i },
-    { reason: "send_work_request", pattern: /\b(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
-    { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(work|jobs?|projects?|assignments?)(\s+(from|with)\s+(lsa\s+global|you|your\s+(company|team)))?\b/i },
-    { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(you\s+to\s+)?(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
-    { reason: "work_with_lsa", pattern: /\b(i\s+)?want\s+to\s+(work\s+with\s+(you|lsa\s+global)|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
+    { reason: "translator_interpreter_identity", pattern: /\b(i am|i m|im|am|je suis|soy|ich bin|sono|sou)\s+(a\s+|an\s+|the\s+|un\s+|une\s+|una\s+|um\s+|uma\s+)?(translator|traducteur|traductrice|traductor|traductora|traduttore|traduttrice|tradutor|tradutora|ubersetzer|uebersetzer|interpreter|interprete|interprete|dolmetscher|linguist|linguiste|linguista|freelancer|freelance|language provider)\b/i },
+    { reason: "teacher_trainer_identity", pattern: /\b(i am|i m|im|am|je suis|soy|ich bin|sono|sou)\s+(a\s+|an\s+|the\s+|un\s+|une\s+|una\s+|um\s+|uma\s+)?((language|english|french|spanish|german|italian|portuguese|anglais|francais|espagnol|allemand|italien|portugais|ingles|espanol|aleman|italiano|portugues|deutsch)\s+)?(teacher|trainer|instructor|tutor|professor|coach|enseignant|enseignante|professeur|formateur|formatrice|tuteur|tutrice|profesor|profesora|docente|maestro|maestra|insegnante|docente|professore|professoressa|lehrer|lehrerin|dozent|dozentin|professor|professora|instrutor|instrutora)\b/i },
+    { reason: "examiner_coach_identity", pattern: /\b(examiner|examinateur|examinatrice|examinador|examinadora|esaminatore|esaminatrice|prufer|pruefer|coach|ielts|toefl|toeic|tef|delf|dalf)\b.*\b(work|collaborat|position|poste|puesto|stellen|job|lsa global|with you|avec vous|con ustedes|mit ihnen)\b/i },
+    { reason: "tech_provider_identity", pattern: /\b(tech|technical|technology|it|web|website|lms|moodle|developer|devops|support|informatique|site web|plateforme|soporte tecnico|desarrollador|sviluppatore|entwickler|suporte tecnico)\b.*\b(provider|prestataire|supplier|vendor|support|collaborat|work|service|services|lsa global)\b/i },
+    { reason: "tech_provider_offer", pattern: /\b(provide|offer|build|develop|support|maintain|create|fournis|propose|developpe|desarrollo|ofrezco|sviluppo)\b.*\b(lms|moodle|website|web|site web|platform|plateforme|app|software|technical|technology|tech|it support|informatique)\b/i },
+    { reason: "ai_automation_provider_identity", pattern: /\b(ai|ia|artificial intelligence|intelligence artificielle|automat(?:e|ion)|automation|automatisation|workflow|workflows|chatbot|agent|agents|openai|llm|ia generativa)\b.*\b(provider|prestataire|build|create|develop|collaborat|work|service|services|lsa global)\b/i },
+    { reason: "ai_automation_provider_offer", pattern: /\b(build|create|develop|provide|offer|automate|design|construis|cree|developpe|automatise|desarrollo|creo|sviluppo)\b.*\b(ai|ia|artificial intelligence|intelligence artificielle|automation|automatisation|workflow|workflows|chatbot|agents?|openai|llm)\b/i },
+    { reason: "teaching_position_request", pattern: /\b(teacher|trainer|instructor|tutor|enseignant|enseignante|professeur|formateur|formatrice|profesor|profesora|docente|insegnante|lehrer|lehrerin|professor|professora)\b.*\b(position|poste|puesto|job|work|collaborat|join|recrutement|emploi|vacancy|stellen|lsa global)\b/i },
+    { reason: "translation_work_availability", pattern: /\b(available|free|disponible|disponibilidad|disponibilite|verfugbar|verfuegbar)\b.*\b(translation|traduction|traduccion|traduzione|traducao|translator|traducteur|interpreter|interpreting|interpretation|interpretation|work|jobs?|projects?|assignments?|mission|missions)\b/i },
+    { reason: "available_for_assignments", pattern: /\b(i\s+am\s+)?(available|disponible|verfugbar|verfuegbar)\s+for\s+(assignments?|projects?|jobs?|work|missions?)\b/i },
+    { reason: "send_work_request", pattern: /\b(send|give|offer|provide|envoyez|donnez|manden|envien|datemi|inviatemi)\s+me\s+(work|jobs?|projects?|assignments?|missions?)\b/i },
+    { reason: "need_work_request", pattern: /\b(i\s+)?(need|want|looking for|cherche|recherche|busco|cerco)\s+(a\s+)?(work|jobs?|projects?|assignments?|position|poste|emploi|missions?)(\s+(from|with|avec|chez)\s+(lsa\s+global|you|your\s+(company|team)))?\b/i },
+    { reason: "work_with_lsa", pattern: /\b(i\s+)?(want|would like|souhaite|veux|voudrais|quiero|quisiera|vorrei|möchte|mochte|gostaria)\s+to\s+(work\s+with\s+(you|lsa\s+global)|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
+    { reason: "work_with_lsa_multilingual", pattern: /\b(collaborer|collaborer\s+avec|travailler\s+(avec|chez)|rejoindre|postuler|candidature|candidato|candidata|colaborar|trabajar\s+con|unirme|collaborare|lavorare\s+con|bewerben|zusammenarbeiten|trabalhar\s+com|colaborar)\b.*\b(lsa\s+global|vous|you|ustedes|voi|ihnen|voces|vocês)\b/i },
     { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work|work)\b/i },
-    { reason: "provider_application", pattern: /\b(provider|freelancer|translator|interpreter)\s+(application|registration|intake|collaboration)\b/i }
+    { reason: "provider_application", pattern: /\b(provider|prestataire|supplier|vendor|freelancer|freelance|translator|interpreter|teacher|trainer|tech|ai|automation|collaborator|collaborateur|collaboratrice)\s+(application|registration|intake|collaboration|candidature|inscription)\b/i }
   ];
   const match = patterns.find(({ pattern }) => pattern.test(normalized));
   return { detected: Boolean(match), reason: match?.reason || "none", generalized: false };
+}
+
+function detectCollaboratorSubtype(text = "", recentContext = {}) {
+  const normalized = normalizeForIntent(text);
+  const previousSubtype = COLLABORATOR_SUBTYPES.includes(recentContext?.collaboratorSubtype)
+    ? recentContext.collaboratorSubtype
+    : null;
+  if (!normalized) {
+    return {
+      subtype: previousSubtype || "unknown_provider",
+      reason: previousSubtype ? "retained_previous_subtype_empty_message" : "empty",
+      confidence: previousSubtype ? "retained" : "low",
+      clarificationNeeded: !previousSubtype
+    };
+  }
+
+  const negatedTranslatorInterpreter = /\b(not|not\s+a|not\s+an|not\s+the|no\s+soy|no\s+sou|non\s+sono|nicht|ne\s+suis\s+pas|je\s+ne\s+suis\s+pas|pas)\b.{0,40}\b(translator|traducteur|traductrice|traductor|traductora|traduttore|traduttrice|tradutor|tradutora|ubersetzer|uebersetzer|interpreter|interprete|dolmetscher|interprete)\b/i.test(normalized);
+  const negatedTeacherTrainer = /\b(not|not\s+a|not\s+an|no\s+soy|non\s+sono|nicht|ne\s+suis\s+pas|je\s+ne\s+suis\s+pas|pas)\b.{0,40}\b(teacher|trainer|instructor|tutor|enseignant|enseignante|professeur|formateur|formatrice|profesor|profesora|docente|insegnante|lehrer|lehrerin|professor|professora)\b/i.test(normalized);
+
+  const subtypeRules = [
+    {
+      subtype: "ai_automation_provider",
+      reason: "ai_automation_terms",
+      patterns: [/\b(ai|ia|artificial intelligence|intelligence artificielle|inteligencia artificial|intelligenza artificiale|kunstliche intelligenz|ki|automation|automatisation|automatizacion|automazione|automatisierung|workflow|workflows|chatbot|bot|agent|agents|openai|llm|machine learning|generative ai|ia generativa)\b/i]
+    },
+    {
+      subtype: "tech_provider",
+      reason: "technology_provider_terms",
+      patterns: [/\b(lms|moodle|website|web\s+site|site\s+web|web\s+development|developer|developpeur|développeur|desarrollador|sviluppatore|entwickler|wordpress|software|app|platform|plateforme|plataforma|piattaforma|tech|technology|technical|informatique|it\s+support|support\s+informatique|soporte\s+tecnico|suporte\s+tecnico|devops|hosting|cloud|database|api)\b/i]
+    },
+    {
+      subtype: "teacher_trainer",
+      reason: "teacher_trainer_terms",
+      blocked: negatedTeacherTrainer,
+      patterns: [/\b(teacher|trainer|language\s+trainer|instructor|tutor|professor|enseignant|enseignante|professeur|formateur|formatrice|tuteur|tutrice|profesor|profesora|docente|maestro|maestra|insegnante|professore|professoressa|lehrer|lehrerin|dozent|dozentin|professor|professora|instrutor|instrutora|formation|training|teaching|enseigne|enseigner|enseignement|cours\s+de\s+langue)\b/i]
+    },
+    {
+      subtype: "examiner_coach",
+      reason: "examiner_coach_terms",
+      patterns: [/\b(examiner|examinateur|examinatrice|examinador|examinadora|esaminatore|esaminatrice|prufer|pruefer|coach|exam\s+coach|exam\s+prep|preparation\s+(ielts|toefl|toeic|tef|delf|dalf)|ielts|toefl|toeic|tef|delf|dalf|cambridge\s+exam)\b/i]
+    },
+    {
+      subtype: "interpreter",
+      reason: "interpreter_terms",
+      blocked: negatedTranslatorInterpreter,
+      patterns: [/\b(interpreter|interpreting|interpretation|interpretariat|interprete|interpretes|dolmetscher|dolmetschen|口译|通訳|устн(?:ый|ого)?\s+перевод)\b/i]
+    },
+    {
+      subtype: "translator",
+      reason: "translator_terms",
+      blocked: negatedTranslatorInterpreter,
+      patterns: [/\b(translator|translation\s+provider|traducteur|traductrice|traductor|traductora|traduttore|traduttrice|tradutor|tradutora|ubersetzer|uebersetzer|переводчик|翻译者|翻訳者)\b/i]
+    },
+    {
+      subtype: "general_collaborator",
+      reason: "general_collaboration_terms",
+      patterns: [/\b(collaborator|collaborateur|collaboratrice|partner|partenaire|partnership|partenariat|socio|socia|partnerariato|prestataire|supplier|vendor|provider|freelancer|freelance|agency|agence|outsourcing|subcontractor|sous-traitant)\b/i]
+    }
+  ];
+
+  for (const rule of subtypeRules) {
+    if (rule.blocked) continue;
+    if (hasAnyRegexMatch(normalized, rule.patterns)) {
+      return {
+        subtype: rule.subtype,
+        reason: rule.reason,
+        confidence: "high",
+        clarificationNeeded: false
+      };
+    }
+  }
+
+  if (previousSubtype) {
+    return {
+      subtype: previousSubtype,
+      reason: "retained_previous_subtype_active_provider_branch",
+      confidence: "retained",
+      clarificationNeeded: false
+    };
+  }
+
+  return {
+    subtype: "unknown_provider",
+    reason: negatedTranslatorInterpreter ? "translation_interpreting_negated_without_clear_subtype" : "no_subtype_signal",
+    confidence: "low",
+    clarificationNeeded: true
+  };
+}
+
+function resolveProviderSubtypeForRouting(text = "", userState = {}) {
+  const broadIntent = detectProviderCollaborationIntent(text);
+  const subtypeDecision = detectCollaboratorSubtype(text, userState);
+  return {
+    broadIntent,
+    subtypeDecision,
+    detected: broadIntent.detected,
+    subtype: subtypeDecision.subtype,
+    clarificationNeeded: broadIntent.detected && subtypeDecision.clarificationNeeded
+  };
 }
 
 function isProviderCollaborationActive(userState = {}) {
@@ -2461,11 +2584,20 @@ async function classifyControlledAiIntent({ text, language, userState = {}, trig
 function buildControlledAiRerouteReply({ aiDecision, text, language, userState = {} }) {
   const route = aiDecision?.route || "manual_review";
   if (route === "provider_collaboration") {
+    const subtypeDecision = detectCollaboratorSubtype(text, userState);
+    const clarificationNeeded = subtypeDecision.clarificationNeeded;
+    const selectedSubtype = subtypeDecision.subtype;
     return {
-      branch: "live_ai_provider_collaboration_reroute",
-      reply: getProviderCollaborationIntakeReply(language),
-      action: "provider_collaboration_intake",
-      state: { liveMenuOption: "provider_collaboration", topicDomain: "provider", liveKnownSlots: {}, intentShiftDetected: true }
+      branch: clarificationNeeded ? "live_ai_provider_subtype_clarification" : `live_ai_provider_collaboration_${selectedSubtype}_reroute`,
+      reply: clarificationNeeded ? getProviderSubtypeClarificationReply(language) : getProviderCollaborationIntakeReply(language, selectedSubtype),
+      action: clarificationNeeded ? "provider_collaboration_subtype_clarification" : `provider_collaboration_${selectedSubtype}_intake`,
+      state: {
+        liveMenuOption: "provider_collaboration",
+        topicDomain: "provider",
+        collaboratorSubtype: clarificationNeeded ? null : selectedSubtype,
+        liveKnownSlots: { collaboratorSubtype: clarificationNeeded ? "unknown_provider" : selectedSubtype },
+        intentShiftDetected: true
+      }
     };
   }
 
@@ -2508,8 +2640,24 @@ function buildControlledAiRerouteReply({ aiDecision, text, language, userState =
   };
 }
 
-function getProviderCollaborationIntakeReply(languageCode) {
+const PROVIDER_SUBTYPE_LABELS = {
+  translator: "translator",
+  interpreter: "interpreter",
+  teacher_trainer: "language teacher / trainer",
+  examiner_coach: "language examiner / coach",
+  tech_provider: "tech provider",
+  ai_automation_provider: "AI / automation provider",
+  general_collaborator: "general collaborator",
+  unknown_provider: "unknown provider"
+};
+
+function normalizeCollaboratorSubtype(subtype) {
+  return COLLABORATOR_SUBTYPES.includes(subtype) ? subtype : "unknown_provider";
+}
+
+function getProviderCollaborationIntakeReply(languageCode, subtype = "unknown_provider") {
   const language = normalizeLanguageCode(languageCode);
+  const safeSubtype = normalizeCollaboratorSubtype(subtype);
   const messages = {
     en: "Thank you for your interest in working with LSA GLOBAL. To be reviewed for translation, interpreting, teaching/training, technology, AI or systems collaboration, please send your full name, languages/skills, country/city, service areas, availability, and CV or profile link if available. Our team will review and follow up.",
     fr: "Merci pour votre intérêt à collaborer avec LSA GLOBAL. Pour l’étude de votre profil en traduction/interprétation, envoyez votre nom complet, langues/paires de langues, pays/ville, domaines de service, disponibilités, et CV ou lien de profil si disponible. Notre équipe examinera et reviendra vers vous.",
@@ -2522,7 +2670,11 @@ function getProviderCollaborationIntakeReply(languageCode) {
     ja: "LSA GLOBAL との協業にご関心をお寄せいただきありがとうございます。翻訳・通訳・教育・技術・AI/システム分野の確認のため、氏名、言語/スキル、国/都市、対応分野、稼働状況、CVまたはプロフィールリンクをご送付ください。",
     da: "Tak for din interesse i at samarbejde med LSA GLOBAL. Send venligst fulde navn, sprog/færdigheder, land/by, serviceområder, tilgængelighed og CV eller profillink, så vi kan vurdere oversættelse, tolkning, undervisning, teknologi eller AI/system-samarbejde."
   };
-  return messages[language] || messages.en;
+  return messages[safeSubtype]?.[language] || messages[safeSubtype]?.en || messages.unknown_provider.en;
+}
+
+function getProviderSubtypeClarificationReply(languageCode) {
+  return getProviderCollaborationIntakeReply(languageCode, "unknown_provider");
 }
 
 function getTranslationRoleClarificationReply(languageCode) {
@@ -3495,19 +3647,19 @@ function detectMessageLanguage(text) {
   if (/[\u3040-\u30ff]/.test(value)) return "ja";
   if (/[\u0400-\u04ff]/.test(value)) return "ru";
 
-  if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation|horaire)\b/.test(value)) {
+  if (/[àâæçéèêëîïôœùûüÿ]/.test(value) || /\b(bonjour|merci|cours|prix|tarif|inscription|formation|horaire|enseignant|enseignante|professeur|formateur|formatrice|traducteur|traductrice|interprete|interprète|poste|emploi)\b/.test(value)) {
     return "fr";
   }
-  if (/[¿¡ñáéíóú]/.test(value) || /\b(hola|gracias|curso|precio|horario|duración|inscripción)\b/.test(value)) {
+  if (/[¿¡ñáéíóú]/.test(value) || /\b(hola|gracias|curso|precio|horario|duración|inscripción|profesor|profesora|docente|traductor|traductora|interprete|puesto|empleo)\b/.test(value)) {
     return "es";
   }
-  if (/[äöüß]/.test(value) || /\b(hallo|danke|kurs|preis|zeitplan|dauer)\b/.test(value)) {
+  if (/[äöüß]/.test(value) || /\b(hallo|danke|kurs|preis|zeitplan|dauer|lehrer|lehrerin|dozent|ubersetzer|uebersetzer|dolmetscher|stelle)\b/.test(value)) {
     return "de";
   }
-  if (/\b(ciao|grazie|corso|prezzo|orario|durata)\b/.test(value)) {
+  if (/\b(ciao|grazie|corso|prezzo|orario|durata|insegnante|docente|traduttore|traduttrice|interprete|lavoro)\b/.test(value)) {
     return "it";
   }
-  if (/[ãõçáâàéêíóôú]/.test(value) || /\b(ola|olá|obrigado|obrigada|curso|preco|preço|horario|horário|duração|inscricao|inscrição)\b/.test(value)) {
+  if (/[ãõçáâàéêíóôú]/.test(value) || /\b(ola|olá|obrigado|obrigada|curso|preco|preço|horario|horário|duração|inscricao|inscrição|professor|professora|instrutor|tradutor|tradutora|interprete|trabalho)\b/.test(value)) {
     return "pt";
   }
   if (/\b(hallo|dank|vertaling|cursus|tolk)\b/.test(value)) return "nl";
@@ -4980,7 +5132,9 @@ app.post("/webhook", async (req, res) => {
     const menuSelection = deterministicDecision.menuSelection;
     const activeBranchBeforeProcessing = userState.liveMenuOption || userState.topicDomain || userState.lastRoute || "none";
     const providerBranchAlreadyActive = isProviderCollaborationActive(userState);
-    const providerIntentForRouting = detectProviderCollaborationIntent(inboundTextForRouting);
+    const providerSubtypeRouting = resolveProviderSubtypeForRouting(inboundTextForRouting, userState);
+    const providerIntentForRouting = providerSubtypeRouting.broadIntent;
+    const providerSubtypeForRouting = providerSubtypeRouting.subtypeDecision;
     const providerContinuationForRouting = detectProviderContinuationIntent(inboundTextForRouting);
     const generalizedRouting = resolveGeneralizedRouting({
       text: inboundTextForRouting,
@@ -5009,8 +5163,13 @@ app.post("/webhook", async (req, res) => {
       openai_skipped: Boolean(deterministicDecision.matched),
       active_branch_before_processing: activeBranchBeforeProcessing,
       provider_branch_already_active: providerBranchAlreadyActive,
+      detected_language: detectedLanguage,
       provider_intent_detected: providerIntentForRouting.detected,
       provider_intent_reason: providerIntentForRouting.reason,
+      collaborator_subtype_detected: providerSubtypeForRouting.subtype,
+      collaborator_subtype_reason: providerSubtypeForRouting.reason,
+      collaborator_subtype_confidence: providerSubtypeForRouting.confidence,
+      collaborator_subtype_clarification_triggered: Boolean(providerSubtypeRouting.clarificationNeeded),
       provider_continuation_detected: providerContinuationForRouting.detected,
       provider_continuation_reason: providerContinuationForRouting.reason,
       detected_language: detectedLanguage,
@@ -5042,8 +5201,13 @@ app.post("/webhook", async (req, res) => {
     console.log("[provider-branch-retention] pre_route", JSON.stringify({
       active_branch_before_processing: activeBranchBeforeProcessing,
       provider_branch_already_active: providerBranchAlreadyActive,
+      detected_language: detectedLanguage,
       provider_intent_detected: providerIntentForRouting.detected,
       provider_intent_reason: providerIntentForRouting.reason,
+      collaborator_subtype_detected: providerSubtypeForRouting.subtype,
+      collaborator_subtype_reason: providerSubtypeForRouting.reason,
+      collaborator_subtype_confidence: providerSubtypeForRouting.confidence,
+      collaborator_subtype_clarification_triggered: Boolean(providerSubtypeRouting.clarificationNeeded),
       provider_continuation_detected: providerContinuationForRouting.detected,
       provider_continuation_reason: providerContinuationForRouting.reason,
       detected_language: detectedLanguage,
@@ -5117,10 +5281,11 @@ app.post("/webhook", async (req, res) => {
       reply = getProviderCollaborationIntakeReply(detectedLanguage);
       controlledAction = "provider_collaboration_intake";
       setCustomerState(from, {
-        clarifyingAsked: false,
+        clarifyingAsked: providerClarificationTriggered,
         liveMenuOption: "provider_collaboration",
         topicDomain: "provider",
-        liveKnownSlots: {},
+        collaboratorSubtype: providerClarificationTriggered ? null : selectedProviderSubtype,
+        liveKnownSlots: { collaboratorSubtype: providerClarificationTriggered ? "unknown_provider" : selectedProviderSubtype },
         lastPromptKey: getPromptKey(reply),
         repeatedPromptCount: 1,
         lastRoute: selectedRoutingBranch,
@@ -5159,13 +5324,23 @@ app.post("/webhook", async (req, res) => {
       routingReason = providerContinuationForRouting.detected
         ? `provider_branch_retained_${providerContinuationForRouting.reason}`
         : "provider_branch_retained_active_context";
-      reply = getProviderCollaborationIntakeReply(detectedLanguage);
-      controlledAction = "provider_collaboration_intake_continuation";
+      const selectedProviderSubtype = providerSubtypeForRouting.subtype || userState.collaboratorSubtype || "unknown_provider";
+      const providerClarificationTriggered = selectedProviderSubtype === "unknown_provider" && !userState.collaboratorSubtype;
+      selectedRoutingBranch = providerClarificationTriggered
+        ? "live_provider_collaboration_subtype_clarification"
+        : `live_provider_collaboration_${selectedProviderSubtype}_continuation`;
+      reply = providerClarificationTriggered
+        ? getProviderSubtypeClarificationReply(detectedLanguage)
+        : getProviderCollaborationIntakeReply(detectedLanguage, selectedProviderSubtype);
+      controlledAction = providerClarificationTriggered
+        ? "provider_collaboration_subtype_clarification"
+        : `provider_collaboration_${selectedProviderSubtype}_intake_continuation`;
       setCustomerState(from, {
-        clarifyingAsked: false,
+        clarifyingAsked: providerClarificationTriggered,
         liveMenuOption: "provider_collaboration",
         topicDomain: "provider",
-        liveKnownSlots: {},
+        collaboratorSubtype: providerClarificationTriggered ? null : selectedProviderSubtype,
+        liveKnownSlots: { ...(userState.liveKnownSlots || {}), collaboratorSubtype: providerClarificationTriggered ? "unknown_provider" : selectedProviderSubtype },
         lastPromptKey: getPromptKey(reply),
         repeatedPromptCount: Number(userState.repeatedPromptCount || 0) + 1,
         lastRoute: selectedRoutingBranch,
@@ -5179,6 +5354,13 @@ app.post("/webhook", async (req, res) => {
         provider_branch_already_active: true,
         continuation_detected: providerContinuationForRouting.detected,
         continuation_reason: providerContinuationForRouting.reason,
+        detected_language: detectedLanguage,
+        broad_role_intent: "provider_collaboration",
+        collaborator_subtype_detected: selectedProviderSubtype,
+        collaborator_subtype_reason: providerSubtypeForRouting.reason,
+        chosen_subtype_template: providerClarificationTriggered ? "provider_subtype_clarification" : selectedProviderSubtype,
+        clarification_triggered: providerClarificationTriggered,
+        active_branch_after_message: selectedRoutingBranch,
         fallback_help_router_used: false,
         fallback_help_router_reason: "blocked_active_provider_collaboration_flow",
         strong_non_provider_route_intent: strongNonProviderRouteIntent,
@@ -5849,6 +6031,21 @@ app.post("/webhook", async (req, res) => {
       fallback_reason: generalizedRouting.fallbackReason,
       platform_context: generalizedRouting.platform
     });
+    const activeBranchAfterProcessing = getCustomerState(from).liveMenuOption || getCustomerState(from).topicDomain || getCustomerState(from).lastRoute || selectedRoutingBranch || "none";
+    console.log("[collaborator-subtype-routing]", JSON.stringify({
+      detected_language: detectedLanguage,
+      detected_broad_role_intent: providerIntentForRouting.detected ? "provider_collaboration" : "none",
+      broad_role_intent_reason: providerIntentForRouting.reason,
+      detected_collaborator_provider_subtype: providerSubtypeForRouting.subtype,
+      collaborator_provider_subtype_reason: providerSubtypeForRouting.reason,
+      chosen_subtype_template: selectedRoutingBranch.includes("provider_collaboration")
+        ? (selectedRoutingBranch.includes("subtype_clarification") ? "provider_subtype_clarification" : (getCustomerState(from).collaboratorSubtype || providerSubtypeForRouting.subtype || "unknown_provider"))
+        : "none",
+      clarification_triggered: selectedRoutingBranch.includes("provider_collaboration_subtype_clarification"),
+      active_branch_before_message: activeBranchBeforeProcessing,
+      active_branch_after_message: activeBranchAfterProcessing,
+      final_selected_route: selectedRoutingBranch
+    }));
     logInboundRoutingDecision({
       mode: activeMode,
       branch: selectedRoutingBranch,
