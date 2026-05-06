@@ -110,8 +110,15 @@
       margin-bottom: 0;
     }
 
+    .provider-documents-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
     .provider-documents-table {
       width: 100%;
+      min-width: 560px;
       border-collapse: collapse;
       margin-top: 8px;
       font-size: 12px;
@@ -164,6 +171,24 @@
       text-transform: uppercase;
       letter-spacing: 0.03em;
       margin-bottom: 4px;
+    }
+
+    @media (max-width: 760px) {
+      #pageLayout {
+        display: block;
+        height: auto;
+      }
+
+      #left {
+        width: 100%;
+        border-right: 0;
+        border-bottom: 1px solid var(--lsa-border);
+      }
+
+      .provider-documents-toolbar,
+      .match-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -510,29 +535,40 @@
       return date.toLocaleString();
     }
 
-    async function loadProviderDocuments(providerId) {
+    async function loadProviderDocuments(providerId, options = {}) {
       const listEl = document.getElementById(`providerDocsList_${providerId}`);
       if (!listEl) return;
-      listEl.textContent = "Loading document list...";
+      const preserveExisting = options.preserveExisting === true;
+      if (!preserveExisting || !(providerDocumentsByProvider[providerId] || []).length) {
+        listEl.textContent = "Loading document list...";
+      }
 
       try {
         const res = await fetch(`/api/providers/${providerId}/documents`);
         const result = await res.json();
         if (!res.ok) {
+          if (preserveExisting && (providerDocumentsByProvider[providerId] || []).length) {
+            renderProviderDocumentList(providerId, "Document list refresh is temporarily unavailable; showing the latest uploaded document saved in this session.");
+            return;
+          }
           providerDocumentsByProvider[providerId] = [];
           listEl.innerHTML = "<div class='small'>Document List temporarily unavailable.</div>";
           return;
         }
 
         providerDocumentsByProvider[providerId] = Array.isArray(result.data) ? result.data : [];
-        renderProviderDocumentList(providerId);
+        renderProviderDocumentList(providerId, result.warning || "");
       } catch (_error) {
+        if (preserveExisting && (providerDocumentsByProvider[providerId] || []).length) {
+          renderProviderDocumentList(providerId, "Document list refresh is temporarily unavailable; showing the latest uploaded document saved in this session.");
+          return;
+        }
         providerDocumentsByProvider[providerId] = [];
         listEl.innerHTML = "<div class='small'>Document List temporarily unavailable.</div>";
       }
     }
 
-    function renderProviderDocumentList(providerId) {
+    function renderProviderDocumentList(providerId, warning = "") {
       const listEl = document.getElementById(`providerDocsList_${providerId}`);
       if (!listEl) return;
       const docs = providerDocumentsByProvider[providerId] || [];
@@ -543,6 +579,8 @@
       }
 
       listEl.innerHTML = `
+        ${warning ? `<div class="small">${escapeHtml(warning)}</div>` : ""}
+        <div class="provider-documents-table-wrap">
         <table class="provider-documents-table">
           <thead>
             <tr>
@@ -565,6 +603,7 @@
             `).join("")}
           </tbody>
         </table>
+        </div>
       `;
     }
 
@@ -598,9 +637,15 @@
         return;
       }
 
+      providerDocumentsByProvider[providerId] = [
+        result.data,
+        ...(providerDocumentsByProvider[providerId] || []).filter(doc => String(doc.id) !== String(result.data?.id))
+      ].filter(Boolean);
+      renderProviderDocumentList(providerId, result.warning || "");
+
       fileInput.value = "";
       notesInput.value = "";
-      await loadProviderDocuments(providerId);
+      await loadProviderDocuments(providerId, { preserveExisting: true });
     }
 
     async function uploadProviderCaptureAttachments() {

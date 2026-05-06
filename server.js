@@ -312,6 +312,7 @@ const providerDocumentUpload = multer({
   }
 });
 
+const PROVIDER_DOCUMENTS_REQUIRED_INSERT_COLUMNS = new Set(["provider_id", "file_name"]);
 const PROVIDER_DOCUMENTS_PREFERRED_COLUMNS = [
   "id",
   "provider_id",
@@ -330,6 +331,35 @@ const PROVIDER_DOCUMENTS_PREFERRED_COLUMNS = [
 let providerDocumentsColumnsCache = null;
 let providerDocumentsColumnsCachedAt = 0;
 const PROVIDER_DOCUMENTS_COLUMNS_CACHE_TTL_MS = 60 * 1000;
+
+function buildProviderDocumentFallbackRow({
+  id = null,
+  providerId,
+  fileName,
+  originalName,
+  fileUrl,
+  mimeType = null,
+  fileSize = null,
+  documentType = "Other",
+  notes = null,
+  uploadedBy = null
+}) {
+  return {
+    id,
+    provider_id: providerId,
+    file_name: fileName,
+    original_name: originalName || fileName,
+    file_path: fileName,
+    file_url: fileUrl,
+    mime_type: mimeType,
+    file_size: fileSize,
+    document_type: documentType,
+    notes: notes || null,
+    uploaded_at: null,
+    uploaded_by: uploadedBy,
+    created_at: null
+  };
+}
 
 async function getProviderDocumentsColumnSet() {
   const now = Date.now();
@@ -350,7 +380,12 @@ async function getProviderDocumentsColumnSet() {
     return null;
   }
 
-  providerDocumentsColumnsCache = new Set((data || []).map(row => row.column_name));
+  const columns = (data || []).map(row => row.column_name).filter(Boolean);
+  if (!columns.length) {
+    return null;
+  }
+
+  providerDocumentsColumnsCache = new Set(columns);
   providerDocumentsColumnsCachedAt = now;
   return providerDocumentsColumnsCache;
 }
@@ -388,7 +423,7 @@ async function queryProviderDocumentsWithSchemaFallback({
   providerId,
   columnSet,
   filterId = null,
-  maxAttempts = 3
+  maxAttempts = PROVIDER_DOCUMENTS_PREFERRED_COLUMNS.length + 2
 }) {
   const blockedColumns = new Set();
 
@@ -433,6 +468,48 @@ async function queryProviderDocumentsWithSchemaFallback({
       message: "Provider documents query failed due to repeated schema mismatch on metadata columns."
     },
     blockedColumns
+  };
+}
+
+async function insertProviderDocumentWithSchemaFallback(insertPayload) {
+  const safePayload = { ...insertPayload };
+  const removedColumns = new Set();
+  const maxAttempts = Object.keys(safePayload).length + 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const { data, error } = await supabase
+      .from("provider_documents")
+      .insert([safePayload])
+      .select("id")
+      .single();
+
+    if (!error) {
+      return { data, error: null, removedColumns };
+    }
+
+    const missingColumn = extractMissingColumnName(error);
+    if (
+      !missingColumn
+      || !Object.prototype.hasOwnProperty.call(safePayload, missingColumn)
+      || PROVIDER_DOCUMENTS_REQUIRED_INSERT_COLUMNS.has(missingColumn)
+    ) {
+      return { data: null, error, removedColumns };
+    }
+
+    delete safePayload[missingColumn];
+    removedColumns.add(missingColumn);
+    console.warn("[provider-documents] schema mismatch on insert; retrying without optional metadata column", {
+      missing_column: missingColumn,
+      removed_columns: Array.from(removedColumns)
+    });
+  }
+
+  return {
+    data: null,
+    error: {
+      message: "Provider document upload failed due to repeated schema mismatch on metadata columns."
+    },
+    removedColumns
   };
 }
 
@@ -8121,7 +8198,7 @@ app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) =>
   try {
     const providerId = req.params.providerId;
     const columnSet = await getProviderDocumentsColumnSet();
-    const { data, error } = await queryProviderDocumentsWithSchemaFallback({
+    const { data, error, blockedColumns } = await queryProviderDocumentsWithSchemaFallback({
       providerId,
       columnSet
     });
@@ -8134,8 +8211,12 @@ app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) =>
     }
 
     const rows = (data || []).map(item => normalizeProviderDocumentRow(item, providerId));
+    const responsePayload = { ok: true, data: rows };
+    if (blockedColumns?.size) {
+      responsePayload.warning = `Provider Documents loaded with degraded metadata compatibility. Unsupported columns skipped: ${Array.from(blockedColumns).join(", ")}.`;
+    }
 
-    return res.json({ ok: true, data: rows });
+    return res.json(responsePayload);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -8206,20 +8287,9 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       insertPayload.uploaded_by = req.session?.username || null;
     }
 
-    const { data: insertResult, error: insertError } = await supabase
-      .from("provider_documents")
-      .insert([insertPayload])
-      .select("id")
-      .single();
+    const { data: insertResult, error: insertError, removedColumns } = await insertProviderDocumentWithSchemaFallback(insertPayload);
 
     if (insertError) {
-      const missingColumn = extractMissingColumnName(insertError);
-      if (missingColumn) {
-        return res.status(500).json({
-          error: `Provider document upload failed due to schema mismatch: missing column '${missingColumn}'.`,
-          details: insertError
-        });
-      }
       return res.status(500).json({ error: insertError });
     }
 
@@ -8240,21 +8310,18 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       return res.status(201).json({
         ok: true,
         warning: "Document uploaded, but metadata query failed due to schema mismatch.",
-        data: {
+        data: buildProviderDocumentFallbackRow({
           id: insertedId,
-          provider_id: providerId,
-          file_name: file.filename,
-          original_name: file.originalname || file.filename,
-          file_path: file.filename,
-          file_url: fileUrl,
-          mime_type: file.mimetype || null,
-          file_size: file.size || null,
-          document_type: documentType,
-          notes: notes || null,
-          uploaded_at: null,
-          uploaded_by: req.session?.username || null,
-          created_at: null
-        }
+          providerId,
+          fileName: file.filename,
+          originalName: file.originalname || file.filename,
+          fileUrl,
+          mimeType: file.mimetype || null,
+          fileSize: file.size || null,
+          documentType,
+          notes,
+          uploadedBy: req.session?.username || null
+        })
       });
     }
 
@@ -8263,21 +8330,18 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       return res.status(201).json({
         ok: true,
         warning: "Document uploaded, but inserted metadata row was not found immediately.",
-        data: {
+        data: buildProviderDocumentFallbackRow({
           id: insertedId,
-          provider_id: providerId,
-          file_name: file.filename,
-          original_name: file.originalname || file.filename,
-          file_path: file.filename,
-          file_url: fileUrl,
-          mime_type: file.mimetype || null,
-          file_size: file.size || null,
-          document_type: documentType,
-          notes: notes || null,
-          uploaded_at: null,
-          uploaded_by: req.session?.username || null,
-          created_at: null
-        }
+          providerId,
+          fileName: file.filename,
+          originalName: file.originalname || file.filename,
+          fileUrl,
+          mimeType: file.mimetype || null,
+          fileSize: file.size || null,
+          documentType,
+          notes,
+          uploadedBy: req.session?.username || null
+        })
       });
     }
 
@@ -8289,7 +8353,12 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       source: "provider-document-upload"
     });
 
-    return res.json({ ok: true, data: normalizeProviderDocumentRow(insertedRow, providerId) });
+    const responsePayload = { ok: true, data: normalizeProviderDocumentRow(insertedRow, providerId) };
+    if (removedColumns?.size) {
+      responsePayload.warning = `Document uploaded with degraded metadata compatibility. Skipped unsupported columns: ${Array.from(removedColumns).join(", ")}.`;
+    }
+
+    return res.json(responsePayload);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
