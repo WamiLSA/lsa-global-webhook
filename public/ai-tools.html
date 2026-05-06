@@ -13,7 +13,7 @@
     .meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:10px}
     .kpi{background:var(--lsa-surface-muted);border-radius:8px;padding:8px;font-size:12px}
     .kpi b{font-size:18px;display:block;color:var(--lsa-text)}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:12px}
     .card{background:var(--lsa-surface);border:1px solid var(--lsa-border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
     .pill{font-size:11px;padding:2px 8px;border-radius:999px;width:max-content}
     .ok{background:#14532d;color:#dcfce7}.todo{background:#78350f;color:#fef3c7}
@@ -52,20 +52,52 @@
     const firstSentence = (txt) => (txt || '').split(/[.!?]\s/).filter(Boolean).slice(0,2).join('. ') || 'No strong signal detected yet.';
     const words = (txt) => (txt || '').toLowerCase().match(/[a-z0-9]+/g) || [];
 
+    function workflowKey(item) {
+      const key = String(item?.key || '').toLowerCase();
+      if (key) return key;
+      const title = String(item?.title || '').toLowerCase();
+      if (title.includes('writing assistant')) return 'writing_assistant';
+      if (title.includes('translation assistant')) return 'translation_assistant';
+      if (title.includes('summarizer')) return 'summarizer';
+      if (title.includes('knowledge formatter')) return 'knowledge_formatter';
+      if (title.includes('provider extractor')) return 'provider_extractor';
+      if (title.includes('duplicate') || title.includes('similarity')) return 'duplicate_similarity';
+      if (title.includes('matching assistant')) return 'matching_assistant';
+      if (title.includes('retrieval test lab')) return 'retrieval_test_lab';
+      if (title.includes('prompt studio')) return 'prompt_studio';
+      if (title.includes('insights') || title.includes('recommendations')) return 'insights_recommendations';
+      return '';
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    function safeRoute(value) {
+      const route = String(value || '/ai-tools');
+      return route.startsWith('/') && !route.startsWith('//') ? route : '/ai-tools';
+    }
+
     function actionPanel(item) {
-      const t = item.title.toLowerCase();
-      if (t.includes('writing assistant')) return `
+      const key = workflowKey(item);
+      if (key === 'writing_assistant') return `
         <div class="tool-ui"><textarea rows="3" data-f="text" placeholder="Enter key points or rough draft..."></textarea><div class="row"><select data-f="tone"><option>Professional</option><option>Warm</option><option>Formal</option><option>Concise</option></select><button class="btn" data-a="write">Generate / Refine</button></div><div class="output" data-o="out">Draft will appear here.</div></div>`;
-      if (t.includes('translation assistant')) return `
+      if (key === 'translation_assistant') return `
         <div class="tool-ui"><textarea rows="3" data-f="text" placeholder="Text to translate..."></textarea><div class="row"><select data-f="from"><option>English</option><option>French</option><option>Spanish</option></select><select data-f="to"><option>French</option><option>English</option><option>Spanish</option></select></div><button class="btn" data-a="translate">Translate</button><div class="output" data-o="out">Translation preview appears here.</div></div>`;
-      if (t.includes('summarizer')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste long content..."></textarea><button class="btn" data-a="summarize">Summarize</button><div class="output" data-o="out">Short summary appears here.</div></div>`;
-      if (t.includes('knowledge formatter')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste raw knowledge notes..."></textarea><button class="btn" data-a="kbformat">Format for KB</button><div class="output" data-o="out">Title, keywords, and KB preview appear here.</div></div>`;
-      if (t.includes('provider extractor')) return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste provider CV/profile text or notes..."></textarea><input data-f="upload" placeholder="Optional: file name reference (e.g., cv_marie.pdf)" /><button class="btn" data-a="provider">Extract Provider Data</button><div class="output" data-o="out">Structured provider preview appears here.</div></div>`;
-      if (t.includes('duplicate') || t.includes('similarity')) return `<div class="tool-ui"><textarea rows="2" data-f="a" placeholder="Item/Text A..."></textarea><textarea rows="2" data-f="b" placeholder="Item/Text B..."></textarea><button class="btn" data-a="similarity">Compare Similarity</button><div class="output" data-o="out">Similarity result and reasons appear here.</div></div>`;
-      if (t.includes('matching assistant')) return `<div class="tool-ui"><textarea rows="3" data-f="brief" placeholder="Client request brief (language pair, specialization, timeline)..."></textarea><button class="btn" data-a="match">Generate Match Suggestions</button><div class="output" data-o="out">Matching suggestions preview appears here.</div></div>`;
-      if (t.includes('retrieval test lab')) return `<div class="tool-ui"><input data-f="query" placeholder="Test query..." /><button class="btn" data-a="retrieval">Run Retrieval Test</button><div class="output" data-o="out">Topic, entity, field intent, source, and answer preview appear here.</div></div>`;
-      if (t.includes('prompt studio')) return `<div class="tool-ui"><textarea rows="3" data-f="prompt" placeholder="Edit your prompt..."></textarea><div class="row"><button class="btn" data-a="savePrompt">Save Prompt</button><button class="btn" data-a="testPrompt">Test Prompt</button></div><div class="output" data-o="out">Saved prompt state and test preview appear here.</div></div>`;
-      if (t.includes('insights') || t.includes('recommendations')) return `<div class="tool-ui"><button class="btn" data-a="insights">Generate Operational Insights</button><div class="output" data-o="out">AI-style recommendations appear here.</div></div>`;
+      if (key === 'summarizer') return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste long content..."></textarea><button class="btn" data-a="summarize">Summarize</button><div class="output" data-o="out">Short summary appears here.</div></div>`;
+      if (key === 'knowledge_formatter') return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste raw knowledge notes..."></textarea><button class="btn" data-a="kbformat">Format for KB</button><div class="output" data-o="out">Title, keywords, and KB preview appear here.</div></div>`;
+      if (key === 'provider_extractor') return `<div class="tool-ui"><textarea rows="4" data-f="text" placeholder="Paste provider CV/profile text or notes..."></textarea><input data-f="upload" placeholder="Optional: file name reference (e.g., cv_marie.pdf)" /><button class="btn" data-a="provider">Extract Provider Data</button><div class="output" data-o="out">Structured provider preview appears here.</div></div>`;
+      if (key === 'duplicate_similarity') return `<div class="tool-ui"><textarea rows="2" data-f="a" placeholder="Item/Text A..."></textarea><textarea rows="2" data-f="b" placeholder="Item/Text B..."></textarea><button class="btn" data-a="similarity">Compare Similarity</button><div class="output" data-o="out">Similarity result and reasons appear here.</div></div>`;
+      if (key === 'matching_assistant') return `<div class="tool-ui"><textarea rows="3" data-f="brief" placeholder="Client request brief (language pair, specialization, timeline)..."></textarea><button class="btn" data-a="match">Generate Match Suggestions</button><div class="output" data-o="out">Matching suggestions preview appears here.</div></div>`;
+      if (key === 'retrieval_test_lab') return `<div class="tool-ui"><input data-f="query" placeholder="Test query..." /><button class="btn" data-a="retrieval">Run Retrieval Test</button><div class="output" data-o="out">Topic, entity, field intent, source, and answer preview appear here.</div></div>`;
+      if (key === 'prompt_studio') return `<div class="tool-ui"><textarea rows="3" data-f="prompt" placeholder="Edit your prompt..."></textarea><div class="row"><button class="btn" data-a="savePrompt">Save Prompt</button><button class="btn" data-a="testPrompt">Test Prompt</button></div><div class="output" data-o="out">Saved prompt state and test preview appear here.</div></div>`;
+      if (key === 'insights_recommendations') return `<div class="tool-ui"><button class="btn" data-a="insights">Generate Operational Insights</button><div class="output" data-o="out">AI-style recommendations appear here.</div></div>`;
       return '';
     }
 
@@ -96,20 +128,25 @@
       summary.innerHTML = summaryKpis(data.metrics, data.mode).map(([k,v]) => `<div class="kpi">${k}<b>${v}</b></div>`).join('');
 
       const tools = document.getElementById('tools');
-      tools.innerHTML = data.catalog.map(item => `
+      tools.innerHTML = data.catalog.map((item) => {
+        const status = item.status === 'functional' ? 'Operational' : 'Scaffolded';
+        const statusClass = item.status === 'functional' ? 'ok' : 'todo';
+        const integrations = Array.isArray(item.integrations) ? item.integrations.join(', ') : '';
+        return `
         <article class="card">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
-            <h3 style="margin:0;font-size:16px;">${item.title}</h3>
-            <span class="pill ${item.status === 'functional' ? 'ok' : 'todo'}">${item.status === 'functional' ? 'Operational' : 'Scaffolded'}</span>
+            <h3 style="margin:0;font-size:16px;">${escapeHtml(item.title)}</h3>
+            <span class="pill ${statusClass}">${status}</span>
           </div>
-          <p class="muted" style="margin:0;font-size:13px;">${item.description}</p>
-          <div style="font-size:12px;" class="muted">Integrated modules: ${item.integrations.join(', ')}</div>
+          <p class="muted" style="margin:0;font-size:13px;">${escapeHtml(item.description)}</p>
+          <div style="font-size:12px;" class="muted">Integrated modules: ${escapeHtml(integrations)}</div>
           ${actionPanel(item)}
           <div class="actions">
-            <a class="btn" href="${item.route}">Open Full Workspace</a>
+            <a class="btn" href="${escapeHtml(safeRoute(item.route))}">Open Full Workspace</a>
           </div>
         </article>
-      `).join('');
+      `;
+      }).join('');
 
       tools.querySelectorAll('[data-a]').forEach((btn) => {
         btn.addEventListener('click', () => runAction(btn.closest('.card'), btn.dataset.a));
