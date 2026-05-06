@@ -60,5 +60,11 @@ export const api = {
   },
   postForm(path, formData, options = {}) {
     return request(path, { method: 'POST', body: formData, ...options });
+  },
+  previewRouting(text, context = {}) {
+    return request('/api/routing/preview', {
+      method: 'POST',
+      body: { text, platform: 'mobile_app', ...context }
+    });
   }
 };
