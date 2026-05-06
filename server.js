@@ -6013,7 +6013,7 @@ app.post("/webhook", async (req, res) => {
       controlledAction = "safe_handoff";
       suppressAutoAck = true;
     }
-    const activeBranchAfterProcessing = getCustomerState(from).liveMenuOption || getCustomerState(from).topicDomain || selectedRoutingBranch || "none";
+    const activeBranchAfterProcessing = getCustomerState(from).liveMenuOption || getCustomerState(from).topicDomain || getCustomerState(from).lastRoute || selectedRoutingBranch || "none";
     console.log("[routing-debug] inbound branch selected", {
       mode: activeMode.toUpperCase(),
       normalized_text_preview: String(normalizedInbound || "").slice(0, 160),
@@ -6031,7 +6031,6 @@ app.post("/webhook", async (req, res) => {
       fallback_reason: generalizedRouting.fallbackReason,
       platform_context: generalizedRouting.platform
     });
-    const activeBranchAfterProcessing = getCustomerState(from).liveMenuOption || getCustomerState(from).topicDomain || getCustomerState(from).lastRoute || selectedRoutingBranch || "none";
     console.log("[collaborator-subtype-routing]", JSON.stringify({
       detected_language: detectedLanguage,
       detected_broad_role_intent: providerIntentForRouting.detected ? "provider_collaboration" : "none",
