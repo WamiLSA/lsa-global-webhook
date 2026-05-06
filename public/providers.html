@@ -165,6 +165,24 @@
       letter-spacing: 0.03em;
       margin-bottom: 4px;
     }
+
+    @media (max-width: 900px) {
+      #pageLayout {
+        display: block;
+        height: auto;
+      }
+
+      #left {
+        width: 100%;
+        border-right: 0;
+        border-bottom: 1px solid var(--lsa-border);
+      }
+
+      .provider-documents-toolbar,
+      .match-grid {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body data-page="providers">
@@ -310,6 +328,7 @@
     let providerDraft = null;
     let duplicateCheckResult = null;
     let duplicateCheckFingerprint = "";
+    let providerDuplicateReviewDecision = "";
     const providerDocumentsByProvider = {};
     const providerDocumentTypeOptions = ["CV", "Certificate", "Company Profile", "Contract", "Portfolio", "Reference", "Other"];
 
@@ -684,6 +703,7 @@
       providerDraft = result.result || {};
       duplicateCheckResult = null;
       duplicateCheckFingerprint = "";
+      providerDuplicateReviewDecision = "";
       applyDraftToForm(providerDraft);
       document.getElementById("providerDraftSummary").textContent = result.summary || "Draft generated. Review the fields before sending.";
       document.getElementById("providerDraftCard").style.display = "block";
@@ -742,6 +762,7 @@
         reviewEl.textContent = "";
         return;
       }
+      providerDuplicateReviewDecision = "";
       reviewEl.style.display = "block";
       reviewEl.textContent = "Provider fields changed after duplicate check. Please run duplicate detection again before sending to Official Providers.";
     }
@@ -772,6 +793,7 @@
 
       duplicateCheckResult = result;
       duplicateCheckFingerprint = getDuplicateFingerprint(payload);
+      providerDuplicateReviewDecision = "";
       renderDuplicatePanel(result);
     }
 
@@ -782,10 +804,11 @@
       panel.style.display = "block";
 
       if (!duplicates.length) {
+        providerDuplicateReviewDecision = "no_duplicates_clear";
         panel.innerHTML = `
           <div class="card">
             <div class="title">Duplicate Check Results</div>
-            <div class="small">No likely duplicates found.</div>
+            <div class="small">No likely duplicates found. The draft is clear to send after staff review.</div>
           </div>
         `;
         return;
@@ -794,7 +817,12 @@
       panel.innerHTML = `
         <div class="card">
           <div class="title">Duplicate Check Results</div>
-          <div class="small">Possible duplicates found (${duplicates.length}).</div>
+          <div class="small">Possible duplicates found (${duplicates.length}). Review before creating a new official provider record.</div>
+          <select id="duplicateReviewDecision" onchange="setDuplicateReviewDecision(this.value)">
+            <option value="">Select review decision before sending</option>
+            <option value="create_new_after_review">Reviewed — create a new provider record</option>
+            <option value="update_existing_instead">Do not create — update an existing provider manually</option>
+          </select>
         </div>
       `;
 
@@ -809,6 +837,10 @@
         `;
         panel.appendChild(div);
       });
+    }
+
+    function setDuplicateReviewDecision(value) {
+      providerDuplicateReviewDecision = value || "";
     }
 
     function renderExtractionStatus(report) {
@@ -881,6 +913,12 @@ ${sourceLine}` : sourceLine;
 
       if (duplicateCheckFingerprint !== getDuplicateFingerprint(getCurrentProviderPayload())) {
         markDuplicateCheckOutdated();
+        return;
+      }
+
+      const duplicates = Array.isArray(duplicateCheckResult.duplicates) ? duplicateCheckResult.duplicates : [];
+      if (duplicates.length && providerDuplicateReviewDecision !== "create_new_after_review") {
+        alert("Possible duplicates were found. Select the review decision to create a new provider, or update the existing provider manually.");
         return;
       }
 
@@ -986,6 +1024,7 @@ ${sourceLine}` : sourceLine;
       providerDraft = null;
       duplicateCheckResult = null;
       duplicateCheckFingerprint = "";
+      providerDuplicateReviewDecision = "";
       providerCaptureAttachments = [];
       renderCaptureAttachmentList();
       document.getElementById("providerDraftCard").style.display = "none";
