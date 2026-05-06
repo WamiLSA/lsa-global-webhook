@@ -43,7 +43,12 @@
     }
     #chatTitle {
       font-weight: bold;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
+    }
+    #chatActivity {
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      min-height: 16px;
     }
     .thread-actions {
       display: flex;
@@ -77,6 +82,40 @@
       border-radius: 12px;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    .msg-time {
+      margin-top: 7px;
+      font-size: 11px;
+      color: var(--lsa-text-muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+    .out .msg-time {
+      color: color-mix(in srgb, var(--lsa-text-muted) 82%, var(--lsa-text));
+    }
+    .day-separator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0 14px;
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      text-align: center;
+    }
+    .day-separator::before,
+    .day-separator::after {
+      content: "";
+      flex: 1;
+      border-top: 1px solid var(--lsa-border);
+    }
+    .day-separator span {
+      border: 1px solid var(--lsa-border);
+      border-radius: 999px;
+      background: var(--lsa-surface);
+      padding: 5px 10px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     .in {
       background: var(--lsa-surface);
@@ -152,6 +191,31 @@
       border-bottom: 1px solid var(--lsa-border);
       padding: 10px;
       cursor: pointer;
+    }
+    .thread-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .thread-time {
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .thread-preview {
+      margin-top: 4px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .thread-activity {
+      margin-top: 4px;
+      color: var(--lsa-text-muted);
+      font-size: 11px;
     }
     .thread:hover {
       background: var(--lsa-hover);
@@ -360,7 +424,10 @@
   <div id="chatPane">
     <div id="chatHeader">
       <div class="chat-header-row">
-        <div id="chatTitle">Select a conversation</div>
+        <div>
+          <div id="chatTitle">Select a conversation</div>
+          <div id="chatActivity"></div>
+        </div>
         <div class="thread-actions">
           <button type="button" id="archiveBtn" onclick="archiveThread()">Archive</button>
           <button type="button" id="unarchiveBtn" onclick="unarchiveThread()" style="display:none;">Unarchive</button>
@@ -403,6 +470,7 @@
   <script src="/top-nav.js"></script>
   <script>
     let currentWaId = null;
+    let currentContactName = "Contact";
     let pendingAttachment = null;
     let currentView = "active";
     let currentChannel = "whatsapp";
@@ -436,7 +504,9 @@
 
     function resetConversationPane() {
       currentWaId = null;
+      currentContactName = "Contact";
       document.getElementById("chatTitle").textContent = "Select a conversation";
+      document.getElementById("chatActivity").textContent = "";
       document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
       document.getElementById("labelSelect").value = "";
     }
@@ -463,6 +533,75 @@
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
     }
+    function parseMessageDate(value) {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function getMessageTimestamp(record = {}) {
+      return record.created_at || record.timestamp || record.last_time || record.last_activity_at || record.date || null;
+    }
+
+    function formatMessageTime(value) {
+      const date = parseMessageDate(value);
+      if (!date) return "Time unavailable";
+      return new Intl.DateTimeFormat(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      }).format(date);
+    }
+
+    function startOfLocalDay(date) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+
+    function formatDayLabel(value) {
+      const date = parseMessageDate(value);
+      if (!date) return "Date unavailable";
+      const today = startOfLocalDay(new Date());
+      const target = startOfLocalDay(date);
+      const diffDays = Math.round((today - target) / 86400000);
+      if (diffDays === 0) return "Today";
+      if (diffDays === 1) return "Yesterday";
+      if (diffDays > 1 && diffDays < 7) {
+        return new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+      }
+      return new Intl.DateTimeFormat(undefined, {
+        day: "numeric",
+        month: "long",
+        year: "numeric"
+      }).format(date);
+    }
+
+    function getDayKey(value) {
+      const date = parseMessageDate(value);
+      if (!date) return "unknown";
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function formatThreadRecency(value) {
+      const date = parseMessageDate(value);
+      if (!date) return "—";
+      const today = startOfLocalDay(new Date());
+      const target = startOfLocalDay(date);
+      const diffDays = Math.round((today - target) / 86400000);
+      if (diffDays === 0) return formatMessageTime(date);
+      if (diffDays === 1) return "Yesterday";
+      if (diffDays > 1 && diffDays < 7) {
+        return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(date);
+      }
+      return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(date);
+    }
+
+    function formatLastActivity(value, direction) {
+      const date = parseMessageDate(value);
+      if (!date) return "Last activity unavailable";
+      const actor = direction === "out" || direction === "outgoing" ? "last staff reply" : "last contact message";
+      return `Last activity: ${formatDayLabel(date)} at ${formatMessageTime(date)} · ${actor}`;
+    }
+
 
     function extensionFromFileName(fileName = "") {
       const match = String(fileName).toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -725,15 +864,23 @@
 
       threads.forEach(thread => {
         const div = document.createElement("div");
+        const activityTime = getMessageTimestamp(thread) || thread.timestamp;
+        const preview = thread.last_message || thread.preview || "";
+        const displayName = thread.contact_name || thread.subject || "Unknown";
+        const threadIdText = currentChannel === "mail" ? (thread.sender || "") : thread.wa_id;
         div.className = "thread";
         div.innerHTML = `
-          <div><strong>${thread.contact_name || "Unknown"}</strong></div>
-          <div>${currentChannel === "mail" ? (thread.sender || "") : thread.wa_id}</div>
-          <div class="small">${thread.last_message || ""}</div>
-          <div class="badge">${thread.label || "No label"}</div>
+          <div class="thread-top">
+            <strong>${escapeHtml(displayName)}</strong>
+            <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatThreadRecency(activityTime))}</span>
+          </div>
+          <div>${escapeHtml(threadIdText || "")}</div>
+          <div class="small thread-preview">${escapeHtml(preview)}</div>
+          <div class="thread-activity">${escapeHtml(formatLastActivity(activityTime, thread.last_direction || thread.direction))}</div>
+          <div class="badge">${escapeHtml(thread.label || "No label")}</div>
         `;
         if (currentChannel === "mail") div.classList.add("thread-mail");
-        div.onclick = () => loadConversation(currentChannel === "mail" ? thread.thread_id : thread.wa_id, thread.contact_name || thread.subject || "Contact");
+        div.onclick = () => loadConversation(currentChannel === "mail" ? thread.thread_id : thread.wa_id, displayName, activityTime, thread.last_direction || thread.direction);
         container.appendChild(div);
       });
     }
@@ -750,9 +897,10 @@
       document.getElementById("attachmentName").textContent = "";
     }
 
-    async function loadConversation(wa_id, contactName = "Contact") {
+    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null) {
       const conversationChanged = currentWaId !== wa_id;
       currentWaId = wa_id;
+      currentContactName = contactName || "Contact";
       setThreadActionButtons();
       const isMail = currentChannel === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
@@ -763,6 +911,9 @@
 
       document.getElementById("chatTitle").textContent =
         currentChannel === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
+      document.getElementById("chatActivity").textContent = knownActivityTime
+        ? formatLastActivity(knownActivityTime, knownActivityDirection)
+        : "Loading latest activity...";
 
       const res = await fetch(currentChannel === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(wa_id)}` : `/api/conversations/${encodeURIComponent(wa_id)}`);
       const messages = await res.json();
@@ -777,13 +928,25 @@
       if (!Array.isArray(messages) || messages.length === 0) {
         container.innerHTML = "<div class='small'>No messages yet.</div>";
         document.getElementById("labelSelect").value = "";
+        document.getElementById("chatActivity").textContent = "No activity yet";
         return;
       }
 
+      let previousDayKey = null;
       messages.forEach(msg => {
+        const timestamp = getMessageTimestamp(msg);
+        const dayKey = getDayKey(timestamp);
+        if (dayKey !== previousDayKey) {
+          const separator = document.createElement("div");
+          separator.className = "day-separator";
+          separator.innerHTML = `<span>${escapeHtml(formatDayLabel(timestamp))}</span>`;
+          container.appendChild(separator);
+          previousDayKey = dayKey;
+        }
+
         const div = document.createElement("div");
         const direction = msg.direction || (msg.is_read ? "in" : "in");
-        div.className = `msg ${direction === "out" ? "out" : "in"}`;
+        div.className = `msg ${direction === "out" || direction === "outgoing" ? "out" : "in"}`;
         if (currentChannel === "mail") {
           const recipients = Array.isArray(msg.recipients) ? msg.recipients.join(", ") : (msg.recipient || "-");
           const attachmentHtml = msg.attachment?.path
@@ -792,16 +955,19 @@
           div.innerHTML = `<div><strong>${escapeHtml(msg.subject || "(no subject)")}</strong></div>
             <div class="small">From: ${escapeHtml(msg.sender || "-")}</div>
             <div class="small">To: ${escapeHtml(recipients)}</div>
-            <div class="small">${new Date(msg.timestamp || msg.created_at || Date.now()).toLocaleString()} · ${msg.is_read ? "Read" : "Unread"}</div>
-            <div>${escapeHtml(msg.body || msg.preview || "")}</div>${attachmentHtml}`;
+            <div class="small">${escapeHtml(msg.is_read ? "Read" : "Unread")}</div>
+            <div>${escapeHtml(msg.body || msg.preview || "")}</div>${attachmentHtml}
+            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
         } else {
-          div.innerHTML = renderMessageBody(msg);
+          div.innerHTML = `${renderMessageBody(msg)}<div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
         }
         container.appendChild(div);
       });
 
       const last = messages[messages.length - 1];
+      const lastTimestamp = getMessageTimestamp(last);
       document.getElementById("labelSelect").value = last.label || "";
+      document.getElementById("chatActivity").textContent = formatLastActivity(lastTimestamp, last.direction);
 
       container.scrollTop = container.scrollHeight;
     }
@@ -856,7 +1022,7 @@
 
       box.value = "";
       clearAttachmentSelection();
-      await loadConversation(currentWaId);
+      await loadConversation(currentWaId, currentContactName);
       await loadThreads();
     }
 
@@ -901,7 +1067,7 @@
       }
 
       await loadThreads();
-      await loadConversation(currentWaId);
+      await loadConversation(currentWaId, currentContactName);
     }
 
     async function clearChat() {
@@ -923,7 +1089,7 @@
         return;
       }
 
-      await loadConversation(currentWaId);
+      await loadConversation(currentWaId, currentContactName);
       await loadThreads();
 
       if (result.contactRetained === false && result.reason) {
