@@ -1222,6 +1222,14 @@ app.post("/login", async (req, res) => {
 
 
 
+function createMobileAuthToken(username) {
+  return Buffer.from(`${normalizeUserIdentifier(username)}:${Date.now()}`).toString("base64url");
+}
+
+function requestUsesBearerAuth(req) {
+  return String(req.headers.authorization || "").startsWith("Bearer ");
+}
+
 app.post("/api/mobile/auth/login", async (req, res) => {
   const { username, password } = req.body || {};
 
@@ -1231,7 +1239,7 @@ app.post("/api/mobile/auth/login", async (req, res) => {
   }
 
   return res.json({
-    token: Buffer.from(`${authResult.username}:${Date.now()}`).toString("base64url"),
+    token: createMobileAuthToken(authResult.username),
     user: { username: authResult.username }
   });
 });
@@ -6190,9 +6198,12 @@ app.post("/api/account/settings", requireAccountAuth, async (req, res) => {
     if (nextKey !== normalized) delete store.users[normalized];
     store.users[nextKey] = updatedRecord;
     await writeAccountSettingsStore(store);
-    req.session.username = nextKey;
+    if (req.session) req.session.username = nextKey;
+    req.accountIdentifier = nextKey;
     const { password_hash, ...safe } = store.users[nextKey];
-    return res.json({ ok: true, message: "Settings updated", user: safe });
+    const responseBody = { ok: true, message: "Settings updated", user: safe };
+    if (requestUsesBearerAuth(req)) responseBody.token = createMobileAuthToken(nextKey);
+    return res.json(responseBody);
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
