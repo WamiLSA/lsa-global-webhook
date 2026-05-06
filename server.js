@@ -2074,6 +2074,8 @@ function getDefaultCustomerState() {
     topicDomain: null,
     topicLabel: null,
     topicSubVariant: null,
+    collaboratorSubtype: null,
+    collaboratorSubtypeReason: null,
     liveMenuOption: null,
     liveKnownSlots: {},
     lastPromptKey: null,
@@ -2106,6 +2108,8 @@ function setCustomerState(waId, state) {
     topicDomain: mergeStateValue(state, current, "topicDomain"),
     topicLabel: mergeStateValue(state, current, "topicLabel"),
     topicSubVariant: mergeStateValue(state, current, "topicSubVariant"),
+    collaboratorSubtype: mergeStateValue(state, current, "collaboratorSubtype"),
+    collaboratorSubtypeReason: mergeStateValue(state, current, "collaboratorSubtypeReason"),
     liveMenuOption: mergeStateValue(state, current, "liveMenuOption"),
     liveKnownSlots: mergeStateValue(state, current, "liveKnownSlots", {}),
     lastPromptKey: mergeStateValue(state, current, "lastPromptKey"),
@@ -2199,19 +2203,187 @@ function detectServiceLanguages(text = "") {
   return found;
 }
 
+
+const COLLABORATOR_SUBTYPES = Object.freeze([
+  "translator",
+  "interpreter",
+  "teacher_trainer",
+  "examiner_coach",
+  "tech_provider",
+  "ai_automation_provider",
+  "general_collaborator"
+]);
+
+const COLLABORATOR_SUBTYPE_TEMPLATE_KEYS = Object.freeze({
+  translator: "translator_collaboration_intake",
+  interpreter: "interpreter_collaboration_intake",
+  teacher_trainer: "teacher_trainer_collaboration_intake",
+  examiner_coach: "examiner_coach_collaboration_intake",
+  tech_provider: "tech_provider_collaboration_intake",
+  ai_automation_provider: "ai_automation_provider_collaboration_intake",
+  general_collaborator: "general_collaborator_clarification"
+});
+
+const COLLABORATOR_SUBTYPE_KEYWORDS = Object.freeze({
+  translator: [
+    "translator", "translation provider", "translate documents", "traducteur", "traductrice", "traduction", "traductor", "traductora", "traductor jurado", "übersetzer", "uebersetzer", "übersetzerin", "traduttore", "traduttrice", "tradutor", "tradutora", "vertaler", "tlumacz", "tłumacz"
+  ],
+  interpreter: [
+    "interpreter", "interpreting provider", "conference interpreter", "community interpreter", "medical interpreter", "court interpreter", "interprete", "interprète", "interpretariat", "interpretation", "interprétation", "intérprete", "interpretação", "dolmetscher", "dolmetscherin", "tolk"
+  ],
+  teacher_trainer: [
+    "teacher", "language teacher", "french teacher", "english teacher", "trainer", "language trainer", "tutor", "instructor", "teaching position", "teaching job", "enseignant", "enseignante", "enseignant de francais", "enseignante de francais", "professeur", "professeur de francais", "prof de francais", "formateur", "formatrice", "formateur linguistique", "enseignante de français", "professeur de français", "prof", "docente", "profesor", "profesora", "maestro", "maestra", "lehrer", "lehrerin", "sprachtrainer", "insegnante", "professore", "professoressa", "professor de", "professora de", "aulas de", "cours de langue", "language courses", "language training"
+  ],
+  examiner_coach: [
+    "examiner", "language examiner", "exam coach", "ielts coach", "tef coach", "toefl coach", "delf coach", "dalf coach", "exam prep coach", "examinateur", "examinatrice", "coach", "coach tef", "coach ielts", "préparateur", "preparateur", "préparatrice", "preparatrice", "examinador", "examinadora", "prüfer", "prufer", "esaminatore", "esaminatrice"
+  ],
+  tech_provider: [
+    "tech provider", "technology provider", "it provider", "it support", "technical support", "lms support", "lms", "moodle", "website", "web developer", "developer", "software developer", "platform support", "hosting", "maintenance", "prestataire technique", "support technique", "developpeur", "développeur", "site web", "plateforme", "soporte tecnico", "desarrollador", "sitio web", "suporte tecnico", "desenvolvedor"
+  ],
+  ai_automation_provider: [
+    "ai provider", "ai automation", "automation provider", "automation", "workflow automation", "ai workflows", "build ai workflows", "chatbot", "chatbots", "artificial intelligence", "intelligence artificielle", "ia", "automatisation", "flux ia", "workflows ia", "inteligencia artificial", "automatizacion", "automatización", "inteligencia artificial", "automação", "automacao"
+  ]
+});
+
+const COLLABORATOR_NEGATION_TERMS = ["not", "no", "never", "pas", "ne suis pas", "n est pas", "non", "no soy", "no es", "nicht", "kein", "keine", "non sono", "nao sou", "não sou"];
+
+function escapeRegexToken(value = "") {
+  return String(value || "").replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+function keywordRegex(keyword = "") {
+  const token = escapeRegexToken(normalizeForIntent(keyword));
+  if (!token) return null;
+  return new RegExp(`\\b${token}\\b`, "i");
+}
+
+function isSubtypeNegatedNearKeyword(normalizedText, keyword) {
+  const normalizedKeyword = normalizeForIntent(keyword);
+  if (!normalizedText || !normalizedKeyword) return false;
+  const keywordIndex = normalizedText.indexOf(normalizedKeyword);
+  if (keywordIndex < 0) return false;
+  const prefix = normalizedText.slice(Math.max(0, keywordIndex - 45), keywordIndex).trim();
+  return COLLABORATOR_NEGATION_TERMS.some(term => {
+    const normalizedTerm = normalizeForIntent(term);
+    return normalizedTerm && new RegExp(`(?:^|\\s)${escapeRegexToken(normalizedTerm)}(?:\\s|$)`, "i").test(prefix);
+  });
+}
+
+function detectCollaboratorProviderSubtype(text = "", recentState = {}) {
+  const normalized = normalizeForIntent(text);
+  const previousSubtype = COLLABORATOR_SUBTYPES.includes(recentState?.collaboratorSubtype)
+    ? recentState.collaboratorSubtype
+    : null;
+
+  if (!normalized) {
+    return {
+      subtype: previousSubtype || "general_collaborator",
+      reason: previousSubtype ? "retained_previous_subtype_empty_text" : "empty_text_unknown_subtype",
+      confidence: previousSubtype ? 0.72 : 0.2,
+      ambiguous: !previousSubtype,
+      clarificationTriggered: !previousSubtype,
+      retained: Boolean(previousSubtype)
+    };
+  }
+
+  const scores = [];
+  for (const [subtype, keywords] of Object.entries(COLLABORATOR_SUBTYPE_KEYWORDS)) {
+    let score = 0;
+    const matchedKeywords = [];
+    for (const keyword of keywords) {
+      const regex = keywordRegex(keyword);
+      if (!regex || !regex.test(normalized)) continue;
+      if (isSubtypeNegatedNearKeyword(normalized, keyword)) continue;
+      score += normalizeForIntent(keyword).includes(" ") ? 2 : 1;
+      matchedKeywords.push(keyword);
+    }
+    if (score > 0) scores.push({ subtype, score, matchedKeywords });
+  }
+
+  scores.sort((a, b) => b.score - a.score);
+  const top = scores[0] || null;
+  const second = scores[1] || null;
+  const ambiguous = Boolean(top && second && top.score === second.score);
+
+  if (top && !ambiguous) {
+    return {
+      subtype: top.subtype,
+      reason: `keyword_match_${top.matchedKeywords.slice(0, 3).map(normalizeForIntent).join("_")}`,
+      confidence: Math.min(0.95, 0.62 + (top.score * 0.08)),
+      ambiguous: false,
+      clarificationTriggered: false,
+      retained: previousSubtype === top.subtype
+    };
+  }
+
+  if (!top && previousSubtype) {
+    return {
+      subtype: previousSubtype,
+      reason: "retained_previous_provider_subtype",
+      confidence: 0.7,
+      ambiguous: false,
+      clarificationTriggered: false,
+      retained: true
+    };
+  }
+
+  return {
+    subtype: "general_collaborator",
+    reason: ambiguous ? `ambiguous_subtype_${top.subtype}_${second.subtype}` : "provider_intent_without_clear_subtype",
+    confidence: ambiguous ? 0.48 : 0.35,
+    ambiguous: true,
+    clarificationTriggered: true,
+    retained: false
+  };
+}
+
+function getCollaboratorSubtypeTemplateKey(subtype) {
+  return COLLABORATOR_SUBTYPE_TEMPLATE_KEYS[subtype] || COLLABORATOR_SUBTYPE_TEMPLATE_KEYS.general_collaborator;
+}
+
+function logCollaboratorSubtypeRouting({
+  detectedLanguage,
+  broadRoleIntent,
+  subtypeDetection,
+  chosenTemplate,
+  activeBranchBefore,
+  activeBranchAfter
+}) {
+  console.log("[collaborator-subtype-routing]", JSON.stringify({
+    detected_language: detectedLanguage || "unknown",
+    detected_broad_role_intent: broadRoleIntent?.detected ? "provider_collaboration" : "none",
+    broad_role_intent_reason: broadRoleIntent?.reason || "none",
+    detected_collaborator_provider_subtype: subtypeDetection?.subtype || "general_collaborator",
+    collaborator_provider_subtype_reason: subtypeDetection?.reason || "none",
+    collaborator_provider_subtype_confidence: subtypeDetection?.confidence ?? null,
+    chosen_subtype_template: chosenTemplate || "unknown",
+    clarification_triggered: Boolean(subtypeDetection?.clarificationTriggered),
+    active_branch_before_message: activeBranchBefore || "none",
+    active_branch_after_message: activeBranchAfter || "none"
+  }));
+}
+
 function detectProviderCollaborationIntent(text = "") {
   const normalized = normalizeForIntent(text);
   if (!normalized) return { detected: false, reason: "empty" };
   const patterns = [
     { reason: "translator_identity", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?(translator|interpreter|linguist|freelancer|language provider)\b/i },
-    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language)?\s*(work|jobs?|projects?|assignments?)\b/i },
-    { reason: "available_for_assignments", pattern: /\b(i\s+am\s+)?available\s+for\s+(assignments?|projects?|jobs?|work)\b/i },
+    { reason: "teacher_trainer_identity", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?(teacher|trainer|tutor|instructor|examiner|coach)\b/i },
+    { reason: "role_identity_with_language_modifier", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?([a-z]+\s+){0,3}(teacher|trainer|tutor|instructor|examiner|coach|translator|interpreter|provider|freelancer)\b/i },
+    { reason: "french_provider_identity", pattern: /\b(je suis|nous sommes)\s+(un\s+|une\s+|des\s+)?(traducteur|traductrice|interprete|interprète|enseignant|enseignante|professeur|prof|formateur|formatrice|coach|examinateur|examinatrice|prestataire|freelance)\b/i },
+    { reason: "spanish_provider_identity", pattern: /\b(soy|somos)\s+(un\s+|una\s+)?(traductor|traductora|intérprete|interprete|profesor|profesora|docente|formador|formadora|coach|proveedor|freelancer)\b/i },
+    { reason: "provider_identity_multilingual", pattern: /\b(teacher|trainer|translator|interpreter|enseignant|enseignante|professeur|formateur|formatrice|traducteur|traductrice|interprete|interprète|profesor|profesora|docente|lehrer|lehrerin|insegnante|traduttore|traduttrice|tradutor|tradutora)\b.*\b(lsa\s+global|collaborat|work|poste|emploi|travail|position|job|vacancy|vacante|collaborer|collaborar|travailler)\b/i },
+    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language|teaching|training)?\s*(work|jobs?|projects?|assignments?|positions?)\b/i },
+    { reason: "available_for_assignments", pattern: /\b(i\s+am\s+)?available\s+for\s+(assignments?|projects?|jobs?|work|teaching|training|positions?)\b/i },
     { reason: "send_work_request", pattern: /\b(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
     { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(work|jobs?|projects?|assignments?)(\s+(from|with)\s+(lsa\s+global|you|your\s+(company|team)))?\b/i },
     { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(you\s+to\s+)?(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
     { reason: "work_with_lsa", pattern: /\b(i\s+)?want\s+to\s+(work\s+with\s+(you|lsa\s+global)|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
-    { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work|work)\b/i },
-    { reason: "provider_application", pattern: /\b(provider|freelancer|translator|interpreter)\s+(application|registration|intake|collaboration)\b/i }
+    { reason: "work_with_lsa_multilingual", pattern: /\b(je veux|je souhaite|j aimerais|nous voulons|nous souhaitons)\s+(travailler|collaborer|postuler|rejoindre)\b.*\b(lsa\s+global|vous|votre\s+(equipe|équipe|entreprise))\b/i },
+    { reason: "job_position_multilingual", pattern: /\b(poste|emploi|travail|vacance|vacancy|position|puesto|trabajo)\b.*\b(lsa\s+global|enseignant|enseignante|professeur|teacher|trainer|translator|interpreter|traducteur|traductrice)\b/i },
+    { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+|teaching\s+|training\s+)?(projects?|assignments?|freelance\s+work|work|positions?|jobs?)\b/i },
+    { reason: "provider_application", pattern: /\b(provider|freelancer|translator|interpreter|teacher|trainer|collaborator)\s+(application|registration|intake|collaboration)\b/i },
+    { reason: "tech_ai_provider", pattern: /\b(i\s+)?(provide|build|offer|develop)\b.*\b(lms|website|tech|technical|ai|automation|workflow|chatbot)\b/i }
   ];
   const match = patterns.find(({ pattern }) => pattern.test(normalized));
   return { detected: Boolean(match), reason: match?.reason || "none" };
@@ -2415,11 +2587,22 @@ async function classifyControlledAiIntent({ text, language, userState = {}, trig
 function buildControlledAiRerouteReply({ aiDecision, text, language, userState = {} }) {
   const route = aiDecision?.route || "manual_review";
   if (route === "provider_collaboration") {
+    const subtypeDetection = detectCollaboratorProviderSubtype(text, userState);
+    const chosenTemplate = getCollaboratorSubtypeTemplateKey(subtypeDetection.subtype);
     return {
-      branch: "live_ai_provider_collaboration_reroute",
-      reply: getProviderCollaborationIntakeReply(language),
-      action: "provider_collaboration_intake",
-      state: { liveMenuOption: "provider_collaboration", topicDomain: "provider", liveKnownSlots: {}, intentShiftDetected: true }
+      branch: subtypeDetection.clarificationTriggered ? "live_ai_provider_collaboration_subtype_clarification" : `live_ai_provider_collaboration_${subtypeDetection.subtype}_reroute`,
+      reply: getProviderCollaborationIntakeReply(language, subtypeDetection.subtype),
+      action: subtypeDetection.clarificationTriggered ? "provider_collaboration_subtype_clarification" : `${chosenTemplate}`,
+      state: {
+        liveMenuOption: "provider_collaboration",
+        topicDomain: "provider",
+        collaboratorSubtype: subtypeDetection.clarificationTriggered ? null : subtypeDetection.subtype,
+        collaboratorSubtypeReason: subtypeDetection.reason,
+        liveKnownSlots: {},
+        intentShiftDetected: true
+      },
+      subtypeDetection,
+      chosenTemplate
     };
   }
 
@@ -2462,17 +2645,76 @@ function buildControlledAiRerouteReply({ aiDecision, text, language, userState =
   };
 }
 
-function getProviderCollaborationIntakeReply(languageCode) {
+function getProviderCollaborationClarificationReply(languageCode) {
   const language = normalizeLanguageCode(languageCode);
   const messages = {
-    en: "Thank you for your interest in working with LSA GLOBAL. To be reviewed for translation/interpreting collaboration, please send your full name, working languages/language pairs, country/city, service areas, availability, and CV or profile link if available. Our team will review and follow up.",
-    fr: "Merci pour votre intérêt à collaborer avec LSA GLOBAL. Pour l’étude de votre profil en traduction/interprétation, envoyez votre nom complet, langues/paires de langues, pays/ville, domaines de service, disponibilités, et CV ou lien de profil si disponible. Notre équipe examinera et reviendra vers vous.",
-    es: "Gracias por su interés en colaborar con LSA GLOBAL. Para revisar su perfil de traducción/interpretación, envíe nombre completo, idiomas/pares de idiomas, país/ciudad, áreas de servicio, disponibilidad y CV o enlace de perfil si lo tiene. Nuestro equipo revisará y responderá.",
-    de: "Vielen Dank für Ihr Interesse an einer Zusammenarbeit mit LSA GLOBAL. Für die Prüfung Ihres Übersetzungs-/Dolmetschprofils senden Sie bitte Namen, Arbeitssprachen/Sprachpaare, Land/Stadt, Leistungsbereiche, Verfügbarkeit und ggf. Lebenslauf oder Profil-Link. Unser Team prüft dies und meldet sich.",
-    it: "Grazie per l’interesse a collaborare con LSA GLOBAL. Per valutare il suo profilo di traduzione/interpretariato, invii nome completo, lingue/coppie linguistiche, paese/città, aree di servizio, disponibilità e CV o link profilo se disponibile. Il team esaminerà e risponderà.",
-    pt: "Obrigado pelo interesse em colaborar com a LSA GLOBAL. Para avaliação do seu perfil de tradução/interpretação, envie nome completo, línguas/pares de línguas, país/cidade, áreas de serviço, disponibilidade e CV ou link de perfil se disponível. A nossa equipa analisará e responderá."
+    en: "Thank you for your interest in collaborating with LSA GLOBAL. To route you correctly, please confirm your main role: translator, interpreter, language teacher/trainer, examiner/coach, technology provider, or AI/automation provider.",
+    fr: "Merci pour votre intérêt à collaborer avec LSA GLOBAL. Pour vous orienter correctement, veuillez confirmer votre rôle principal : traducteur/traductrice, interprète, enseignant/formateur de langues, examinateur/coach, prestataire technique, ou prestataire IA/automatisation.",
+    es: "Gracias por su interés en colaborar con LSA GLOBAL. Para orientarle correctamente, confirme su función principal: traductor/a, intérprete, profesor/a o formador/a de idiomas, examinador/a o coach, proveedor tecnológico, o proveedor de IA/automatización.",
+    de: "Vielen Dank für Ihr Interesse an einer Zusammenarbeit mit LSA GLOBAL. Damit wir Sie richtig einordnen, bestätigen Sie bitte Ihre Hauptrolle: Übersetzer/in, Dolmetscher/in, Sprachlehrer/in/Trainer/in, Prüfer/in/Coach, Technologieanbieter oder KI-/Automatisierungsanbieter.",
+    it: "Grazie per l’interesse a collaborare con LSA GLOBAL. Per indirizzarla correttamente, confermi il suo ruolo principale: traduttore/traduttrice, interprete, insegnante/formatore linguistico, esaminatore/coach, fornitore tecnologico o fornitore IA/automazione.",
+    pt: "Obrigado pelo interesse em colaborar com a LSA GLOBAL. Para o encaminharmos corretamente, confirme a sua função principal: tradutor/a, intérprete, professor/a ou formador/a de línguas, examinador/a ou coach, fornecedor tecnológico, ou fornecedor de IA/automação."
   };
   return messages[language] || messages.en;
+}
+
+function getProviderCollaborationIntakeReply(languageCode, subtype = "general_collaborator") {
+  const language = normalizeLanguageCode(languageCode);
+  const safeSubtype = COLLABORATOR_SUBTYPES.includes(subtype) ? subtype : "general_collaborator";
+  if (safeSubtype === "general_collaborator") return getProviderCollaborationClarificationReply(language);
+
+  const messages = {
+    translator: {
+      en: "Thank you for your interest in translation collaboration with LSA GLOBAL. Please send your full name, country/city, translation language pairs, specialization areas, availability, CAT/tool experience if relevant, and CV or profile link if available. Our team will review and follow up.",
+      fr: "Merci pour votre intérêt pour une collaboration en traduction avec LSA GLOBAL. Veuillez envoyer votre nom complet, pays/ville, paires de langues en traduction, domaines de spécialisation, disponibilités, expérience CAT/outils si pertinente, et CV ou lien de profil si disponible. Notre équipe examinera et reviendra vers vous.",
+      es: "Gracias por su interés en colaborar en traducción con LSA GLOBAL. Envíe nombre completo, país/ciudad, pares de idiomas para traducción, áreas de especialización, disponibilidad, experiencia con herramientas CAT si aplica, y CV o enlace de perfil si lo tiene. Nuestro equipo revisará y responderá.",
+      de: "Vielen Dank für Ihr Interesse an einer Übersetzungszusammenarbeit mit LSA GLOBAL. Bitte senden Sie Namen, Land/Stadt, Übersetzungssprachpaare, Fachgebiete, Verfügbarkeit, CAT-/Tool-Erfahrung falls relevant und ggf. Lebenslauf oder Profil-Link. Unser Team prüft dies und meldet sich.",
+      it: "Grazie per l’interesse a collaborare con LSA GLOBAL come traduttore/traduttrice. Invii nome completo, paese/città, coppie linguistiche per la traduzione, specializzazioni, disponibilità, esperienza CAT/strumenti se pertinente e CV o link profilo se disponibile. Il team esaminerà e risponderà.",
+      pt: "Obrigado pelo interesse numa colaboração de tradução com a LSA GLOBAL. Envie nome completo, país/cidade, pares de línguas para tradução, áreas de especialização, disponibilidade, experiência com ferramentas CAT se aplicável, e CV ou link de perfil se disponível. A equipa analisará e responderá."
+    },
+    interpreter: {
+      en: "Thank you for your interest in interpreting collaboration with LSA GLOBAL. Please send your full name, country/city, interpreting languages, interpreting modes (remote/on-site/conference/community), sectors, availability, equipment/platform experience if relevant, and CV or profile link if available.",
+      fr: "Merci pour votre intérêt pour une collaboration en interprétation avec LSA GLOBAL. Veuillez envoyer votre nom complet, pays/ville, langues d’interprétation, modes d’intervention (à distance/sur site/conférence/communautaire), secteurs, disponibilités, expérience équipement/plateformes si pertinente, et CV ou lien de profil si disponible.",
+      es: "Gracias por su interés en colaborar en interpretación con LSA GLOBAL. Envíe nombre completo, país/ciudad, idiomas de interpretación, modalidades (remota/presencial/conferencia/comunitaria), sectores, disponibilidad, experiencia con equipos/plataformas si aplica, y CV o enlace de perfil si lo tiene.",
+      de: "Vielen Dank für Ihr Interesse an einer Dolmetschzusammenarbeit mit LSA GLOBAL. Bitte senden Sie Namen, Land/Stadt, Dolmetschsprachen, Modi (remote/vor Ort/Konferenz/Community), Branchen, Verfügbarkeit, ggf. Technik-/Plattformerfahrung und Lebenslauf oder Profil-Link.",
+      it: "Grazie per l’interesse a collaborare con LSA GLOBAL come interprete. Invii nome completo, paese/città, lingue di interpretariato, modalità (da remoto/in presenza/conferenza/comunità), settori, disponibilità, esperienza con attrezzature/piattaforme se pertinente e CV o link profilo.",
+      pt: "Obrigado pelo interesse numa colaboração de interpretação com a LSA GLOBAL. Envie nome completo, país/cidade, línguas de interpretação, modalidades (remota/presencial/conferência/comunitária), setores, disponibilidade, experiência com equipamentos/plataformas se aplicável, e CV ou link de perfil."
+    },
+    teacher_trainer: {
+      en: "Thank you for your interest in a language teaching/training role with LSA GLOBAL. Please send your full name, country/city, languages you teach, learner levels (A1–C2/exam prep), online/on-site availability, teaching qualifications or experience, preferred schedules, and CV or profile link if available.",
+      fr: "Merci pour votre intérêt pour un poste d’enseignant/formateur de langues avec LSA GLOBAL. Veuillez envoyer votre nom complet, pays/ville, langues enseignées, niveaux pris en charge (A1–C2/préparation aux examens), disponibilité en ligne/sur site, qualifications ou expérience pédagogique, horaires préférés, et CV ou lien de profil si disponible.",
+      es: "Gracias por su interés en un puesto de profesor/a o formador/a de idiomas con LSA GLOBAL. Envíe nombre completo, país/ciudad, idiomas que enseña, niveles (A1–C2/preparación de exámenes), disponibilidad online/presencial, cualificaciones o experiencia docente, horarios preferidos y CV o enlace de perfil si lo tiene.",
+      de: "Vielen Dank für Ihr Interesse an einer Sprachlehr-/Trainerrolle bei LSA GLOBAL. Bitte senden Sie Namen, Land/Stadt, unterrichtete Sprachen, Niveaus (A1–C2/Prüfungsvorbereitung), Online-/Vor-Ort-Verfügbarkeit, Qualifikationen oder Unterrichtserfahrung, bevorzugte Zeiten und ggf. Lebenslauf oder Profil-Link.",
+      it: "Grazie per l’interesse a un ruolo di insegnante/formatore linguistico con LSA GLOBAL. Invii nome completo, paese/città, lingue insegnate, livelli (A1–C2/preparazione esami), disponibilità online/in presenza, qualifiche o esperienza didattica, orari preferiti e CV o link profilo se disponibile.",
+      pt: "Obrigado pelo interesse numa função de professor/a ou formador/a de línguas com a LSA GLOBAL. Envie nome completo, país/cidade, línguas que ensina, níveis (A1–C2/preparação para exames), disponibilidade online/presencial, qualificações ou experiência docente, horários preferidos e CV ou link de perfil se disponível."
+    },
+    examiner_coach: {
+      en: "Thank you for your interest in examiner/coach collaboration with LSA GLOBAL. Please send your full name, country/city, exams or skills you support, levels, certification or coaching experience, online/on-site availability, preferred schedules, and CV or profile link if available.",
+      fr: "Merci pour votre intérêt pour une collaboration comme examinateur/coach avec LSA GLOBAL. Veuillez envoyer votre nom complet, pays/ville, examens ou compétences accompagnés, niveaux, certifications ou expérience de coaching, disponibilité en ligne/sur site, horaires préférés, et CV ou lien de profil si disponible.",
+      es: "Gracias por su interés en colaborar como examinador/a o coach con LSA GLOBAL. Envíe nombre completo, país/ciudad, exámenes o competencias que acompaña, niveles, certificación o experiencia de coaching, disponibilidad online/presencial, horarios preferidos y CV o enlace de perfil.",
+      de: "Vielen Dank für Ihr Interesse an einer Prüfer-/Coach-Zusammenarbeit mit LSA GLOBAL. Bitte senden Sie Namen, Land/Stadt, Prüfungen oder Kompetenzen, Niveaus, Zertifizierung oder Coaching-Erfahrung, Online-/Vor-Ort-Verfügbarkeit, bevorzugte Zeiten und ggf. Lebenslauf oder Profil-Link.",
+      it: "Grazie per l’interesse a collaborare come esaminatore/coach con LSA GLOBAL. Invii nome completo, paese/città, esami o competenze supportate, livelli, certificazioni o esperienza di coaching, disponibilità online/in presenza, orari preferiti e CV o link profilo.",
+      pt: "Obrigado pelo interesse em colaborar como examinador/a ou coach com a LSA GLOBAL. Envie nome completo, país/cidade, exames ou competências apoiadas, níveis, certificação ou experiência de coaching, disponibilidade online/presencial, horários preferidos e CV ou link de perfil."
+    },
+    tech_provider: {
+      en: "Thank you for your interest in technology/provider collaboration with LSA GLOBAL. Please send your organization or full name, country/city, services offered (for example LMS, website, platform support, development, maintenance), relevant tools/stack, availability, portfolio or references, and profile/company link if available.",
+      fr: "Merci pour votre intérêt pour une collaboration technique avec LSA GLOBAL. Veuillez envoyer le nom de votre organisation ou votre nom complet, pays/ville, services proposés (LMS, site web, support plateforme, développement, maintenance, etc.), outils/stack pertinents, disponibilités, portfolio ou références, et lien de profil/entreprise si disponible.",
+      es: "Gracias por su interés en una colaboración tecnológica con LSA GLOBAL. Envíe organización o nombre completo, país/ciudad, servicios ofrecidos (LMS, sitio web, soporte de plataforma, desarrollo, mantenimiento), herramientas/stack, disponibilidad, portafolio o referencias y enlace de perfil/empresa si lo tiene.",
+      de: "Vielen Dank für Ihr Interesse an einer Technologie-Zusammenarbeit mit LSA GLOBAL. Bitte senden Sie Organisation oder Namen, Land/Stadt, angebotene Leistungen (LMS, Website, Plattform-Support, Entwicklung, Wartung), Tools/Stack, Verfügbarkeit, Portfolio oder Referenzen und ggf. Profil-/Unternehmenslink.",
+      it: "Grazie per l’interesse a una collaborazione tecnologica con LSA GLOBAL. Invii organizzazione o nome completo, paese/città, servizi offerti (LMS, sito web, supporto piattaforma, sviluppo, manutenzione), strumenti/stack, disponibilità, portfolio o referenze e link profilo/azienda se disponibile.",
+      pt: "Obrigado pelo interesse numa colaboração tecnológica com a LSA GLOBAL. Envie organização ou nome completo, país/cidade, serviços oferecidos (LMS, website, suporte de plataforma, desenvolvimento, manutenção), ferramentas/stack, disponibilidade, portfólio ou referências e link de perfil/empresa se disponível."
+    },
+    ai_automation_provider: {
+      en: "Thank you for your interest in AI/automation collaboration with LSA GLOBAL. Please send your organization or full name, country/city, AI or automation services offered, example workflows or use cases, tools/stack, data/security approach, availability, portfolio or references, and profile/company link if available.",
+      fr: "Merci pour votre intérêt pour une collaboration IA/automatisation avec LSA GLOBAL. Veuillez envoyer le nom de votre organisation ou votre nom complet, pays/ville, services IA ou automatisation proposés, exemples de workflows ou cas d’usage, outils/stack, approche données/sécurité, disponibilités, portfolio ou références, et lien de profil/entreprise si disponible.",
+      es: "Gracias por su interés en una colaboración de IA/automatización con LSA GLOBAL. Envíe organización o nombre completo, país/ciudad, servicios de IA o automatización, ejemplos de workflows o casos de uso, herramientas/stack, enfoque de datos/seguridad, disponibilidad, portafolio o referencias y enlace de perfil/empresa.",
+      de: "Vielen Dank für Ihr Interesse an einer KI-/Automatisierungszusammenarbeit mit LSA GLOBAL. Bitte senden Sie Organisation oder Namen, Land/Stadt, KI- oder Automatisierungsleistungen, Beispiel-Workflows oder Use Cases, Tools/Stack, Daten-/Sicherheitsansatz, Verfügbarkeit, Portfolio oder Referenzen und ggf. Profil-/Unternehmenslink.",
+      it: "Grazie per l’interesse a una collaborazione IA/automazione con LSA GLOBAL. Invii organizzazione o nome completo, paese/città, servizi IA o automazione, esempi di workflow o casi d’uso, strumenti/stack, approccio dati/sicurezza, disponibilità, portfolio o referenze e link profilo/azienda.",
+      pt: "Obrigado pelo interesse numa colaboração de IA/automação com a LSA GLOBAL. Envie organização ou nome completo, país/cidade, serviços de IA ou automação, exemplos de workflows ou casos de uso, ferramentas/stack, abordagem de dados/segurança, disponibilidade, portfólio ou referências e link de perfil/empresa."
+    }
+  };
+
+  return messages[safeSubtype]?.[language] || messages[safeSubtype]?.en || getProviderCollaborationClarificationReply(language);
 }
 
 function getTranslationRoleClarificationReply(languageCode) {
@@ -4903,6 +5145,8 @@ app.post("/webhook", async (req, res) => {
     const activeBranchBeforeProcessing = userState.liveMenuOption || userState.topicDomain || userState.lastRoute || "none";
     const providerBranchAlreadyActive = isProviderCollaborationActive(userState);
     const providerIntentForRouting = detectProviderCollaborationIntent(inboundTextForRouting);
+    const providerSubtypeForRouting = detectCollaboratorProviderSubtype(inboundTextForRouting, userState);
+    const providerSubtypeTemplateForRouting = getCollaboratorSubtypeTemplateKey(providerSubtypeForRouting.subtype);
     const providerContinuationForRouting = detectProviderContinuationIntent(inboundTextForRouting);
     const strongNonProviderRouteIntent = hasStrongNonProviderRouteIntent(inboundTextForRouting);
     const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
@@ -4920,6 +5164,10 @@ app.post("/webhook", async (req, res) => {
       provider_branch_already_active: providerBranchAlreadyActive,
       provider_intent_detected: providerIntentForRouting.detected,
       provider_intent_reason: providerIntentForRouting.reason,
+      provider_subtype_detected: providerSubtypeForRouting.subtype,
+      provider_subtype_reason: providerSubtypeForRouting.reason,
+      provider_subtype_template: providerSubtypeTemplateForRouting,
+      provider_subtype_clarification_triggered: providerSubtypeForRouting.clarificationTriggered,
       provider_continuation_detected: providerContinuationForRouting.detected,
       provider_continuation_reason: providerContinuationForRouting.reason,
       strong_non_provider_route_intent: strongNonProviderRouteIntent
@@ -4942,6 +5190,10 @@ app.post("/webhook", async (req, res) => {
       provider_branch_already_active: providerBranchAlreadyActive,
       provider_intent_detected: providerIntentForRouting.detected,
       provider_intent_reason: providerIntentForRouting.reason,
+      provider_subtype_detected: providerSubtypeForRouting.subtype,
+      provider_subtype_reason: providerSubtypeForRouting.reason,
+      provider_subtype_template: providerSubtypeTemplateForRouting,
+      provider_subtype_clarification_triggered: providerSubtypeForRouting.clarificationTriggered,
       provider_continuation_detected: providerContinuationForRouting.detected,
       provider_continuation_reason: providerContinuationForRouting.reason,
       strong_non_provider_route_intent: strongNonProviderRouteIntent,
@@ -4983,19 +5235,33 @@ app.post("/webhook", async (req, res) => {
       });
       suppressAutoAck = true;
     } else if (liveModeControlledCandidate && providerIntentForRouting.detected) {
-      selectedRoutingBranch = "live_provider_collaboration_intake";
-      routingReason = `provider_intent_shift_${providerIntentForRouting.reason}`;
-      reply = getProviderCollaborationIntakeReply(detectedLanguage);
-      controlledAction = "provider_collaboration_intake";
+      const subtypeDetection = providerSubtypeForRouting;
+      const chosenTemplate = providerSubtypeTemplateForRouting;
+      selectedRoutingBranch = subtypeDetection.clarificationTriggered
+        ? "live_provider_collaboration_subtype_clarification"
+        : `live_provider_collaboration_${subtypeDetection.subtype}_intake`;
+      routingReason = `provider_intent_shift_${providerIntentForRouting.reason}_${subtypeDetection.reason}`;
+      reply = getProviderCollaborationIntakeReply(detectedLanguage, subtypeDetection.subtype);
+      controlledAction = subtypeDetection.clarificationTriggered ? "provider_collaboration_subtype_clarification" : chosenTemplate;
       setCustomerState(from, {
-        clarifyingAsked: false,
+        clarifyingAsked: Boolean(subtypeDetection.clarificationTriggered),
         liveMenuOption: "provider_collaboration",
         topicDomain: "provider",
+        collaboratorSubtype: subtypeDetection.clarificationTriggered ? null : subtypeDetection.subtype,
+        collaboratorSubtypeReason: subtypeDetection.reason,
         liveKnownSlots: {},
         lastPromptKey: getPromptKey(reply),
         repeatedPromptCount: 1,
         lastRoute: selectedRoutingBranch,
         intentShiftDetected: true
+      });
+      logCollaboratorSubtypeRouting({
+        detectedLanguage,
+        broadRoleIntent: providerIntentForRouting,
+        subtypeDetection,
+        chosenTemplate,
+        activeBranchBefore: activeBranchBeforeProcessing,
+        activeBranchAfter: selectedRoutingBranch
       });
       console.log("[provider-branch-retention] route", JSON.stringify({
         current_active_branch_before_processing: activeBranchBeforeProcessing,
@@ -5003,6 +5269,10 @@ app.post("/webhook", async (req, res) => {
         fallback_help_router_used: false,
         fallback_help_router_reason: "explicit_provider_collaboration_intent",
         provider_intent_reason: providerIntentForRouting.reason,
+        provider_subtype: subtypeDetection.subtype,
+        provider_subtype_reason: subtypeDetection.reason,
+        provider_subtype_template: chosenTemplate,
+        provider_subtype_clarification_triggered: subtypeDetection.clarificationTriggered,
         final_selected_route: selectedRoutingBranch
       }));
       console.log("[conversation-flow-guard]", JSON.stringify({
@@ -5018,21 +5288,35 @@ app.post("/webhook", async (req, res) => {
       && providerBranchAlreadyActive
       && !strongNonProviderRouteIntent
       && (providerContinuationForRouting.detected || normalizedInbound)) {
-      selectedRoutingBranch = "live_provider_collaboration_continuation";
+      const subtypeDetection = providerSubtypeForRouting;
+      const chosenTemplate = providerSubtypeTemplateForRouting;
+      selectedRoutingBranch = subtypeDetection.clarificationTriggered
+        ? "live_provider_collaboration_subtype_clarification_continuation"
+        : `live_provider_collaboration_${subtypeDetection.subtype}_continuation`;
       routingReason = providerContinuationForRouting.detected
-        ? `provider_branch_retained_${providerContinuationForRouting.reason}`
-        : "provider_branch_retained_active_context";
-      reply = getProviderCollaborationIntakeReply(detectedLanguage);
-      controlledAction = "provider_collaboration_intake_continuation";
+        ? `provider_branch_retained_${providerContinuationForRouting.reason}_${subtypeDetection.reason}`
+        : `provider_branch_retained_active_context_${subtypeDetection.reason}`;
+      reply = getProviderCollaborationIntakeReply(detectedLanguage, subtypeDetection.subtype);
+      controlledAction = subtypeDetection.clarificationTriggered ? "provider_collaboration_subtype_clarification" : `${chosenTemplate}_continuation`;
       setCustomerState(from, {
-        clarifyingAsked: false,
+        clarifyingAsked: Boolean(subtypeDetection.clarificationTriggered),
         liveMenuOption: "provider_collaboration",
         topicDomain: "provider",
+        collaboratorSubtype: subtypeDetection.clarificationTriggered ? null : subtypeDetection.subtype,
+        collaboratorSubtypeReason: subtypeDetection.reason,
         liveKnownSlots: {},
         lastPromptKey: getPromptKey(reply),
         repeatedPromptCount: Number(userState.repeatedPromptCount || 0) + 1,
         lastRoute: selectedRoutingBranch,
         intentShiftDetected: true
+      });
+      logCollaboratorSubtypeRouting({
+        detectedLanguage,
+        broadRoleIntent: providerIntentForRouting.detected ? providerIntentForRouting : providerContinuationForRouting,
+        subtypeDetection,
+        chosenTemplate,
+        activeBranchBefore: activeBranchBeforeProcessing,
+        activeBranchAfter: selectedRoutingBranch
       });
       console.log("[provider-branch-retention] route", JSON.stringify({
         current_active_branch_before_processing: activeBranchBeforeProcessing,
@@ -5042,6 +5326,10 @@ app.post("/webhook", async (req, res) => {
         fallback_help_router_used: false,
         fallback_help_router_reason: "blocked_active_provider_collaboration_flow",
         strong_non_provider_route_intent: strongNonProviderRouteIntent,
+        provider_subtype: subtypeDetection.subtype,
+        provider_subtype_reason: subtypeDetection.reason,
+        provider_subtype_template: chosenTemplate,
+        provider_subtype_clarification_triggered: subtypeDetection.clarificationTriggered,
         final_selected_route: selectedRoutingBranch
       }));
       suppressAutoAck = true;
@@ -5161,6 +5449,16 @@ app.post("/webhook", async (req, res) => {
           repeatedPromptCount: 1,
           lastRoute: selectedRoutingBranch
         });
+        if (reroute.subtypeDetection) {
+          logCollaboratorSubtypeRouting({
+            detectedLanguage,
+            broadRoleIntent: { detected: true, reason: `controlled_ai_${aiDecision.reason}` },
+            subtypeDetection: reroute.subtypeDetection,
+            chosenTemplate: reroute.chosenTemplate,
+            activeBranchBefore: activeBranchBeforeProcessing,
+            activeBranchAfter: selectedRoutingBranch
+          });
+        }
         console.log("[controlled-ai-escalation] result", JSON.stringify({
           deterministic_route_chosen: userState.lastRoute || "live_safe_slot_clarification_candidate",
           repetition_count: Number(userState.repeatedPromptCount || 0) || 0,
@@ -5169,6 +5467,9 @@ app.post("/webhook", async (req, res) => {
           ai_reclassified_intent: aiDecision.route,
           ai_confidence: aiDecision.confidence,
           ai_recommended_action: aiDecision.recommended_action,
+          provider_subtype: reroute.subtypeDetection?.subtype || null,
+          provider_subtype_template: reroute.chosenTemplate || null,
+          provider_subtype_clarification_triggered: Boolean(reroute.subtypeDetection?.clarificationTriggered),
           final_route_after_reclassification: selectedRoutingBranch,
           openai_called: Boolean(aiDecision.used)
         }));
