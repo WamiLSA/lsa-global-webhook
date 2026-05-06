@@ -3820,6 +3820,11 @@ async function updateConversationOwnershipRows(waId, ownershipPatch) {
     if (!error) return;
     const missingColumn = extractMissingColumnName(error);
     if (missingColumn && missingColumn in safePatch) {
+      console.warn("[ownership] schema-dependent ownership field unavailable; continuing without field", {
+        wa_id: waId,
+        missing_column: missingColumn,
+        remaining_columns: Object.keys(safePatch).filter((key) => key !== missingColumn)
+      });
       delete safePatch[missingColumn];
       continue;
     }
@@ -5816,20 +5821,37 @@ app.get("/api/communications/overview", async (req, res) => {
 });
 
 app.get("/api/communications/mail/threads", async (req, res) => {
-  const state = await readCommunicationsLayerState();
-  const view = String(req.query.view || "active").toLowerCase();
-  const archived = view === "archived";
-  const threads = (state.mail?.threads || []).filter(t => Boolean(t.is_archived) === archived).map(t => ({
-    thread_id: t.thread_id,
-    contact_name: t.subject,
-    sender: t.sender,
-    subject: t.subject,
-    preview: t.preview,
-    timestamp: t.timestamp,
-    is_read: t.is_read,
-    label: t.is_read ? "Read" : "Unread"
-  }));
-  return res.json(threads);
+  try {
+    const state = await readCommunicationsLayerState();
+    const view = String(req.query.view || "active").toLowerCase();
+    const archived = view === "archived";
+    const sourceThreads = Array.isArray(state.mail?.threads) ? state.mail.threads : [];
+    const threads = sourceThreads.filter(t => Boolean(t.is_archived) === archived).map(t => ({
+      thread_id: t.thread_id,
+      contact_name: t.subject,
+      sender: t.sender,
+      subject: t.subject,
+      preview: t.preview,
+      timestamp: t.timestamp,
+      is_read: t.is_read,
+      label: t.is_read ? "Read" : "Unread"
+    }));
+    console.log("[inbox-api] mail thread load succeeded", {
+      view: archived ? "archived" : "active",
+      source_threads: sourceThreads.length,
+      returned_threads: threads.length
+    });
+    return res.json(threads);
+  } catch (error) {
+    console.error("[inbox-api] mail thread load failed", { error_message: error?.message || String(error) });
+    return res.status(500).json({
+      error: {
+        code: "MAIL_THREAD_LOAD_FAILED",
+        message: "Mail thread loading failed. Existing mail communication data may still be present; this is not an empty mailbox confirmation.",
+        details: error?.message || String(error)
+      }
+    });
+  }
 });
 
 app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
@@ -5896,12 +5918,15 @@ app.get("/api/communications/templates", async (req, res) => {
   return res.json({ ok: true, templates: state.reply_templates || [] });
 });
 
-const CONVERSATION_THREAD_SELECT_COLUMNS = [
+const CONVERSATION_THREAD_REQUIRED_COLUMNS = [
   "wa_id",
-  "contact_name",
   "body",
   "created_at",
-  "direction",
+  "direction"
+];
+
+const CONVERSATION_THREAD_OPTIONAL_COLUMNS = [
+  "contact_name",
   "label",
   "is_archived",
   "conversation_owner",
@@ -5909,6 +5934,21 @@ const CONVERSATION_THREAD_SELECT_COLUMNS = [
   "conversation_type",
   "followup_eligible"
 ];
+
+const CONVERSATION_THREAD_SELECT_COLUMNS = [
+  ...CONVERSATION_THREAD_REQUIRED_COLUMNS,
+  ...CONVERSATION_THREAD_OPTIONAL_COLUMNS
+];
+
+const CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE = {
+  contact_name: "contact display name",
+  label: "staff label display",
+  is_archived: "active/archive filtering",
+  conversation_owner: "ownership display and human takeover state",
+  human_takeover: "human takeover state",
+  conversation_type: "follow-up classification",
+  followup_eligible: "follow-up eligibility"
+};
 
 function buildConversationThreadSummary(rows) {
   const map = new Map();
@@ -5935,8 +5975,16 @@ function buildConversationThreadSummary(rows) {
 
 async function queryConversationRowsForThreadView({ archived = false } = {}) {
   const blockedColumns = new Set();
+  const degradedReasons = [];
   let archiveFilterAvailable = true;
   const attempts = [];
+  const view = archived ? "archived" : "active";
+
+  console.log("[inbox-api] conversation thread load started", {
+    view,
+    required_columns: CONVERSATION_THREAD_REQUIRED_COLUMNS,
+    optional_columns: CONVERSATION_THREAD_OPTIONAL_COLUMNS
+  });
 
   for (let attempt = 1; attempt <= CONVERSATION_THREAD_SELECT_COLUMNS.length + 3; attempt += 1) {
     const selectColumns = CONVERSATION_THREAD_SELECT_COLUMNS.filter((column) => !blockedColumns.has(column));
@@ -5952,6 +6000,7 @@ async function queryConversationRowsForThreadView({ archived = false } = {}) {
     }
 
     const { data, error } = await query;
+    const missingColumn = extractMissingColumnName(error);
     attempts.push({
       attempt,
       archived,
@@ -5960,56 +6009,103 @@ async function queryConversationRowsForThreadView({ archived = false } = {}) {
       row_count: Array.isArray(data) ? data.length : null,
       error_code: error?.code || null,
       error_message: error?.message || null,
-      missing_column: extractMissingColumnName(error)
+      missing_column: missingColumn || null,
+      missing_column_role: missingColumn
+        ? (CONVERSATION_THREAD_REQUIRED_COLUMNS.includes(missingColumn) ? "required" : "optional")
+        : null
     });
 
     if (!error) {
       const rows = Array.isArray(data) ? data : [];
       console.log("[inbox-api] conversation thread query succeeded", {
-        view: archived ? "archived" : "active",
+        view,
         rows: rows.length,
+        degraded: blockedColumns.size > 0 || archiveFilterAvailable === false,
         blocked_columns: Array.from(blockedColumns),
+        degraded_reasons: degradedReasons,
         archive_filter_available: archiveFilterAvailable
       });
-      return { rows, attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
+      return {
+        rows,
+        attempts,
+        blockedColumns: Array.from(blockedColumns),
+        archiveFilterAvailable,
+        degraded: blockedColumns.size > 0 || archiveFilterAvailable === false,
+        degradedReasons
+      };
     }
 
-    const missingColumn = extractMissingColumnName(error);
     const message = String(error?.message || "").toLowerCase();
     const archiveFilterFailed = missingColumn === "is_archived" || message.includes("is_archived");
 
     if (archiveFilterFailed && archiveFilterAvailable) {
       archiveFilterAvailable = false;
       blockedColumns.add("is_archived");
-      console.warn("[inbox-api] archive status column unavailable; using legacy active inbox fallback", {
-        view: archived ? "archived" : "active",
+      degradedReasons.push("is_archived column unavailable; active inbox is using legacy unfiltered load and archived inbox cannot be separated safely");
+      console.warn("[inbox-api] schema fallback activated for archive status column", {
+        view,
+        missing_column: "is_archived",
+        field_purpose: CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE.is_archived,
+        fallback: archived ? "return_empty_archived_view" : "legacy_active_unfiltered_load",
         error_code: error?.code || null,
         error_message: error?.message || String(error)
       });
       if (archived) {
-        return { rows: [], attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
+        return {
+          rows: [],
+          attempts,
+          blockedColumns: Array.from(blockedColumns),
+          archiveFilterAvailable,
+          degraded: true,
+          degradedReasons
+        };
       }
       continue;
     }
 
     if (missingColumn && selectColumns.includes(missingColumn)) {
+      if (CONVERSATION_THREAD_REQUIRED_COLUMNS.includes(missingColumn)) {
+        console.error("[inbox-api] required conversation thread column missing; cannot build safe inbox", {
+          view,
+          missing_column: missingColumn,
+          error_code: error?.code || null,
+          error_message: error?.message || String(error),
+          attempts
+        });
+        return {
+          rows: null,
+          error: {
+            code: "INBOX_REQUIRED_SCHEMA_MISSING",
+            message: `The Communications Hub cannot load safely because required conversations.${missingColumn} is missing. Existing data may still be present; this is a schema/configuration issue, not an empty inbox.`
+          },
+          attempts,
+          blockedColumns: Array.from(blockedColumns),
+          archiveFilterAvailable,
+          degraded: false,
+          degradedReasons
+        };
+      }
+
       blockedColumns.add(missingColumn);
-      console.warn("[inbox-api] optional conversation thread column unavailable; retrying without it", {
-        view: archived ? "archived" : "active",
+      degradedReasons.push(`${missingColumn} column unavailable; ${CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE[missingColumn] || "optional display metadata"} disabled for this load`);
+      console.warn("[inbox-api] optional conversation thread column unavailable; retrying degraded load", {
+        view,
         missing_column: missingColumn,
+        field_purpose: CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE[missingColumn] || "optional display metadata",
+        blocked_columns: Array.from(blockedColumns),
         error_code: error?.code || null,
         error_message: error?.message || String(error)
       });
       continue;
     }
 
-    console.error("[inbox-api] conversation thread query failed", {
-      view: archived ? "archived" : "active",
+    console.error("[inbox-api] conversation thread query failed without schema fallback", {
+      view,
       error_code: error?.code || null,
       error_message: error?.message || String(error),
       attempts
     });
-    return { rows: null, error, attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable };
+    return { rows: null, error, attempts, blockedColumns: Array.from(blockedColumns), archiveFilterAvailable, degraded: false, degradedReasons };
   }
 
   return {
@@ -6017,8 +6113,27 @@ async function queryConversationRowsForThreadView({ archived = false } = {}) {
     attempts,
     blockedColumns: Array.from(blockedColumns),
     archiveFilterAvailable,
-    error: { message: "Conversation thread query failed after repeated schema fallback attempts." }
+    degraded: blockedColumns.size > 0 || archiveFilterAvailable === false,
+    degradedReasons,
+    error: {
+      code: "INBOX_SCHEMA_FALLBACK_EXHAUSTED",
+      message: "Conversation thread query failed after repeated schema fallback attempts. Existing data may still be present; review schema and server logs."
+    }
   };
+}
+
+function applyConversationThreadResponseHeaders(res, result = {}) {
+  const blockedColumns = Array.isArray(result.blockedColumns) ? result.blockedColumns : [];
+  const degradedReasons = Array.isArray(result.degradedReasons) ? result.degradedReasons : [];
+  if (result.degraded || blockedColumns.length) {
+    res.set("X-LSA-Inbox-Degraded", "true");
+  }
+  if (blockedColumns.length) {
+    res.set("X-LSA-Inbox-Missing-Columns", blockedColumns.join(","));
+  }
+  if (degradedReasons.length) {
+    res.set("X-LSA-Inbox-Warning", degradedReasons.join(" | ").slice(0, 900));
+  }
 }
 
 async function getConversationVisibilityDiagnostics() {
@@ -6087,34 +6202,87 @@ async function getConversationVisibilityDiagnostics() {
 app.get("/api/conversations", async (req, res) => {
   try {
     const result = await queryConversationRowsForThreadView({ archived: false });
+    applyConversationThreadResponseHeaders(res, result);
     if (result.error) {
-      return res.status(500).json({ error: result.error, diagnostics: { attempts: result.attempts } });
+      console.error("[inbox-api] active conversation thread load failed", {
+        error: result.error,
+        blocked_columns: result.blockedColumns || [],
+        attempts: result.attempts
+      });
+      return res.status(500).json({
+        error: {
+          code: result.error.code || "INBOX_THREAD_LOAD_FAILED",
+          message: result.error.message || "Communications Hub thread loading failed. Existing conversation data may still be present; this is not an empty inbox confirmation.",
+          operator_message: "Schema/configuration issue while loading active WhatsApp threads. Please review server logs and the conversations table schema."
+        },
+        diagnostics: {
+          attempts: result.attempts,
+          blocked_columns: result.blockedColumns || [],
+          degraded_reasons: result.degradedReasons || []
+        }
+      });
     }
 
     const threads = buildConversationThreadSummary(result.rows);
     if (!threads.length) {
       const diagnostics = await getConversationVisibilityDiagnostics();
-      console.warn("[inbox-api] active conversation thread view returned zero threads", diagnostics);
+      console.warn("[inbox-api] active conversation thread view returned zero threads", {
+        ...diagnostics,
+        degraded: result.degraded || false,
+        blocked_columns: result.blockedColumns || [],
+        degraded_reasons: result.degradedReasons || []
+      });
       res.set("X-LSA-Inbox-Active-Rows", String(diagnostics.active_rows ?? "unknown"));
       res.set("X-LSA-Inbox-Total-Rows", String(diagnostics.total_rows ?? "unknown"));
     }
 
     return res.json(threads);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[inbox-api] active conversation thread route crashed", { error_message: err?.message || String(err) });
+    return res.status(500).json({
+      error: {
+        code: "INBOX_THREAD_ROUTE_ERROR",
+        message: "Communications Hub thread loading hit an unexpected server error. Existing conversation data may still be present; this is not an empty inbox confirmation.",
+        details: err?.message || String(err)
+      }
+    });
   }
 });
 
 app.get("/api/conversations/archived", async (req, res) => {
   try {
     const result = await queryConversationRowsForThreadView({ archived: true });
+    applyConversationThreadResponseHeaders(res, result);
     if (result.error) {
-      return res.status(500).json({ error: result.error, diagnostics: { attempts: result.attempts } });
+      console.error("[inbox-api] archived conversation thread load failed", {
+        error: result.error,
+        blocked_columns: result.blockedColumns || [],
+        attempts: result.attempts
+      });
+      return res.status(500).json({
+        error: {
+          code: result.error.code || "INBOX_ARCHIVED_THREAD_LOAD_FAILED",
+          message: result.error.message || "Archived Communications Hub thread loading failed. Existing conversation data may still be present; this is not an empty archive confirmation.",
+          operator_message: "Schema/configuration issue while loading archived WhatsApp threads. Please review server logs and the conversations table schema."
+        },
+        diagnostics: {
+          attempts: result.attempts,
+          blocked_columns: result.blockedColumns || [],
+          degraded_reasons: result.degradedReasons || []
+        }
+      });
     }
 
     return res.json(buildConversationThreadSummary(result.rows));
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[inbox-api] archived conversation thread route crashed", { error_message: err?.message || String(err) });
+    return res.status(500).json({
+      error: {
+        code: "INBOX_ARCHIVED_THREAD_ROUTE_ERROR",
+        message: "Archived Communications Hub thread loading hit an unexpected server error. Existing conversation data may still be present; this is not an empty archive confirmation.",
+        details: err?.message || String(err)
+      }
+    });
   }
 });
 

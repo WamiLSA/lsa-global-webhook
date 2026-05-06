@@ -160,6 +160,23 @@
       color: var(--lsa-text-muted);
       font-size: 12px;
     }
+    .thread-diagnostic {
+      border: 1px solid #f2c97d;
+      background: color-mix(in srgb, #f59e0b 12%, var(--lsa-surface));
+      border-radius: 10px;
+      color: var(--lsa-text);
+      padding: 10px;
+      margin: 8px 0 12px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .thread-diagnostic strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    .thread-diagnostic .small {
+      margin-top: 6px;
+    }
     
         .hub-identity { margin-bottom: 12px; }
     .hub-identity h3 { margin: 0; }
@@ -641,27 +658,68 @@
       const endpoint = currentChannel === "mail"
         ? (currentView === "archived" ? "/api/communications/mail/threads?view=archived" : "/api/communications/mail/threads")
         : (currentView === "archived" ? "/api/conversations/archived" : "/api/conversations");
-      const res = await fetch(endpoint);
-      const payload = await res.json();
+      const container = document.getElementById("threads");
+      let res;
+      let payload;
+      try {
+        res = await fetch(endpoint);
+        payload = await res.json();
+      } catch (error) {
+        console.error("[inbox-frontend] thread fetch request failed", { endpoint, error: error?.message || String(error) });
+        container.innerHTML = `
+          <div class="thread-diagnostic">
+            <strong>Thread loading problem</strong>
+            The Communications Hub could not reach the thread-loading endpoint. This is a connection/configuration issue, not confirmation that inbox data is gone.
+            <div class="small">Endpoint: ${escapeHtml(endpoint)}</div>
+          </div>`;
+        return;
+      }
+
       if (!res.ok || !Array.isArray(payload)) {
         console.error("[inbox-frontend] thread fetch failed", { endpoint, status: res.status, payload });
         const message = payload?.error?.message || payload?.error || "Unable to load threads.";
-        document.getElementById("threads").innerHTML = `<div class="small">Thread loading error: ${escapeHtml(String(message))}</div>`;
+        const operatorMessage = payload?.error?.operator_message || "Please review the backend logs and database schema before treating this as an empty inbox.";
+        const code = payload?.error?.code ? `<div class="small">Diagnostic code: ${escapeHtml(String(payload.error.code))}</div>` : "";
+        container.innerHTML = `
+          <div class="thread-diagnostic">
+            <strong>Thread loading problem</strong>
+            ${escapeHtml(String(message))}
+            <div class="small">${escapeHtml(String(operatorMessage))}</div>
+            ${code}
+          </div>`;
         return;
       }
       const threads = payload;
+      const degraded = res.headers.get("X-LSA-Inbox-Degraded") === "true";
+      const missingColumns = res.headers.get("X-LSA-Inbox-Missing-Columns") || "";
+      const schemaWarning = res.headers.get("X-LSA-Inbox-Warning") || "";
       console.log("[inbox-frontend] threads fetched", {
         endpoint,
         count: threads.length,
+        degraded,
+        missing_columns: missingColumns,
+        warning: schemaWarning,
         active_rows: res.headers.get("X-LSA-Inbox-Active-Rows"),
         total_rows: res.headers.get("X-LSA-Inbox-Total-Rows")
       });
 
-      const container = document.getElementById("threads");
       container.innerHTML = "";
 
+      if (degraded) {
+        container.insertAdjacentHTML("beforeend", `
+          <div class="thread-diagnostic">
+            <strong>Inbox loaded in degraded mode</strong>
+            Messages are still being shown, but optional schema-dependent fields are unavailable for this load.
+            ${missingColumns ? `<div class="small">Missing/disabled fields: ${escapeHtml(missingColumns)}</div>` : ""}
+            ${schemaWarning ? `<div class="small">${escapeHtml(schemaWarning)}</div>` : ""}
+          </div>`);
+      }
+
       if (threads.length === 0) {
-        container.innerHTML = `<div class="small">No ${currentView} threads.</div>`;
+        const emptyMessage = degraded
+          ? `No ${currentView} threads could be shown in degraded mode. This may be a schema/configuration limitation, not proof that data is lost.`
+          : `No ${currentView} threads.`;
+        container.insertAdjacentHTML("beforeend", `<div class="small">${escapeHtml(emptyMessage)}</div>`);
         return;
       }
 
