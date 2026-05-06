@@ -388,7 +388,7 @@ async function queryProviderDocumentsWithSchemaFallback({
   providerId,
   columnSet,
   filterId = null,
-  maxAttempts = 3
+  maxAttempts = 10
 }) {
   const blockedColumns = new Set();
 
@@ -433,6 +433,37 @@ async function queryProviderDocumentsWithSchemaFallback({
       message: "Provider documents query failed due to repeated schema mismatch on metadata columns."
     },
     blockedColumns
+  };
+}
+
+async function insertProviderDocumentWithSchemaFallback(insertPayload, maxAttempts = 6) {
+  const safePayload = { ...insertPayload };
+  const removedColumns = new Set();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const { data, error } = await supabase
+      .from("provider_documents")
+      .insert([safePayload])
+      .select("id")
+      .single();
+
+    if (!error) {
+      return { data, error: null, removedColumns: Array.from(removedColumns) };
+    }
+
+    const missingColumn = extractMissingColumnName(error);
+    if (!missingColumn || !Object.prototype.hasOwnProperty.call(safePayload, missingColumn)) {
+      return { data: null, error, removedColumns: Array.from(removedColumns) };
+    }
+
+    removedColumns.add(missingColumn);
+    delete safePayload[missingColumn];
+  }
+
+  return {
+    data: null,
+    error: { message: "Provider document insert failed due to repeated schema mismatch on metadata columns." },
+    removedColumns: Array.from(removedColumns)
   };
 }
 
@@ -2538,7 +2569,7 @@ function detectControlledAiEscalationNeed({ text = "", userState = {}, detectedD
   if (repeatedPromptCount >= LIVE_PROMPT_REPEAT_THRESHOLD && missingSlots.length) reasons.push("repeated_same_prompt_threshold_reached");
   if (activeDomain !== "general" && missingSlots.length && !slotProgress && normalized.split(/\s+/).length >= 3) reasons.push("slot_filling_failure");
   if (activeDomain === "translation" && providerIntent.detected) reasons.push(`conflicting_user_statement_${providerIntent.reason}`);
-  if (activeDomain === "provider" && clientIntent.detected) reasons.push(`conflicting_user_statement_${clientIntent.reason}`);
+  if (activeDomain === "provider_collaboration" && clientIntent.detected) reasons.push(`conflicting_user_statement_${clientIntent.reason}`);
   if (activeDomain !== "general" && textDomain !== "general" && textDomain !== activeDomain) reasons.push(`conversation_drift_${activeDomain}_to_${textDomain}`);
   if (activeDomain === "translation" && !providerIntent.detected && !clientIntent.detected && /\b(translator|freelancer|provider|work|jobs?|projects?|assignments?|collaborate|available)\b/i.test(normalized)) reasons.push("unclear_client_vs_provider_role");
   if (activeDomain === "general" && textDomain === "general" && normalized.split(/\s+/).length >= 8) reasons.push("natural_language_outside_rigid_menu");
@@ -3844,6 +3875,17 @@ async function translateTextViaOpenAi({ text, sourceLanguage, targetLanguage, pu
   });
 
   return String(response.output_text || "").trim() || safeText;
+}
+
+async function translateTextForMediation({ text, sourceLanguage, targetLanguage, purpose, failureContext = "mediation_translation" }) {
+  const safeText = String(text || "").trim();
+  if (!safeText) return "";
+  try {
+    return await translateTextViaOpenAi({ text: safeText, sourceLanguage, targetLanguage, purpose });
+  } catch (error) {
+    logAiLayerFailure(error, failureContext);
+    return safeText;
+  }
 }
 
 async function detectAndTranslateInboundMessage({ text, workingLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT }) {
@@ -7171,11 +7213,12 @@ app.post("/api/send", async (req, res) => {
     const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
     const customerLanguage = await getLatestCustomerLanguage(wa_id);
     const sentReplyText = shouldTranslateText(staffReplyText)
-      ? await translateTextViaOpenAi({
+      ? await translateTextForMediation({
         text: staffReplyText,
         sourceLanguage: staffReplyLanguage,
         targetLanguage: customerLanguage,
-        purpose: "Translate internal staff reply for customer delivery."
+        purpose: "Translate internal staff reply for customer delivery.",
+        failureContext: "outbound_staff_reply_translation"
       })
       : staffReplyText;
 
@@ -7257,11 +7300,12 @@ app.post("/api/send-attachment", outboundUpload.single("attachment"), async (req
     const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
     const customerLanguage = await getLatestCustomerLanguage(wa_id);
     const sentCaption = trimmedCaption
-      ? await translateTextViaOpenAi({
+      ? await translateTextForMediation({
         text: trimmedCaption,
         sourceLanguage: staffReplyLanguage,
         targetLanguage: customerLanguage,
-        purpose: "Translate internal staff attachment caption for customer delivery."
+        purpose: "Translate internal staff attachment caption for customer delivery.",
+        failureContext: "outbound_attachment_caption_translation"
       })
       : "";
 
@@ -8127,6 +8171,16 @@ app.get("/api/providers/:providerId/documents", requireAuth, async (req, res) =>
     });
 
     if (error) {
+      const errorMessage = String(error?.message || error || "");
+      const degradedUnavailable = /provider_documents/i.test(errorMessage)
+        && /does not exist|not found|schema cache|permission denied/i.test(errorMessage);
+      if (degradedUnavailable) {
+        return res.json({
+          ok: true,
+          data: [],
+          warning: "Provider Document Vault metadata is temporarily unavailable; showing an empty document list instead of blocking the provider dashboard."
+        });
+      }
       return res.status(500).json({
         error: "Unable to load provider documents due to a temporary schema mismatch.",
         details: error
@@ -8206,21 +8260,32 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
       insertPayload.uploaded_by = req.session?.username || null;
     }
 
-    const { data: insertResult, error: insertError } = await supabase
-      .from("provider_documents")
-      .insert([insertPayload])
-      .select("id")
-      .single();
+    const { data: insertResult, error: insertError, removedColumns } = await insertProviderDocumentWithSchemaFallback(insertPayload);
 
     if (insertError) {
       const missingColumn = extractMissingColumnName(insertError);
+      const isMissingTable = String(insertError?.message || "").includes("provider_documents")
+        && /does not exist|not found|schema cache/i.test(String(insertError?.message || ""));
+      if (isMissingTable) {
+        return res.status(503).json({
+          error: "Provider Document Vault is not fully available because the provider_documents table is missing or not visible to the API.",
+          details: insertError
+        });
+      }
       if (missingColumn) {
         return res.status(500).json({
-          error: `Provider document upload failed due to schema mismatch: missing column '${missingColumn}'.`,
+          error: `Provider document upload failed after schema fallback: missing column '${missingColumn}'.`,
           details: insertError
         });
       }
       return res.status(500).json({ error: insertError });
+    }
+
+    if (Array.isArray(removedColumns) && removedColumns.length) {
+      console.warn("[provider-documents] upload degraded to available schema", {
+        provider_id: providerId,
+        removed_columns: removedColumns
+      });
     }
 
     const insertedId = insertResult?.id;
@@ -8322,7 +8387,19 @@ function normalizeEmail(value) {
 }
 
 function normalizePhone(value) {
-  return String(value || "").replace(/[^\d+]/g, "");
+  return String(value || "").replace(/[^\d]/g, "");
+}
+
+function phonesMatch(a, b) {
+  const left = normalizePhone(a);
+  const right = normalizePhone(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const minComparableLength = 7;
+  if (left.length >= minComparableLength && right.length >= minComparableLength) {
+    return left.endsWith(right) || right.endsWith(left);
+  }
+  return false;
 }
 
 function normalizeToken(value) {
@@ -8386,24 +8463,15 @@ function parseLanguagePairs(value) {
   const parsed = [];
 
   for (const item of rawItems) {
-    const normalizedItem = normalizeToken(item);
-    if (!normalizedItem) continue;
+    const normalizedForSeparator = String(item || "")
+      .replace(/[–—]/g, "-")
+      .replace(/\s*(?:→|->|>|=>)\s*/g, " > ")
+      .replace(/\s+(?:to|into)\s+/gi, " > ")
+      .replace(/\s+-\s+/g, " > ");
+    const pieces = normalizedForSeparator.split(/\s+>\s+/).map(part => normalizeToken(part)).filter(Boolean);
 
-    let source = "";
-    let target = "";
-
-    if (normalizedItem.includes(">")) {
-      [source, target] = normalizedItem.split(">").map(part => normalizeToken(part));
-    } else if (normalizedItem.includes(" to ")) {
-      [source, target] = normalizedItem.split(" to ").map(part => normalizeToken(part));
-    } else if (normalizedItem.includes(" - ")) {
-      [source, target] = normalizedItem.split(" - ").map(part => normalizeToken(part));
-    } else if (normalizedItem.includes("→")) {
-      [source, target] = normalizedItem.split("→").map(part => normalizeToken(part));
-    }
-
-    if (source && target) {
-      parsed.push(`${source}>${target}`);
+    if (pieces.length >= 2 && pieces[0] !== pieces[1]) {
+      parsed.push(`${pieces[0]}>${pieces[1]}`);
     }
   }
 
@@ -8652,7 +8720,7 @@ function scoreProviderDuplicate(draft, existing) {
 
   const draftPhone = normalizePhone(draft.phone);
   const existingPhone = normalizePhone(existing.phone);
-  if (draftPhone && existingPhone && draftPhone === existingPhone) {
+  if (phonesMatch(draft.phone, existing.phone)) {
     score += 45;
     matchedFields.add("phone");
     reasons.push("Exact phone match");
@@ -8660,7 +8728,7 @@ function scoreProviderDuplicate(draft, existing) {
 
   const draftWhatsapp = normalizePhone(draft.whatsapp);
   const existingWhatsapp = normalizePhone(existing.whatsapp);
-  if (draftWhatsapp && existingWhatsapp && draftWhatsapp === existingWhatsapp) {
+  if (phonesMatch(draft.whatsapp, existing.whatsapp)) {
     score += 45;
     matchedFields.add("whatsapp");
     reasons.push("Exact WhatsApp match");

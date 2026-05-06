@@ -198,8 +198,6 @@
         <h3>Provider Draft Preview</h3>
         <div class="small" id="providerDraftSummary"></div>
         <button onclick="checkProviderDuplicates()">Check Duplicates</button>
-        <div id="duplicateReviewState" class="small" style="display:none;"></div>
-        <div id="duplicateCheckPanel" style="display:none;"></div>
         <button onclick="applyDraftToProviderForm()">Send to Official Providers</button>
       </div>
     </div>
@@ -256,6 +254,9 @@
 
       <textarea id="notes" placeholder="Notes"></textarea>
 
+      <button type="button" onclick="checkProviderDuplicates()">Check Duplicates Before Save</button>
+      <div id="duplicateReviewState" class="small" style="display:none;"></div>
+      <div id="duplicateCheckPanel" style="display:none;"></div>
       <button id="saveBtn" onclick="createOrUpdateProvider()">Save Provider</button>
       <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
     </div>
@@ -376,12 +377,12 @@
               </select>
             </div>
             <textarea id="providerDocNotes_${provider.id}" class="small" placeholder="Optional notes"></textarea>
-            <button onclick="uploadProviderDocument(${provider.id})">Upload Document</button>
+            <button onclick="uploadProviderDocument(${JSON.stringify(String(provider.id))})">Upload Document</button>
             <div id="providerDocsList_${provider.id}" class="small">Loading document list...</div>
           </div>
           <div class="actions">
-            <button onclick="editProvider(${provider.id})">Edit</button>
-            <button onclick="deleteProvider(${provider.id})">Delete</button>
+            <button onclick="editProvider(${JSON.stringify(String(provider.id))})">Edit</button>
+            <button onclick="deleteProvider(${JSON.stringify(String(provider.id))})">Delete</button>
           </div>
         `;
 
@@ -890,8 +891,24 @@ ${sourceLine}` : sourceLine;
       await createOrUpdateProvider();
     }
 
+    function hasCurrentDuplicateReview(payload) {
+      return Boolean(duplicateCheckResult) && duplicateCheckFingerprint === getDuplicateFingerprint(payload);
+    }
+
     async function createOrUpdateProvider() {
       const payload = getCurrentProviderPayload();
+
+      if (!hasCurrentDuplicateReview(payload)) {
+        if (duplicateCheckResult) {
+          markDuplicateCheckOutdated();
+        } else {
+          const reviewEl = document.getElementById("duplicateReviewState");
+          reviewEl.style.display = "block";
+          reviewEl.textContent = "Run duplicate detection before saving this provider to Official Providers.";
+        }
+        alert("Run duplicate detection before saving this provider to Official Providers.");
+        return;
+      }
 
       let res;
 
