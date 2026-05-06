@@ -12,7 +12,7 @@ const fields = ['first_name', 'last_name', 'display_name', 'username', 'email'];
 
 export function SettingsScreen() {
   const { runWithProgress } = useGlobalProgress();
-  const { logout } = useAuth();
+  const { logout, updateSession } = useAuth();
   const [form, setForm] = useState({});
   const [avatarAsset, setAvatarAsset] = useState(null);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -85,7 +85,10 @@ export function SettingsScreen() {
       });
       if (Object.keys(payload).length) {
         progress.update(28, 'Saving account settings...');
-        await api.post('/api/account/settings', payload);
+        const accountResponse = await api.post('/api/account/settings', payload);
+        if (accountResponse?.token) {
+          await updateSession({ token: accountResponse.token, user: accountResponse.user });
+        }
       }
 
       if (avatarAsset) {

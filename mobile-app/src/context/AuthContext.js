@@ -31,6 +31,15 @@ export function AuthProvider({ children }) {
     api.setToken(nextToken);
   };
 
+  const updateSession = async ({ token: nextToken, user: nextUser }) => {
+    if (nextToken) {
+      await SecureStore.setItemAsync(TOKEN_KEY, nextToken);
+      setToken(nextToken);
+      api.setToken(nextToken);
+    }
+    if (nextUser) setUser(nextUser);
+  };
+
   const logout = async () => {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
     setToken(null);
@@ -38,7 +47,7 @@ export function AuthProvider({ children }) {
     api.setToken(null);
   };
 
-  const value = useMemo(() => ({ token, user, initializing, login, logout }), [token, user, initializing]);
+  const value = useMemo(() => ({ token, user, initializing, login, logout, updateSession }), [token, user, initializing]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
