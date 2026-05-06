@@ -331,6 +331,7 @@ const PROVIDER_DOCUMENTS_PREFERRED_COLUMNS = [
 let providerDocumentsColumnsCache = null;
 let providerDocumentsColumnsCachedAt = 0;
 const PROVIDER_DOCUMENTS_COLUMNS_CACHE_TTL_MS = 60 * 1000;
+const PROVIDER_DOCUMENTS_MINIMAL_COLUMNS = ["id", "provider_id", "file_name"];
 
 function buildProviderDocumentFallbackRow({
   id = null,
@@ -392,22 +393,11 @@ async function getProviderDocumentsColumnSet() {
 
 function providerDocumentsSelectColumns(columnSet) {
   if (!(columnSet instanceof Set)) {
-    return [
-      "id",
-      "provider_id",
-      "file_name",
-      "original_name",
-      "mime_type",
-      "file_size",
-      "document_type",
-      "notes",
-      "file_url",
-      "created_at"
-    ];
+    return PROVIDER_DOCUMENTS_PREFERRED_COLUMNS;
   }
   const selected = PROVIDER_DOCUMENTS_PREFERRED_COLUMNS.filter(column => columnSet.has(column));
   if (!selected.length) {
-    return ["id", "provider_id", "file_name"];
+    return PROVIDER_DOCUMENTS_MINIMAL_COLUMNS;
   }
   return selected;
 }
@@ -430,7 +420,7 @@ async function queryProviderDocumentsWithSchemaFallback({
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let selectColumns = providerDocumentsSelectColumns(columnSet).filter(column => !blockedColumns.has(column));
     if (!selectColumns.length) {
-      selectColumns = ["id", "provider_id", "file_name"];
+      selectColumns = PROVIDER_DOCUMENTS_MINIMAL_COLUMNS;
     }
 
     const orderColumn = getProviderDocumentsOrderColumn(columnSet, blockedColumns);
@@ -514,24 +504,25 @@ async function insertProviderDocumentWithSchemaFallback(insertPayload) {
 }
 
 function normalizeProviderDocumentRow(row, providerId) {
-  const fileName = row.file_name || row.file_path || "file";
-  const fileUrl = row.file_url
-    || (row.file_path ? `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${row.file_path}` : null)
+  const safeRow = row || {};
+  const fileName = safeRow.file_name || safeRow.file_path || safeRow.original_name || "file";
+  const fileUrl = safeRow.file_url
+    || (safeRow.file_path ? `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${safeRow.file_path}` : null)
     || `/uploads/provider-documents/${sanitizeProviderFolder(providerId)}/${fileName}`;
   return {
-    id: row.id,
-    provider_id: row.provider_id,
+    id: safeRow.id,
+    provider_id: safeRow.provider_id || providerId,
     file_name: fileName,
-    original_name: row.original_name || fileName,
-    file_path: row.file_path || fileName,
+    original_name: safeRow.original_name || fileName,
+    file_path: safeRow.file_path || fileName,
     file_url: fileUrl,
-    mime_type: row.mime_type || null,
-    file_size: row.file_size || null,
-    document_type: row.document_type || "Other",
-    notes: row.notes || null,
-    uploaded_at: row.uploaded_at || row.created_at || null,
-    uploaded_by: row.uploaded_by || null,
-    created_at: row.created_at || row.uploaded_at || null
+    mime_type: safeRow.mime_type || null,
+    file_size: safeRow.file_size || null,
+    document_type: safeRow.document_type || "Other",
+    notes: safeRow.notes || null,
+    uploaded_at: safeRow.uploaded_at || safeRow.created_at || null,
+    uploaded_by: safeRow.uploaded_by || null,
+    created_at: safeRow.created_at || safeRow.uploaded_at || null
   };
 }
 
@@ -2615,7 +2606,7 @@ function detectControlledAiEscalationNeed({ text = "", userState = {}, detectedD
   if (repeatedPromptCount >= LIVE_PROMPT_REPEAT_THRESHOLD && missingSlots.length) reasons.push("repeated_same_prompt_threshold_reached");
   if (activeDomain !== "general" && missingSlots.length && !slotProgress && normalized.split(/\s+/).length >= 3) reasons.push("slot_filling_failure");
   if (activeDomain === "translation" && providerIntent.detected) reasons.push(`conflicting_user_statement_${providerIntent.reason}`);
-  if (activeDomain === "provider" && clientIntent.detected) reasons.push(`conflicting_user_statement_${clientIntent.reason}`);
+  if (activeDomain === "provider_collaboration" && clientIntent.detected) reasons.push(`conflicting_user_statement_${clientIntent.reason}`);
   if (activeDomain !== "general" && textDomain !== "general" && textDomain !== activeDomain) reasons.push(`conversation_drift_${activeDomain}_to_${textDomain}`);
   if (activeDomain === "translation" && !providerIntent.detected && !clientIntent.detected && /\b(translator|freelancer|provider|work|jobs?|projects?|assignments?|collaborate|available)\b/i.test(normalized)) reasons.push("unclear_client_vs_provider_role");
   if (activeDomain === "general" && textDomain === "general" && normalized.split(/\s+/).length >= 8) reasons.push("natural_language_outside_rigid_menu");
@@ -2787,7 +2778,9 @@ function getProviderCollaborationIntakeReply(languageCode, subtype = "unknown_pr
     ja: "LSA GLOBAL との協業にご関心をお寄せいただきありがとうございます。翻訳・通訳・教育・技術・AI/システム分野の確認のため、氏名、言語/スキル、国/都市、対応分野、稼働状況、CVまたはプロフィールリンクをご送付ください。",
     da: "Tak for din interesse i at samarbejde med LSA GLOBAL. Send venligst fulde navn, sprog/færdigheder, land/by, serviceområder, tilgængelighed og CV eller profillink, så vi kan vurdere oversættelse, tolkning, undervisning, teknologi eller AI/system-samarbejde."
   };
-  return messages[safeSubtype]?.[language] || messages[safeSubtype]?.en || messages.unknown_provider.en;
+  const subtypePrefix = safeSubtype !== "unknown_provider" ? `${PROVIDER_SUBTYPE_LABELS[safeSubtype] || "provider"}: ` : "";
+  const selected = messages[language] || messages.en;
+  return subtypePrefix ? `${subtypePrefix}${selected}` : selected;
 }
 
 function getProviderSubtypeClarificationReply(languageCode) {
@@ -4410,6 +4403,14 @@ function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots 
     };
     const firstMissing = missingSlots[0];
     if (firstMissing) return byLanguage[language]?.[firstMissing] || byLanguage.en[firstMissing];
+    return {
+      en: "Thank you. I have the language pair, document type, and deadline. Please upload the document or share your contact details; an LSA GLOBAL advisor will confirm the quote and next steps.",
+      fr: "Merci. J’ai la paire de langues, le type de document et l’échéance. Veuillez envoyer le document ou vos coordonnées ; un conseiller LSA GLOBAL confirmera le devis et la suite.",
+      es: "Gracias. Ya tengo el par de idiomas, el tipo de documento y el plazo. Envíe el documento o sus datos de contacto; un asesor de LSA GLOBAL confirmará el presupuesto y los siguientes pasos.",
+      de: "Danke. Sprachpaar, Dokumenttyp und Frist liegen vor. Bitte senden Sie das Dokument oder Ihre Kontaktdaten; ein LSA GLOBAL-Berater bestätigt Angebot und nächste Schritte.",
+      it: "Grazie. Ho la coppia linguistica, il tipo di documento e la scadenza. Invii il documento o i suoi recapiti; un consulente LSA GLOBAL confermerà preventivo e prossimi passi.",
+      pt: "Obrigado. Já tenho o par de idiomas, o tipo de documento e o prazo. Envie o documento ou os seus contactos; um consultor LSA GLOBAL confirmará o orçamento e os próximos passos."
+    }[language] || "Thank you. I have the language pair, document type, and deadline. Please upload the document or share your contact details; an LSA GLOBAL advisor will confirm the quote and next steps.";
   }
 
   if (resolvedDomain === "interpreting") {
@@ -4423,6 +4424,14 @@ function getLiveSafeMenuClarificationReply(languageCode, menuOption, knownSlots 
     };
     const firstMissing = missingSlots[0];
     if (firstMissing) return byLanguage[language]?.[firstMissing] || byLanguage.en[firstMissing];
+    return {
+      en: "Thank you. I have the language pair, date, and format. An LSA GLOBAL advisor will confirm interpreter availability, pricing, and next steps.",
+      fr: "Merci. J’ai la paire de langues, la date et le format. Un conseiller LSA GLOBAL confirmera la disponibilité, le tarif et la suite.",
+      es: "Gracias. Ya tengo el par de idiomas, la fecha y la modalidad. Un asesor de LSA GLOBAL confirmará disponibilidad, precio y siguientes pasos.",
+      de: "Danke. Sprachpaar, Datum und Format liegen vor. Ein LSA GLOBAL-Berater bestätigt Verfügbarkeit, Preis und nächste Schritte.",
+      it: "Grazie. Ho la coppia linguistica, la data e il formato. Un consulente LSA GLOBAL confermerà disponibilità, prezzo e prossimi passi.",
+      pt: "Obrigado. Já tenho o par de idiomas, a data e o formato. Um consultor LSA GLOBAL confirmará disponibilidade, preço e próximos passos."
+    }[language] || "Thank you. I have the language pair, date, and format. An LSA GLOBAL advisor will confirm interpreter availability, pricing, and next steps.";
   }
 
   if (resolvedDomain === "registration" && missingSlots.includes("program")) {
@@ -8391,7 +8400,18 @@ function normalizeEmail(value) {
 }
 
 function normalizePhone(value) {
-  return String(value || "").replace(/[^\d+]/g, "");
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 7) return "";
+  return digits;
+}
+
+function phonesLikelyMatch(a, b) {
+  const first = normalizePhone(a);
+  const second = normalizePhone(b);
+  if (!first || !second) return false;
+  if (first === second) return true;
+  const minComparableLength = Math.min(first.length, second.length);
+  return minComparableLength >= 9 && (first.endsWith(second) || second.endsWith(first));
 }
 
 function normalizeToken(value) {
@@ -8719,20 +8739,22 @@ function scoreProviderDuplicate(draft, existing) {
     reasons.push("Exact email match");
   }
 
-  const draftPhone = normalizePhone(draft.phone);
-  const existingPhone = normalizePhone(existing.phone);
-  if (draftPhone && existingPhone && draftPhone === existingPhone) {
+  if (phonesLikelyMatch(draft.phone, existing.phone)) {
     score += 45;
     matchedFields.add("phone");
     reasons.push("Exact phone match");
   }
 
-  const draftWhatsapp = normalizePhone(draft.whatsapp);
-  const existingWhatsapp = normalizePhone(existing.whatsapp);
-  if (draftWhatsapp && existingWhatsapp && draftWhatsapp === existingWhatsapp) {
+  if (phonesLikelyMatch(draft.whatsapp, existing.whatsapp)) {
     score += 45;
     matchedFields.add("whatsapp");
     reasons.push("Exact WhatsApp match");
+  }
+
+  if (phonesLikelyMatch(draft.phone, existing.whatsapp) || phonesLikelyMatch(draft.whatsapp, existing.phone)) {
+    score += 38;
+    matchedFields.add("phone_whatsapp_cross_match");
+    reasons.push("Phone/WhatsApp cross-match");
   }
 
   const draftFullName = normalizeToken(draft.full_name);

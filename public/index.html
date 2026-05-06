@@ -753,19 +753,22 @@
       let metadataHtml = "";
       if (!isOutbound) {
         const inboundOriginal = textBody;
-        const inboundStaffTranslation = translatedText || textBody;
-        metadataHtml = `
-          <div class="mediation-panel">
+        const hasDistinctStaffTranslation = translatedText && translatedText !== textBody;
+        const inboundRows = [`
             <div class="mediation-row">
               <span class="mediation-row-label">Original (${escapeHtml(originalLanguage)})</span>
               ${escapeHtml(inboundOriginal)}
             </div>
+        `];
+        if (hasDistinctStaffTranslation) {
+          inboundRows.push(`
             <div class="mediation-row mediation-row--highlight">
               <span class="mediation-row-label">Staff Translation (${escapeHtml(translatedLanguage)})</span>
-              ${escapeHtml(inboundStaffTranslation)}
+              ${escapeHtml(translatedText)}
             </div>
-          </div>
-        `;
+          `);
+        }
+        metadataHtml = `<div class="mediation-panel">${inboundRows.join("")}</div>`;
       } else if (isOutbound) {
         const blocks = [];
         const staffTextToShow = staffReplyText || textBody || "";
