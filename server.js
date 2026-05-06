@@ -1045,42 +1045,40 @@ async function getUserSettings(identifier) {
   return { store, normalized, record, users };
 }
 
-function findUserRecordByIdentifier(users, identifier) {
-  const normalized = normalizeUserIdentifier(identifier);
-  if (!normalized) return null;
-  const direct = users[normalized];
-  if (direct) return { key: normalized, record: direct };
+function findUserRecordByUsername(users, username) {
+  const normalizedUsername = normalizeUserIdentifier(username);
+  if (!normalizedUsername) return null;
+  const direct = users[normalizedUsername];
+  if (direct) return { key: normalizedUsername, record: direct };
   for (const [key, record] of Object.entries(users)) {
-    const username = normalizeUserIdentifier(record?.username);
-    const email = normalizeUserIdentifier(record?.email);
-    if (username === normalized || email === normalized) {
+    if (normalizeUserIdentifier(record?.username) === normalizedUsername) {
       return { key, record };
     }
   }
   return null;
 }
 
-async function verifyInboxCredentials(identifier, password) {
-  const normalizedIdentifier = normalizeUserIdentifier(identifier);
-  if (!normalizedIdentifier || !password) return { ok: false };
+async function verifyInboxCredentials(username, password) {
+  const normalizedUsername = normalizeUserIdentifier(username);
+  if (!normalizedUsername || !password) return { ok: false };
 
   const store = await readAccountSettingsStore();
   store.users = store.users || {};
-  const matchedUser = findUserRecordByIdentifier(store.users, normalizedIdentifier);
+  const matchedUser = findUserRecordByUsername(store.users, normalizedUsername);
 
   if (matchedUser) {
     const { key, record } = matchedUser;
     if (record.password_hash) {
       if (!verifyPassword(password, record.password_hash)) return { ok: false };
     } else {
-      const bootstrapMatches = normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD;
+      const bootstrapMatches = normalizedUsername === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD;
       if (!bootstrapMatches) return { ok: false };
     }
-    const canonicalUsername = normalizeUserIdentifier(record.username || key || normalizedIdentifier);
+    const canonicalUsername = normalizeUserIdentifier(record.username || key || normalizedUsername);
     return { ok: true, username: canonicalUsername };
   }
 
-  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
+  if (normalizedUsername === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
     return { ok: true, username: normalizeUserIdentifier(INBOX_USERNAME), bootstrap: true };
   }
 
@@ -1225,10 +1223,9 @@ app.post("/login", async (req, res) => {
 
 
 app.post("/api/mobile/auth/login", async (req, res) => {
-  const { username, email, identifier, password } = req.body || {};
-  const loginIdentifier = identifier || username || email;
+  const { username, password } = req.body || {};
 
-  const authResult = await verifyInboxCredentials(loginIdentifier, password);
+  const authResult = await verifyInboxCredentials(username, password);
   if (!authResult.ok) {
     return res.status(401).json({ error: "Invalid username or password" });
   }
