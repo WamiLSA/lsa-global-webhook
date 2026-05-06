@@ -20,10 +20,10 @@
     .password-row button { background:#1e293b; color:#e2e8f0; border:1px solid #475569; }
     .avatar-preview { width:64px; height:64px; border-radius:999px; border:1px solid #334155; object-fit:cover; background:#0b1220; }
     .full { grid-column:1/-1; }
-    .actions { margin-top:14px; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+    .actions { margin-top:14px; display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
     button { border:0; border-radius:8px; padding:10px 14px; font-weight:700; cursor:pointer; }
     .save { background:#2563eb; color:#fff; }
-    .status { font-size:14px; opacity:0; transition:opacity .35s ease; }
+    .status { min-height:20px; font-size:14px; opacity:0; transition:opacity .35s ease; }
     .status.visible { opacity:1; }
     .status.success { color:#86efac; }
     .status.error { color:#fca5a5; }
@@ -60,7 +60,7 @@
         <div class="field"><label>Text on blue</label><input id="branding_text_on_primary" type="color" /></div>
       </div>
     </div>
-    <div class="actions"><div class="status" id="status" aria-live="polite"></div><button class="save" id="saveBtn">Save Settings</button></div>
+    <div class="actions"><button class="save" id="saveBtn">Save Settings</button><div class="status" id="status" aria-live="polite"></div></div>
   </main>
   <script src="/top-nav.js"></script>
   <script src="/global-progress.js"></script>
@@ -80,15 +80,17 @@
       if(!t) return;
       statusEl.classList.add(bad?'error':'success');
       requestAnimationFrame(()=>statusEl.classList.add('visible'));
-      statusTimer=setTimeout(()=>{
-        statusEl.classList.remove('visible');
-        setTimeout(()=>{
-          if(!statusEl.classList.contains('visible')){
-            statusEl.classList.remove('success','error');
-            statusEl.textContent='';
-          }
-        },350);
-      },12000);
+      if(!bad){
+        statusTimer=setTimeout(()=>{
+          statusEl.classList.remove('visible');
+          setTimeout(()=>{
+            if(!statusEl.classList.contains('visible')){
+              statusEl.classList.remove('success','error');
+              statusEl.textContent='';
+            }
+          },350);
+        },12000);
+      }
     }
     function refreshPreview(url){avatarPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     function refreshBrandingPreview(url){brandingPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}

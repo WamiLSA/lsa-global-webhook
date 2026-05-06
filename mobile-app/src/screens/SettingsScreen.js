@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, AppState, Image } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useFocusEffect } from '@react-navigation/native';
@@ -22,6 +22,8 @@ export function SettingsScreen() {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [status, setStatus] = useState('');
+  const [statusIsError, setStatusIsError] = useState(false);
+  const statusTimerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [branding, setBranding] = useState({});
   const [initialForm, setInitialForm] = useState({});
@@ -51,7 +53,22 @@ export function SettingsScreen() {
     });
   }, []);
 
-  useEffect(() => { loadSettings().catch(() => setStatus('Failed to load settings.')); }, [loadSettings]);
+  const showStatus = useCallback((message, isError = false) => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    setStatusIsError(isError);
+    setStatus(message);
+    if (message && !isError) {
+      statusTimerRef.current = setTimeout(() => {
+        setStatus('');
+        setStatusIsError(false);
+        statusTimerRef.current = null;
+      }, 12000);
+    }
+  }, []);
+
+  useEffect(() => () => { if (statusTimerRef.current) clearTimeout(statusTimerRef.current); }, []);
+
+  useEffect(() => { loadSettings().catch(() => showStatus('Failed to load settings.', true)); }, [loadSettings, showStatus]);
   useFocusEffect(useCallback(() => { loadSettings().catch(() => {}); }, [loadSettings]));
 
   useEffect(() => {
@@ -66,7 +83,7 @@ export function SettingsScreen() {
 
   const onSave = async () => {
     setSaving(true);
-    setStatus('');
+    showStatus('');
     try {
       await runWithProgress('Save settings', async (progress) => {
         progress.update(16, 'Preparing payload...');
@@ -124,10 +141,10 @@ export function SettingsScreen() {
       setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
       progress.update(95, 'Refreshing settings...');
       await loadSettings();
-      setStatus('Settings updated and synchronized.');
+      showStatus('Settings updated and synchronized.');
       });
     } catch (error) {
-      setStatus(String(error.message || 'Save failed'));
+      showStatus(String(error.message || 'Save failed'), true);
     } finally {
       setSaving(false);
     }
@@ -157,8 +174,8 @@ export function SettingsScreen() {
         <PasswordField label="CURRENT PASSWORD" value={currentPassword} onChange={setCurrentPassword} visible={showCurrent} onToggle={() => setShowCurrent((v) => !v)} />
         <PasswordField label="NEW PASSWORD" value={newPassword} onChange={setNewPassword} visible={showNew} onToggle={() => setShowNew((v) => !v)} />
         <PasswordField label="CONFIRM NEW PASSWORD" value={confirmPassword} onChange={setConfirmPassword} visible={showConfirm} onToggle={() => setShowConfirm((v) => !v)} />
-        {!!status && <Text style={styles.status}>{status}</Text>}
         <Pressable style={styles.button} onPress={onSave} disabled={saving}><Text style={styles.buttonText}>{saving ? 'Saving...' : 'Save Settings'}</Text></Pressable>
+        {!!status && <Text style={[styles.status, statusIsError && styles.statusError]}>{status}</Text>}
         <Pressable style={[styles.button, { backgroundColor: colors.danger }]} onPress={logout}><Text style={styles.buttonText}>Secure Logout</Text></Pressable>
       </ScrollView>
     </Screen>
@@ -176,7 +193,8 @@ const styles = StyleSheet.create({
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#0f172a' },
   smallButton: { backgroundColor: colors.primary, borderRadius: 8, padding: 10 },
-  status: { color: '#86efac', marginVertical: 8 },
+  status: { color: '#86efac', marginTop: 8, marginBottom: 2 },
+  statusError: { color: '#fca5a5' },
   button: { marginTop: 8, backgroundColor: colors.primary, borderRadius: 10, padding: 12, alignItems: 'center' },
   buttonText: { color: '#fff', fontWeight: '700' }
 });
