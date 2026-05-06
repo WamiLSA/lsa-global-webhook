@@ -7229,16 +7229,71 @@ app.get("/ai-tools", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "ai-tools.html"));
 });
 
+async function queryAiToolsOverviewRows({ table, select, fallbackSelect, order, limit }) {
+  let query = supabase.from(table).select(select);
+  if (order) query = query.order(order.column, { ascending: order.ascending });
+  if (limit) query = query.limit(limit);
+
+  const { data, error } = await query;
+  if (!error) {
+    return { data: data || [], warning: null };
+  }
+
+  const missingColumn = extractMissingColumnName(error);
+  if (missingColumn && fallbackSelect && fallbackSelect !== select) {
+    console.warn("[ai-tools] overview optional column unavailable; retrying with core fields", {
+      table,
+      missing_column: missingColumn
+    });
+
+    let fallbackQuery = supabase.from(table).select(fallbackSelect);
+    if (order) fallbackQuery = fallbackQuery.order(order.column, { ascending: order.ascending });
+    if (limit) fallbackQuery = fallbackQuery.limit(limit);
+
+    const fallbackRes = await fallbackQuery;
+    if (!fallbackRes.error) {
+      return {
+        data: fallbackRes.data || [],
+        warning: { table, missing_column: missingColumn, fallback: "core_fields" }
+      };
+    }
+
+    throw new Error(`AI tools overview ${table} fallback query failed: ${fallbackRes.error.message || fallbackRes.error}`);
+  }
+
+  throw new Error(`AI tools overview ${table} query failed: ${error.message || error}`);
+}
+
 app.get("/api/ai-tools/overview", requireAuth, async (req, res) => {
   try {
     const [conversationsRes, providersRes, captureRes, kbRes, mode] = await Promise.all([
-      supabase.from("conversations").select("id,created_at,direction,test_mode_retrieval_used,requested_entity_exists_in_kb,staff_reply_text,sent_reply_text").order("created_at", { ascending: false }).limit(2000),
-      supabase.from("providers").select("id,created_at,is_duplicate"),
-      supabase.from("kb_capture_assistant").select("id,created_at,is_published_to_kb,duplicate_check_count"),
-      supabase.from("kb_articles").select("id,created_at"),
+      queryAiToolsOverviewRows({
+        table: "conversations",
+        select: "id,created_at,direction,test_mode_retrieval_used,requested_entity_exists_in_kb,staff_reply_text,sent_reply_text",
+        fallbackSelect: "id,created_at,direction",
+        order: { column: "created_at", ascending: false },
+        limit: 2000
+      }),
+      queryAiToolsOverviewRows({
+        table: "providers",
+        select: "id,created_at,is_duplicate",
+        fallbackSelect: "id,created_at"
+      }),
+      queryAiToolsOverviewRows({
+        table: "kb_capture_assistant",
+        select: "id,created_at,is_published_to_kb,duplicate_check_count",
+        fallbackSelect: "id,created_at"
+      }),
+      queryAiToolsOverviewRows({
+        table: "kb_articles",
+        select: "id,created_at"
+      }),
       getCurrentSystemMode()
     ]);
 
+    const overviewWarnings = [conversationsRes, providersRes, captureRes, kbRes]
+      .map(result => result.warning)
+      .filter(Boolean);
     const conversations = conversationsRes.data || [];
     const providers = providersRes.data || [];
     const captures = captureRes.data || [];
@@ -7275,7 +7330,8 @@ app.get("/api/ai-tools/overview", requireAuth, async (req, res) => {
         providers_duplicates: providerDuplicates,
         retrieval_tests: retrievalTests,
         retrieval_hits: retrievalHits
-      }
+      },
+      warnings: overviewWarnings
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
