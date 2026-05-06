@@ -2204,15 +2204,50 @@ function detectProviderCollaborationIntent(text = "") {
   if (!normalized) return { detected: false, reason: "empty" };
   const patterns = [
     { reason: "translator_identity", pattern: /\b(i am|i'm|im|am)\s+(a\s+|an\s+|the\s+)?(translator|interpreter|linguist|freelancer|language provider)\b/i },
-    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language)\s+work\b/i },
+    { reason: "translation_work_availability", pattern: /\b(available|free)\s+for\s+(translation|interpreting|interpreter|translator|language)?\s*(work|jobs?|projects?|assignments?)\b/i },
+    { reason: "available_for_assignments", pattern: /\b(i\s+am\s+)?available\s+for\s+(assignments?|projects?|jobs?|work)\b/i },
     { reason: "send_work_request", pattern: /\b(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
+    { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(work|jobs?|projects?|assignments?)(\s+(from|with)\s+(lsa\s+global|you|your\s+(company|team)))?\b/i },
     { reason: "need_work_request", pattern: /\b(i\s+)?need\s+(you\s+to\s+)?(send|give|offer|provide)\s+me\s+(work|jobs?|projects?|assignments?)\b/i },
-    { reason: "work_with_lsa", pattern: /\b(i\s+)?want\s+to\s+(work\s+with\s+you|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
-    { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work)\b/i },
+    { reason: "work_with_lsa", pattern: /\b(i\s+)?want\s+to\s+(work\s+with\s+(you|lsa\s+global)|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
+    { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work|work)\b/i },
     { reason: "provider_application", pattern: /\b(provider|freelancer|translator|interpreter)\s+(application|registration|intake|collaboration)\b/i }
   ];
   const match = patterns.find(({ pattern }) => pattern.test(normalized));
   return { detected: Boolean(match), reason: match?.reason || "none" };
+}
+
+function isProviderCollaborationActive(userState = {}) {
+  const liveMenuOption = normalizeLiveDomain(userState?.liveMenuOption || "");
+  const topicDomain = normalizeLiveDomain(userState?.topicDomain || "");
+  const lastRoute = String(userState?.lastRoute || "");
+  return liveMenuOption === "provider_collaboration"
+    || topicDomain === "provider_collaboration"
+    || topicDomain === "provider"
+    || lastRoute.includes("provider_collaboration");
+}
+
+function detectProviderContinuationIntent(text = "") {
+  const directIntent = detectProviderCollaborationIntent(text);
+  if (directIntent.detected) return directIntent;
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return { detected: false, reason: "empty" };
+  const patterns = [
+    { reason: "work_from_lsa_continuation", pattern: /\b(work|jobs?|projects?|assignments?)\s+(from|with)\s+(lsa\s+global|you|your\s+(company|team))\b/i },
+    { reason: "send_work_continuation", pattern: /\b(send\s+(work|jobs?|projects?|assignments?)|send\s+me|give\s+me|offer\s+me)\b/i },
+    { reason: "project_continuation", pattern: /\b(projects?|assignments?|translation\s+jobs?|interpreting\s+jobs?|freelance\s+work)\b/i },
+    { reason: "collaboration_continuation", pattern: /\b(work\s+with\s+you|work\s+with\s+lsa\s+global|collaborat(e|ion)|partner\s+with\s+you|join\s+your\s+team)\b/i },
+    { reason: "availability_continuation", pattern: /\b(available|availability|ready)\b.*\b(work|jobs?|projects?|assignments?|translation|interpreting)\b/i }
+  ];
+  const match = patterns.find(({ pattern }) => pattern.test(normalized));
+  return { detected: Boolean(match), reason: match?.reason || "none" };
+}
+
+function hasStrongNonProviderRouteIntent(text = "") {
+  const normalized = normalizeForIntent(text);
+  if (!normalized) return false;
+  if (detectTranslationClientIntent(text).detected) return true;
+  return /\b(course|courses|cours|fees?|price|schedule|register|registration|location|address|certificate|certificates|interpretation\s+service|need\s+(a\s+)?translation|translate\s+my|my\s+document)\b/i.test(normalized);
 }
 
 function detectTranslationClientIntent(text = "") {
@@ -2516,6 +2551,7 @@ function normalizeLiveDomain(menuOption) {
   if (!normalized) return "";
   if (["courses", "course", "language_course", "exam_prep"].includes(normalized)) return "courses";
   if (["translation", "translations", "certified_translation"].includes(normalized)) return "translation";
+  if (["provider", "providers", "provider_collaboration", "collaborator", "collaboration", "freelancer", "translator_provider", "language_provider"].includes(normalized)) return "provider_collaboration";
   if (["interpreting", "interpretation", "interpreter"].includes(normalized)) return "interpreting";
   if (["registration", "enrollment", "enrolment"].includes(normalized)) return "registration";
   if (["location", "address", "branch", "office", "contact"].includes(normalized)) return "location";
@@ -2530,6 +2566,7 @@ function detectLiveDomainTopic(text = "", state = {}) {
   const normalized = normalizeForIntent(text);
   if (!normalized) return "";
   if (/\b(course|courses|cours|curso|corsi|corso|class|formation|language training|exam prep|ielts|toefl|tef|toeic)\b/.test(normalized)) return "courses";
+  if (detectProviderCollaborationIntent(text).detected) return "provider_collaboration";
   if (/\b(translation|traduction|traduccion|traduzione|translate|certified translation|sworn translation|localized|localization|editing|proofreading|writing)\b/.test(normalized)) return "translation";
   if (/\b(interpreting|interpretation|interpreter|interpretariat|interpretazione|interprétation|dolmetsch)\b/.test(normalized)) return "interpreting";
   if (/\b(register|registration|enroll|enrollment|inscription|admission|apply)\b/.test(normalized)) return "registration";
@@ -4863,6 +4900,11 @@ app.post("/webhook", async (req, res) => {
     });
     const deterministicDecision = resolveDeterministicMenuReply({ text: inboundTextForRouting, detectedLanguage });
     const menuSelection = deterministicDecision.menuSelection;
+    const activeBranchBeforeProcessing = userState.liveMenuOption || userState.topicDomain || userState.lastRoute || "none";
+    const providerBranchAlreadyActive = isProviderCollaborationActive(userState);
+    const providerIntentForRouting = detectProviderCollaborationIntent(inboundTextForRouting);
+    const providerContinuationForRouting = detectProviderContinuationIntent(inboundTextForRouting);
+    const strongNonProviderRouteIntent = hasStrongNonProviderRouteIntent(inboundTextForRouting);
     const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
     const deterministicGreetingMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "greeting_menu");
     const deterministicMenuMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "menu_option");
@@ -4873,7 +4915,14 @@ app.post("/webhook", async (req, res) => {
       menu_matched: deterministicMenuMatched,
       local_menu_reply_sent: Boolean(deterministicDecision.matched),
       openai_called: false,
-      openai_skipped: Boolean(deterministicDecision.matched)
+      openai_skipped: Boolean(deterministicDecision.matched),
+      active_branch_before_processing: activeBranchBeforeProcessing,
+      provider_branch_already_active: providerBranchAlreadyActive,
+      provider_intent_detected: providerIntentForRouting.detected,
+      provider_intent_reason: providerIntentForRouting.reason,
+      provider_continuation_detected: providerContinuationForRouting.detected,
+      provider_continuation_reason: providerContinuationForRouting.reason,
+      strong_non_provider_route_intent: strongNonProviderRouteIntent
     });
     const testRetrievalEnabledForMessage = Boolean(testModeActive && canUseTestRetrievalRouting && retrievalEligibleFreeText);
     const hasStoredLanguage = CONVERSATION_LANGUAGE_BY_CONTACT.has(from);
@@ -4887,6 +4936,19 @@ app.post("/webhook", async (req, res) => {
       retrievalBlockedForSafety = true;
       retrievalBlockedReason = "production_safety";
     }
+
+    console.log("[provider-branch-retention] pre_route", JSON.stringify({
+      active_branch_before_processing: activeBranchBeforeProcessing,
+      provider_branch_already_active: providerBranchAlreadyActive,
+      provider_intent_detected: providerIntentForRouting.detected,
+      provider_intent_reason: providerIntentForRouting.reason,
+      provider_continuation_detected: providerContinuationForRouting.detected,
+      provider_continuation_reason: providerContinuationForRouting.reason,
+      strong_non_provider_route_intent: strongNonProviderRouteIntent,
+      deterministic_branch: deterministicDecision.branch || null,
+      generic_fallback_candidate: Boolean(fallbackEligible),
+      fallback_help_router_allowed: !providerBranchAlreadyActive || strongNonProviderRouteIntent
+    }));
 
     if (deterministicDecision.matched && deterministicDecision.branch === "greeting_menu") {
       selectedRoutingBranch = deterministicDecision.branch;
@@ -4920,10 +4982,9 @@ app.post("/webhook", async (req, res) => {
         liveKnownSlots: {}
       });
       suppressAutoAck = true;
-    } else if (liveModeControlledCandidate && detectProviderCollaborationIntent(inboundTextForRouting).detected) {
-      const providerIntent = detectProviderCollaborationIntent(inboundTextForRouting);
+    } else if (liveModeControlledCandidate && providerIntentForRouting.detected) {
       selectedRoutingBranch = "live_provider_collaboration_intake";
-      routingReason = `provider_intent_shift_${providerIntent.reason}`;
+      routingReason = `provider_intent_shift_${providerIntentForRouting.reason}`;
       reply = getProviderCollaborationIntakeReply(detectedLanguage);
       controlledAction = "provider_collaboration_intake";
       setCustomerState(from, {
@@ -4936,13 +4997,52 @@ app.post("/webhook", async (req, res) => {
         lastRoute: selectedRoutingBranch,
         intentShiftDetected: true
       });
+      console.log("[provider-branch-retention] route", JSON.stringify({
+        current_active_branch_before_processing: activeBranchBeforeProcessing,
+        provider_branch_already_active: providerBranchAlreadyActive,
+        fallback_help_router_used: false,
+        fallback_help_router_reason: "explicit_provider_collaboration_intent",
+        provider_intent_reason: providerIntentForRouting.reason,
+        final_selected_route: selectedRoutingBranch
+      }));
       console.log("[conversation-flow-guard]", JSON.stringify({
         current_branch: userState.liveMenuOption || userState.topicDomain || "unknown",
         repeated_prompt_count: 1,
         max_repetition_threshold: LIVE_PROMPT_REPEAT_THRESHOLD,
         intent_shift_detected: true,
-        intent_shift_reason: providerIntent.reason,
+        intent_shift_reason: providerIntentForRouting.reason,
         final_route_chosen: selectedRoutingBranch
+      }));
+      suppressAutoAck = true;
+    } else if (liveModeControlledCandidate
+      && providerBranchAlreadyActive
+      && !strongNonProviderRouteIntent
+      && (providerContinuationForRouting.detected || normalizedInbound)) {
+      selectedRoutingBranch = "live_provider_collaboration_continuation";
+      routingReason = providerContinuationForRouting.detected
+        ? `provider_branch_retained_${providerContinuationForRouting.reason}`
+        : "provider_branch_retained_active_context";
+      reply = getProviderCollaborationIntakeReply(detectedLanguage);
+      controlledAction = "provider_collaboration_intake_continuation";
+      setCustomerState(from, {
+        clarifyingAsked: false,
+        liveMenuOption: "provider_collaboration",
+        topicDomain: "provider",
+        liveKnownSlots: {},
+        lastPromptKey: getPromptKey(reply),
+        repeatedPromptCount: Number(userState.repeatedPromptCount || 0) + 1,
+        lastRoute: selectedRoutingBranch,
+        intentShiftDetected: true
+      });
+      console.log("[provider-branch-retention] route", JSON.stringify({
+        current_active_branch_before_processing: activeBranchBeforeProcessing,
+        provider_branch_already_active: true,
+        continuation_detected: providerContinuationForRouting.detected,
+        continuation_reason: providerContinuationForRouting.reason,
+        fallback_help_router_used: false,
+        fallback_help_router_reason: "blocked_active_provider_collaboration_flow",
+        strong_non_provider_route_intent: strongNonProviderRouteIntent,
+        final_selected_route: selectedRoutingBranch
       }));
       suppressAutoAck = true;
     } else if (liveModeControlledCandidate && isAmbiguousTranslationFollowUp(inboundTextForRouting, userState)) {
@@ -5153,14 +5253,36 @@ app.post("/webhook", async (req, res) => {
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_fallback";
       reply = getControlledFallbackReply(detectedLanguage);
       controlledAction = "controlled_fallback_template";
-      console.log("[routing] route=fallback_ack", { openai_called: false, openai_skipped: true, reason: routingReason });
+      console.log("[routing] route=fallback_ack", {
+        openai_called: false,
+        openai_skipped: true,
+        reason: routingReason,
+        active_branch_before_processing: activeBranchBeforeProcessing,
+        provider_branch_already_active: providerBranchAlreadyActive,
+        fallback_help_router_used: true,
+        fallback_help_router_reason: providerBranchAlreadyActive
+          ? "strong_non_provider_or_non_live_candidate_allowed_fallback"
+          : "no_active_provider_collaboration_flow",
+        final_selected_route: selectedRoutingBranch
+      });
       suppressAutoAck = true;
     } else if (!testRetrievalEnabledForMessage && !autonomousReplyAllowed) {
       selectedRoutingBranch = "live_safe_handoff";
       routingReason = testModeActive ? "test_retrieval_disabled" : "live_mode_safe_handoff";
       reply = getSafeHandoffMessage(detectedLanguage);
       controlledAction = "safe_handoff";
-      console.log("[routing] route=fallback_ack", { openai_called: false, openai_skipped: true, reason: routingReason });
+      console.log("[routing] route=fallback_ack", {
+        openai_called: false,
+        openai_skipped: true,
+        reason: routingReason,
+        active_branch_before_processing: activeBranchBeforeProcessing,
+        provider_branch_already_active: providerBranchAlreadyActive,
+        fallback_help_router_used: true,
+        fallback_help_router_reason: providerBranchAlreadyActive
+          ? "strong_non_provider_or_non_live_candidate_allowed_fallback"
+          : "no_active_provider_collaboration_flow",
+        final_selected_route: selectedRoutingBranch
+      });
       suppressAutoAck = true;
     } else if (testRetrievalEnabledForMessage) {
       selectedRoutingBranch = "test_retrieval";
