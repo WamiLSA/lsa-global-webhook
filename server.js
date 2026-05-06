@@ -5948,16 +5948,31 @@ app.get("/api/communications/mail/threads", async (req, res) => {
     const view = String(req.query.view || "active").toLowerCase();
     const archived = view === "archived";
     const sourceThreads = Array.isArray(state.mail?.threads) ? state.mail.threads : [];
-    const threads = sourceThreads.filter(t => Boolean(t.is_archived) === archived).map(t => ({
-      thread_id: t.thread_id,
-      contact_name: t.subject,
-      sender: t.sender,
-      subject: t.subject,
-      preview: t.preview,
-      timestamp: t.timestamp,
-      is_read: t.is_read,
-      label: t.is_read ? "Read" : "Unread"
-    }));
+    const threads = sourceThreads
+      .filter(t => Boolean(t.is_archived) === archived)
+      .map(t => {
+        const entries = Array.isArray(t.entries) ? t.entries : [];
+        const latestEntry = entries
+          .slice()
+          .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0))[0];
+        const lastActivityAt = latestEntry?.timestamp || latestEntry?.created_at || t.timestamp || null;
+        const lastMessage = latestEntry?.preview || latestEntry?.body || t.preview || "";
+        return {
+          thread_id: t.thread_id,
+          contact_name: t.subject,
+          sender: t.sender,
+          subject: t.subject,
+          preview: t.preview,
+          last_message: lastMessage,
+          timestamp: lastActivityAt,
+          last_time: lastActivityAt,
+          last_activity_at: lastActivityAt,
+          last_direction: latestEntry?.direction || t.direction || "in",
+          is_read: t.is_read,
+          label: t.is_read ? "Read" : "Unread"
+        };
+      })
+      .sort((a, b) => new Date(b.last_activity_at || 0) - new Date(a.last_activity_at || 0));
     console.log("[inbox-api] mail thread load succeeded", {
       view: archived ? "archived" : "active",
       source_threads: sourceThreads.length,
