@@ -872,6 +872,41 @@ async function writeCommunicationsLayerState(state) {
   await fs.writeFile(COMMUNICATIONS_LAYER_FILE, JSON.stringify(state, null, 2));
 }
 
+function getMailThreads(state) {
+  if (!state.mail || typeof state.mail !== "object") state.mail = {};
+  if (!Array.isArray(state.mail.threads)) state.mail.threads = [];
+  return state.mail.threads;
+}
+
+function findMailThread(state, threadId) {
+  const threads = getMailThreads(state);
+  const index = threads.findIndex(t => String(t.thread_id || "") === String(threadId || ""));
+  return { threads, thread: index >= 0 ? threads[index] : null, index };
+}
+
+function summarizeMailThread(thread) {
+  const entries = Array.isArray(thread.entries) ? thread.entries : [];
+  const latestEntry = entries
+    .slice()
+    .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0))[0];
+  const lastActivityAt = latestEntry?.timestamp || latestEntry?.created_at || thread.timestamp || null;
+  const lastMessage = latestEntry?.preview || latestEntry?.body || thread.preview || "";
+  return {
+    thread_id: thread.thread_id,
+    contact_name: thread.subject,
+    sender: thread.sender,
+    subject: thread.subject,
+    preview: thread.preview,
+    last_message: lastMessage,
+    timestamp: lastActivityAt,
+    last_time: lastActivityAt,
+    last_activity_at: lastActivityAt,
+    last_direction: latestEntry?.direction || thread.direction || "in",
+    is_read: thread.is_read,
+    label: thread.is_read ? "Read" : "Unread"
+  };
+}
+
 
 function normalizeUserIdentifier(value) {
   return String(value || "").trim().toLowerCase();
@@ -6406,31 +6441,10 @@ app.get("/api/communications/mail/threads", async (req, res) => {
     const state = await readCommunicationsLayerState();
     const view = String(req.query.view || "active").toLowerCase();
     const archived = view === "archived";
-    const sourceThreads = Array.isArray(state.mail?.threads) ? state.mail.threads : [];
+    const sourceThreads = getMailThreads(state);
     const threads = sourceThreads
       .filter(t => Boolean(t.is_archived) === archived)
-      .map(t => {
-        const entries = Array.isArray(t.entries) ? t.entries : [];
-        const latestEntry = entries
-          .slice()
-          .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0))[0];
-        const lastActivityAt = latestEntry?.timestamp || latestEntry?.created_at || t.timestamp || null;
-        const lastMessage = latestEntry?.preview || latestEntry?.body || t.preview || "";
-        return {
-          thread_id: t.thread_id,
-          contact_name: t.subject,
-          sender: t.sender,
-          subject: t.subject,
-          preview: t.preview,
-          last_message: lastMessage,
-          timestamp: lastActivityAt,
-          last_time: lastActivityAt,
-          last_activity_at: lastActivityAt,
-          last_direction: latestEntry?.direction || t.direction || "in",
-          is_read: t.is_read,
-          label: t.is_read ? "Read" : "Unread"
-        };
-      })
+      .map(summarizeMailThread)
       .sort((a, b) => new Date(b.last_activity_at || 0) - new Date(a.last_activity_at || 0));
     console.log("[inbox-api] mail thread load succeeded", {
       view: archived ? "archived" : "active",
@@ -6452,11 +6466,68 @@ app.get("/api/communications/mail/threads", async (req, res) => {
 
 app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
   const state = await readCommunicationsLayerState();
-  const thread = (state.mail?.threads || []).find(t => t.thread_id === req.params.thread_id);
+  const { thread } = findMailThread(state, req.params.thread_id);
   if (!thread) return res.status(404).json({ error: "Mail thread not found" });
   return res.json(thread.entries || []);
 });
 
+app.post("/api/communications/mail/threads/:thread_id/archive", async (req, res) => {
+  try {
+    const state = await readCommunicationsLayerState();
+    const { thread } = findMailThread(state, req.params.thread_id);
+    if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    thread.is_archived = true;
+    thread.archived_at = new Date().toISOString();
+    await writeCommunicationsLayerState(state);
+    return res.json({ ok: true, thread: summarizeMailThread(thread) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/communications/mail/threads/:thread_id/unarchive", async (req, res) => {
+  try {
+    const state = await readCommunicationsLayerState();
+    const { thread } = findMailThread(state, req.params.thread_id);
+    if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    thread.is_archived = false;
+    thread.unarchived_at = new Date().toISOString();
+    delete thread.archived_at;
+    await writeCommunicationsLayerState(state);
+    return res.json({ ok: true, thread: summarizeMailThread(thread) });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/communications/mail/threads/:thread_id/clear", async (req, res) => {
+  try {
+    const state = await readCommunicationsLayerState();
+    const { thread } = findMailThread(state, req.params.thread_id);
+    if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    thread.entries = [];
+    thread.preview = "";
+    thread.timestamp = new Date().toISOString();
+    thread.is_read = true;
+    await writeCommunicationsLayerState(state);
+    return res.json({ ok: true, contactRetained: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/communications/mail/threads/:thread_id/delete", async (req, res) => {
+  try {
+    const state = await readCommunicationsLayerState();
+    const { threads, index } = findMailThread(state, req.params.thread_id);
+    if (index < 0) return res.status(404).json({ error: "Mail thread not found" });
+    const [deleted] = threads.splice(index, 1);
+    await writeCommunicationsLayerState(state);
+    return res.json({ ok: true, deleted_thread_id: deleted.thread_id });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
 
 app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), async (req, res) => {
   try {
