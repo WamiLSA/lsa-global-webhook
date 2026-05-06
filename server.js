@@ -5136,28 +5136,60 @@ app.post("/webhook", async (req, res) => {
     const deterministicDecision = resolveDeterministicMenuReply({ text: inboundTextForRouting, detectedLanguage });
     const menuSelection = deterministicDecision.menuSelection;
     const activeBranchBeforeProcessing = userState.liveMenuOption || userState.topicDomain || userState.lastRoute || "none";
-    const providerBranchAlreadyActive = isProviderCollaborationActive(userState);
-    const providerSubtypeRouting = resolveProviderSubtypeForRouting(inboundTextForRouting, userState);
-    const providerIntentForRouting = providerSubtypeRouting.broadIntent;
-    const providerSubtypeForRouting = providerSubtypeRouting.subtypeDecision;
-    const providerContinuationForRouting = detectProviderContinuationIntent(inboundTextForRouting);
-    const generalizedRouting = resolveGeneralizedRouting({
-      text: inboundTextForRouting,
-      previousBranch: activeBranchBeforeProcessing,
-      previousRoleIntent: userState.roleIntent,
-      previousServiceIntent: userState.serviceIntent,
-      platform: "whatsapp_webhook",
-      language: detectedLanguage
-    });
-    const generalizedProviderRoute = generalizedRouting.route === "provider_collaboration";
-    const generalizedClarificationRoute = generalizedRouting.route === "clarification";
-    const strongNonProviderRouteIntent = hasStrongNonProviderRouteIntent(inboundTextForRouting)
-      || (["translation_client", "courses", "interpreting", "advisor", "certificates"].includes(generalizedRouting.route)
-        && !generalizedRouting.overrideTriggered
-        && !generalizedRouting.branchRetained);
-    const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
     const deterministicGreetingMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "greeting_menu");
     const deterministicMenuMatched = Boolean(deterministicDecision.matched && deterministicDecision.branch === "menu_option");
+    const deterministicRouteMatched = deterministicGreetingMatched || deterministicMenuMatched;
+
+    // Keep the fixed WhatsApp menu as a hard local gate. Menu/greeting inputs must not
+    // be interpreted by provider/generalized routing or later OpenAI fallback layers.
+    let providerBranchAlreadyActive = false;
+    let providerSubtypeRouting = { clarificationNeeded: false };
+    let providerIntentForRouting = { detected: false, reason: deterministicRouteMatched ? "deterministic_menu_short_circuit" : "not_evaluated" };
+    let providerSubtypeForRouting = { subtype: null, reason: deterministicRouteMatched ? "deterministic_menu_short_circuit" : "not_evaluated", confidence: 0 };
+    let providerContinuationForRouting = { detected: false, reason: deterministicRouteMatched ? "deterministic_menu_short_circuit" : "not_evaluated" };
+    let generalizedRouting = {
+      platform: "whatsapp_webhook",
+      detectedLanguage,
+      roleIntent: "unknown",
+      roleReason: deterministicRouteMatched ? "deterministic_menu_short_circuit" : "not_evaluated",
+      serviceIntent: "unknown",
+      serviceReason: deterministicRouteMatched ? "deterministic_menu_short_circuit" : "not_evaluated",
+      route: deterministicDecision.branch || "general_safe_handoff",
+      overrideTriggered: false,
+      clarificationTriggered: false,
+      branchRetained: false,
+      fallbackReason: "none",
+      previousBranch: activeBranchBeforeProcessing,
+      roleMatches: [],
+      serviceMatches: []
+    };
+    let generalizedProviderRoute = false;
+    let generalizedClarificationRoute = false;
+    let strongNonProviderRouteIntent = false;
+
+    if (!deterministicRouteMatched) {
+      providerBranchAlreadyActive = isProviderCollaborationActive(userState);
+      providerSubtypeRouting = resolveProviderSubtypeForRouting(inboundTextForRouting, userState);
+      providerIntentForRouting = providerSubtypeRouting.broadIntent;
+      providerSubtypeForRouting = providerSubtypeRouting.subtypeDecision;
+      providerContinuationForRouting = detectProviderContinuationIntent(inboundTextForRouting);
+      generalizedRouting = resolveGeneralizedRouting({
+        text: inboundTextForRouting,
+        previousBranch: activeBranchBeforeProcessing,
+        previousRoleIntent: userState.roleIntent,
+        previousServiceIntent: userState.serviceIntent,
+        platform: "whatsapp_webhook",
+        language: detectedLanguage
+      });
+      generalizedProviderRoute = generalizedRouting.route === "provider_collaboration";
+      generalizedClarificationRoute = generalizedRouting.route === "clarification";
+      strongNonProviderRouteIntent = hasStrongNonProviderRouteIntent(inboundTextForRouting)
+        || (["translation_client", "courses", "interpreting", "advisor", "certificates"].includes(generalizedRouting.route)
+          && !generalizedRouting.overrideTriggered
+          && !generalizedRouting.branchRetained);
+    }
+
+    const retrievalEligibleFreeText = Boolean(normalizedInbound) && !greetingIntent && !menuSelection;
     console.log("[routing] deterministic_gate", {
       incoming_text: inboundTextForRouting,
       normalized_text: normalizedInbound,
@@ -5283,8 +5315,17 @@ app.post("/webhook", async (req, res) => {
       routingReason = providerIntentForRouting.detected
         ? `provider_intent_shift_${providerIntentForRouting.reason}`
         : `generalized_role_override_${generalizedRouting.roleReason}`;
-      reply = getProviderCollaborationIntakeReply(detectedLanguage);
-      controlledAction = "provider_collaboration_intake";
+      const selectedProviderSubtype = providerSubtypeForRouting.subtype || userState.collaboratorSubtype || "unknown_provider";
+      const providerClarificationTriggered = selectedProviderSubtype === "unknown_provider" && !userState.collaboratorSubtype;
+      selectedRoutingBranch = providerClarificationTriggered
+        ? "live_provider_collaboration_subtype_clarification"
+        : `live_provider_collaboration_${selectedProviderSubtype}_intake`;
+      reply = providerClarificationTriggered
+        ? getProviderSubtypeClarificationReply(detectedLanguage)
+        : getProviderCollaborationIntakeReply(detectedLanguage, selectedProviderSubtype);
+      controlledAction = providerClarificationTriggered
+        ? "provider_collaboration_subtype_clarification"
+        : `provider_collaboration_${selectedProviderSubtype}_intake`;
       setCustomerState(from, {
         clarifyingAsked: providerClarificationTriggered,
         liveMenuOption: "provider_collaboration",
