@@ -7727,14 +7727,6 @@ app.post("/api/kb/categories", async (req, res) => {
       return res.status(500).json({ error });
     }
 
-    await automationHub.trigger("new_captured_knowledge", {
-      language: "en",
-      serviceType: suggested_category || null,
-      mode: "TEST"
-    }, {
-      source: "kb-capture"
-    });
-
     return res.json({ ok: true, data });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -9133,14 +9125,6 @@ app.post("/api/providers", async (req, res) => {
     if (error) {
       return res.status(500).json({ error });
     }
-
-    await automationHub.trigger("new_captured_knowledge", {
-      language: "en",
-      serviceType: suggested_category || null,
-      mode: "TEST"
-    }, {
-      source: "kb-capture"
-    });
 
     return res.json({ ok: true, data });
   } catch (err) {
