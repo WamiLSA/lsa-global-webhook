@@ -36,16 +36,12 @@
     }
   }
 
-  let pageKey = document.body.getAttribute("data-page") || "";
-  if (window.location.pathname === "/inbox" && new URLSearchParams(window.location.search).get("view") === "archived") {
-    pageKey = "archived";
-  }
+  const pageKey = document.body.getAttribute("data-page") || "";
 
   const navItems = [
     { key: "inbox", label: "Inbox", href: "/inbox" },
     { key: "kb", label: "Knowledge Base", href: "/kb" },
     { key: "providers", label: "Providers", href: "/providers" },
-    { key: "archived", label: "Archived Threads", href: "/archived" },
     { key: "automation", label: "Automation Hub", href: "/automation" },
     { key: "settings", label: "Settings", href: "/settings" },
     { key: "ai-tools", label: "AI Tools", href: "/ai-tools" },
