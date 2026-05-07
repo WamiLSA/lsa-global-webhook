@@ -20,6 +20,13 @@ const {
 const crypto = require("crypto");
 
 const app = express();
+const SESSION_SECRET = process.env.SESSION_SECRET || "change_this_secret";
+const MOBILE_AUTH_TOKEN_SECRET = process.env.MOBILE_AUTH_TOKEN_SECRET || process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+const DEFAULT_MOBILE_AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
+const configuredMobileAuthTokenTtlSeconds = Number(process.env.MOBILE_AUTH_TOKEN_TTL_SECONDS || DEFAULT_MOBILE_AUTH_TOKEN_TTL_SECONDS);
+const MOBILE_AUTH_TOKEN_TTL_SECONDS = Number.isFinite(configuredMobileAuthTokenTtlSeconds)
+  ? Math.max(configuredMobileAuthTokenTtlSeconds, 60)
+  : DEFAULT_MOBILE_AUTH_TOKEN_TTL_SECONDS;
 
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
@@ -28,7 +35,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "change_this_secret",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -1387,8 +1394,54 @@ app.post("/login", async (req, res) => {
 
 
 
+function encodeMobileAuthPayload(payload) {
+  return Buffer.from(JSON.stringify(payload)).toString("base64url");
+}
+
+function signMobileAuthPayload(encodedPayload) {
+  return crypto
+    .createHmac("sha256", MOBILE_AUTH_TOKEN_SECRET)
+    .update(encodedPayload)
+    .digest("base64url");
+}
+
+function signaturesMatch(expected, actual) {
+  const expectedBuffer = Buffer.from(String(expected || ""), "base64url");
+  const actualBuffer = Buffer.from(String(actual || ""), "base64url");
+  if (expectedBuffer.length !== actualBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, actualBuffer);
+}
+
 function createMobileAuthToken(username) {
-  return Buffer.from(`${normalizeUserIdentifier(username)}:${Date.now()}`).toString("base64url");
+  const payload = {
+    sub: normalizeUserIdentifier(username),
+    iat: Math.floor(Date.now() / 1000)
+  };
+  const encodedPayload = encodeMobileAuthPayload(payload);
+  const signature = signMobileAuthPayload(encodedPayload);
+  return `lsa_mobile_v1.${encodedPayload}.${signature}`;
+}
+
+function verifyMobileAuthToken(token) {
+  const raw = String(token || "").trim();
+  const [version, encodedPayload, signature, extra] = raw.split(".");
+  if (version !== "lsa_mobile_v1" || !encodedPayload || !signature || extra !== undefined) return "";
+
+  const expectedSignature = signMobileAuthPayload(encodedPayload);
+  if (!signaturesMatch(expectedSignature, signature)) return "";
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    const identifier = normalizeUserIdentifier(payload?.sub);
+    const issuedAt = Number(payload?.iat || 0);
+    const now = Math.floor(Date.now() / 1000);
+    if (!identifier || !Number.isFinite(issuedAt) || issuedAt <= 0) return "";
+    if (issuedAt > now + 300) return "";
+    if (now - issuedAt > MOBILE_AUTH_TOKEN_TTL_SECONDS) return "";
+    return identifier;
+  } catch (error) {
+    return "";
+  }
 }
 
 function requestUsesBearerAuth(req) {
@@ -6386,17 +6439,8 @@ app.get("/archived", requireAuth, (req, res) => {
 function getAuthenticatedIdentifier(req) {
   if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
   const authHeader = String(req.headers.authorization || "");
-  if (authHeader.startsWith("Bearer ")) {
-    const raw = authHeader.slice(7).trim();
-    try {
-      const decoded = Buffer.from(raw, "base64url").toString("utf8");
-      const identifier = decoded.split(":")[0];
-      return normalizeUserIdentifier(identifier);
-    } catch (error) {
-      return "";
-    }
-  }
-  return "";
+  if (!authHeader.startsWith("Bearer ")) return "";
+  return verifyMobileAuthToken(authHeader.slice(7));
 }
 
 function requireAccountAuth(req, res, next) {
