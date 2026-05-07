@@ -62,7 +62,18 @@ export function ConversationScreen({ route }) {
       <View style={styles.composer}>
         <TextInput style={styles.input} value={reply} onChangeText={setReply} placeholder="Type quick reply" placeholderTextColor={colors.textMuted} multiline />
         <View style={styles.rowActions}>
-          <Pressable style={[styles.action, styles.attach]} onPress={async () => { await DocumentPicker.getDocumentAsync(); }}><Text style={styles.btn}>Attach</Text></Pressable>
+          <Pressable
+            style={[styles.action, styles.attach]}
+            onPress={async () => {
+              await runWithProgress('Select attachment', async (progress) => {
+                progress.update(30, 'Opening document picker...');
+                await DocumentPicker.getDocumentAsync();
+                progress.update(82, 'Attachment selection completed...');
+              });
+            }}
+          >
+            <Text style={styles.btn}>Attach</Text>
+          </Pressable>
           <Pressable style={[styles.action, styles.send]} disabled={sending || !reply.trim()} onPress={sendReply}><Text style={styles.btn}>{sending ? 'Sending...' : 'Send Reply'}</Text></Pressable>
         </View>
       </View>

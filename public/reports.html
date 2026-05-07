@@ -28,6 +28,7 @@
     <div id="status" class="muted">Loading reports…</div>
     <section class="grid" id="grid"></section>
   </main>
+  <script src="/global-progress.js"></script>
   <script src="/top-nav.js"></script>
   <script>
     const fmt = (n) => Number(n || 0).toLocaleString();
@@ -61,7 +62,12 @@
       ].join('');
     }
 
-    loadReports().then(render).catch((err) => {
+    LSAGlobalProgress.withProgress('Load operational reports', async (progress) => {
+      progress.update(18, 'Requesting report data…');
+      const data = await loadReports();
+      progress.update(76, 'Rendering report dashboard…');
+      render(data);
+    }).catch((err) => {
       document.getElementById('status').textContent = err.message;
     });
   </script>

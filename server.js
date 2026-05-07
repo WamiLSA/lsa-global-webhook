@@ -1304,6 +1304,7 @@ app.get("/login", (req, res) => {
         </form>
       </div>
       </div>
+      <script src="/global-progress.js"></script>
       <script>
         (async function loadBranding() {
           try {

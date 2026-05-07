@@ -25,6 +25,7 @@
     <h2>Run History</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Time</th><th>Result</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
+  <script src="/global-progress.js"></script>
   <script src="/top-nav.js"></script>
   <script>
     async function getJson(url, options){const r=await fetch(url,Object.assign({credentials:'same-origin'},options||{}));if(!r.ok)throw new Error('request failed');return r.json();}

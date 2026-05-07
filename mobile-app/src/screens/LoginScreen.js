@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, Animated, Easing, Image } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
 export function LoginScreen() {
   const { login } = useAuth();
+  const { runWithProgress } = useGlobalProgress();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -21,7 +23,11 @@ export function LoginScreen() {
     try {
       setError('');
       setLoading(true);
-      await login({ username, password });
+      await runWithProgress('Authenticate session', async (progress) => {
+        progress.update(22, 'Verifying credentials...');
+        await login({ username, password });
+        progress.update(86, 'Opening Internal OS...');
+      });
     } catch (err) {
       setError('Login failed. Check your web username/password and API endpoint.');
     } finally {

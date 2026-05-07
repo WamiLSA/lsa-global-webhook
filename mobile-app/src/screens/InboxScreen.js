@@ -4,8 +4,10 @@ import { api } from '../api/client';
 import { ModeBadge } from '../components/ModeBadge';
 import { Screen } from '../components/Screen';
 import { colors } from '../theme';
+import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
 export function InboxScreen({ navigation }) {
+  const { runWithProgress } = useGlobalProgress();
   const [mode, setMode] = useState('TEST');
   const [items, setItems] = useState([]);
   const [search, setSearch] = useState('');
@@ -35,7 +37,24 @@ export function InboxScreen({ navigation }) {
         <FlatList
           data={filtered}
           keyExtractor={(item) => String(item.id)}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await fetchInbox(); setRefreshing(false); }} tintColor={colors.text} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={async () => {
+                setRefreshing(true);
+                try {
+                  await runWithProgress('Sync inbox', async (progress) => {
+                    progress.update(24, 'Requesting latest conversations...');
+                    await fetchInbox();
+                    progress.update(82, 'Refreshing inbox list...');
+                  });
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+              tintColor={colors.text}
+            />
+          }
           renderItem={({ item }) => (
             <Pressable style={styles.row} onPress={() => navigation.navigate('Conversation', { conversationId: item.id, mode, contact: item.contact })}>
               <View style={styles.rowTop}><Text style={styles.contact}>{item.contact || 'Unknown contact'}</Text>{!!item.unreadCount && <Text style={styles.unread}>{item.unreadCount}</Text>}</View>
