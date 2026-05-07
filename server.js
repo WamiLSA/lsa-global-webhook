@@ -7697,10 +7697,10 @@ app.post("/api/kb/categories", async (req, res) => {
 
     await automationHub.trigger("new_captured_knowledge", {
       language: "en",
-      serviceType: suggested_category || null,
+      serviceType: name || null,
       mode: "TEST"
     }, {
-      source: "kb-capture"
+      source: "kb-category"
     });
 
     return res.json({ ok: true, data });
@@ -9064,7 +9064,8 @@ app.post("/api/providers", async (req, res) => {
       availability_status,
       source_channel,
       notes,
-      status
+      status,
+      suggested_category
     } = req.body;
 
     if (!provider_type) {
@@ -9104,10 +9105,10 @@ app.post("/api/providers", async (req, res) => {
 
     await automationHub.trigger("new_captured_knowledge", {
       language: "en",
-      serviceType: suggested_category || null,
+      serviceType: suggested_category || provider_type || null,
       mode: "TEST"
     }, {
-      source: "kb-capture"
+      source: "provider-save"
     });
 
     return res.json({ ok: true, data });
