@@ -1125,6 +1125,34 @@ function sanitizeProfileInput(input, existing) {
   };
 }
 
+function getRequestAuthDiagnostics(req) {
+  const userAgent = String(req.headers["user-agent"] || "").slice(0, 120);
+  const authorization = String(req.headers.authorization || "");
+  return {
+    method: req.method,
+    path: req.originalUrl || req.url,
+    ip: req.ip,
+    user_agent: userAgent,
+    has_session: Boolean(req.session?.authenticated),
+    has_bearer: authorization.startsWith("Bearer "),
+    content_type: req.headers["content-type"] || ""
+  };
+}
+
+function logAuthAttempt(req, { channel, identifier, result, reason, usernameMatched, matchedBy, tokenIssued }) {
+  console.log("[auth-diagnostics] login_attempt", {
+    channel,
+    identifier_present: Boolean(String(identifier || "").trim()),
+    identifier_normalized: normalizeUserIdentifier(identifier),
+    result,
+    reason: reason || null,
+    username_matched: usernameMatched || null,
+    matched_by: matchedBy || null,
+    token_issued: Boolean(tokenIssued),
+    ...getRequestAuthDiagnostics(req)
+  });
+}
+
 const DEFAULT_BRANDING_SETTINGS = Object.freeze({
   brand_name: FALLBACK_BRAND_NAME,
   logo_url: "",
@@ -1169,49 +1197,60 @@ async function getUserSettings(identifier) {
   return { store, normalized, record, users };
 }
 
-function findUserRecordByUsername(users, username) {
-  const normalizedUsername = normalizeUserIdentifier(username);
-  if (!normalizedUsername) return null;
-  const direct = users[normalizedUsername];
-  if (direct) return { key: normalizedUsername, record: direct };
+function findUserRecordByLoginIdentifier(users, identifier) {
+  const normalizedIdentifier = normalizeUserIdentifier(identifier);
+  if (!normalizedIdentifier) return null;
+  const direct = users[normalizedIdentifier];
+  if (direct) return { key: normalizedIdentifier, record: direct, matchedBy: "username_key" };
   for (const [key, record] of Object.entries(users)) {
-    if (normalizeUserIdentifier(record?.username) === normalizedUsername) {
-      return { key, record };
+    if (normalizeUserIdentifier(record?.username) === normalizedIdentifier) {
+      return { key, record, matchedBy: "username" };
+    }
+    if (normalizeUserIdentifier(record?.email) === normalizedIdentifier) {
+      return { key, record, matchedBy: "email" };
     }
   }
   return null;
 }
 
-async function verifyInboxCredentials(username, password) {
-  const normalizedUsername = normalizeUserIdentifier(username);
-  if (!normalizedUsername || !password) return { ok: false };
+async function verifyInboxCredentials(identifier, password) {
+  const normalizedIdentifier = normalizeUserIdentifier(identifier);
+  if (!normalizedIdentifier || !password) return { ok: false, reason: "missing_identifier_or_password" };
 
   const store = await readAccountSettingsStore();
   store.users = store.users || {};
-  const matchedUser = findUserRecordByUsername(store.users, normalizedUsername);
+  const matchedUser = findUserRecordByLoginIdentifier(store.users, normalizedIdentifier);
 
   if (matchedUser) {
-    const { key, record } = matchedUser;
+    const { key, record, matchedBy } = matchedUser;
     if (record.password_hash) {
-      if (!verifyPassword(password, record.password_hash)) return { ok: false };
+      if (!verifyPassword(password, record.password_hash)) return { ok: false, reason: "password_mismatch", matchedBy };
     } else {
-      const bootstrapMatches = normalizedUsername === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD;
-      if (!bootstrapMatches) return { ok: false };
+      const bootstrapMatches = normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD;
+      if (!bootstrapMatches) return { ok: false, reason: "password_not_initialized_for_non_bootstrap_user", matchedBy };
     }
-    const canonicalUsername = normalizeUserIdentifier(record.username || key || normalizedUsername);
-    return { ok: true, username: canonicalUsername };
+    const canonicalUsername = normalizeUserIdentifier(record.username || key || normalizedIdentifier);
+    return { ok: true, username: canonicalUsername, matchedBy };
   }
 
-  if (normalizedUsername === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
-    return { ok: true, username: normalizeUserIdentifier(INBOX_USERNAME), bootstrap: true };
+  if (normalizedIdentifier === normalizeUserIdentifier(INBOX_USERNAME) && password === INBOX_PASSWORD) {
+    return { ok: true, username: normalizeUserIdentifier(INBOX_USERNAME), bootstrap: true, matchedBy: "bootstrap_username" };
   }
 
-  return { ok: false };
+  return { ok: false, reason: "identifier_not_found" };
 }
 
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
     return next();
+  }
+  const bearerIdentifier = getAuthenticatedIdentifier(req);
+  if (bearerIdentifier) {
+    req.accountIdentifier = bearerIdentifier;
+    return next();
+  }
+  if (req.path?.startsWith("/api") || String(req.originalUrl || "").startsWith("/api")) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
   return res.redirect("/login");
 }
@@ -1338,9 +1377,11 @@ app.post("/login", async (req, res) => {
   if (authResult.ok) {
     req.session.authenticated = true;
     req.session.username = authResult.username;
+    logAuthAttempt(req, { channel: "web", identifier: username, result: "success", usernameMatched: authResult.username, matchedBy: authResult.matchedBy });
     return res.redirect("/inbox");
   }
 
+  logAuthAttempt(req, { channel: "web", identifier: username, result: "failure", reason: authResult.reason, matchedBy: authResult.matchedBy });
   return res.redirect("/login?error=1");
 });
 
@@ -1355,16 +1396,22 @@ function requestUsesBearerAuth(req) {
 }
 
 app.post("/api/mobile/auth/login", async (req, res) => {
-  const { username, password } = req.body || {};
+  const { username, email, identifier, password } = req.body || {};
+  const loginIdentifier = username || email || identifier;
 
-  const authResult = await verifyInboxCredentials(username, password);
+  const authResult = await verifyInboxCredentials(loginIdentifier, password);
   if (!authResult.ok) {
-    return res.status(401).json({ error: "Invalid username or password" });
+    logAuthAttempt(req, { channel: "mobile", identifier: loginIdentifier, result: "failure", reason: authResult.reason, matchedBy: authResult.matchedBy });
+    return res.status(401).json({ ok: false, error: "Invalid username or password", code: "INVALID_CREDENTIALS" });
   }
 
+  const token = createMobileAuthToken(authResult.username);
+  logAuthAttempt(req, { channel: "mobile", identifier: loginIdentifier, result: "success", usernameMatched: authResult.username, matchedBy: authResult.matchedBy, tokenIssued: true });
   return res.json({
-    token: createMobileAuthToken(authResult.username),
-    user: { username: authResult.username }
+    ok: true,
+    token,
+    user: { username: authResult.username },
+    auth: { token_type: "Bearer", login_identifier_field: username ? "username" : email ? "email" : "identifier", matched_by: authResult.matchedBy }
   });
 });
 
@@ -7101,6 +7148,124 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
     return res.json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+function summarizeThreadForMobile(thread) {
+  return {
+    id: thread.wa_id,
+    wa_id: thread.wa_id,
+    contact: thread.contact_name || thread.wa_id || "Unknown contact",
+    contactName: thread.contact_name || "",
+    lastMessage: thread.last_message || "",
+    lastDirection: thread.last_direction || "",
+    lastTime: thread.last_time || "",
+    label: thread.label || "",
+    unreadCount: 0,
+    isArchived: thread.is_archived === true,
+    conversationOwner: thread.conversation_owner || null,
+    humanTakeover: thread.human_takeover ?? null,
+    conversationType: thread.conversation_type || null,
+    followupEligible: thread.followup_eligible ?? null
+  };
+}
+
+function summarizeMessageForMobile(row) {
+  return {
+    id: row.id || `${row.wa_id || "thread"}-${row.created_at || Date.now()}`,
+    wa_id: row.wa_id,
+    direction: row.direction,
+    body: row.body || "",
+    messageType: row.message_type || row.type || "text",
+    createdAt: row.created_at,
+    timestamp: row.created_at,
+    originalLanguage: row.original_language || null,
+    translatedText: row.translated_text || null,
+    translatedLanguage: row.translated_language || null,
+    staffReplyText: row.staff_reply_text || null,
+    staffReplyLanguage: row.staff_reply_language || null,
+    sentReplyText: row.sent_reply_text || null,
+    sentReplyLanguage: row.sent_reply_language || null,
+    mediaUrl: row.media_url || row.attachment_url || null,
+    mediaMimeType: row.media_mime_type || row.mime_type || null
+  };
+}
+
+app.get("/api/mobile/inbox", async (req, res) => {
+  try {
+    const result = await queryConversationRowsForThreadView({ archived: false });
+    applyConversationThreadResponseHeaders(res, result);
+    if (result.error) {
+      console.error("[mobile-api] inbox load failed", { error: result.error, attempts: result.attempts, blocked_columns: result.blockedColumns || [] });
+      return res.status(500).json({ ok: false, error: result.error, diagnostics: { attempts: result.attempts, blocked_columns: result.blockedColumns || [] } });
+    }
+    const mode = await getCurrentSystemMode();
+    const conversations = buildConversationThreadSummary(result.rows).map(summarizeThreadForMobile);
+    console.log("[mobile-api] inbox load succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), count: conversations.length, runtime_mode: mode });
+    return res.json({ ok: true, conversations, runtimeMode: mode.toUpperCase(), degraded: Boolean(result.degraded) });
+  } catch (error) {
+    console.error("[mobile-api] inbox route crashed", { error_message: error?.message || String(error) });
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get("/api/mobile/inbox/:conversationId", async (req, res) => {
+  try {
+    const waId = req.params.conversationId;
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("wa_id", waId)
+      .order("created_at", { ascending: true });
+    if (error) return res.status(500).json({ ok: false, error });
+    console.log("[mobile-api] thread load succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), wa_id: waId, count: Array.isArray(data) ? data.length : 0 });
+    return res.json({ ok: true, conversationId: waId, messages: (data || []).map(summarizeMessageForMobile) });
+  } catch (error) {
+    console.error("[mobile-api] thread route crashed", { error_message: error?.message || String(error) });
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/api/mobile/inbox/:conversationId/reply", async (req, res) => {
+  try {
+    const wa_id = req.params.conversationId;
+    const body = String(req.body?.text || req.body?.body || "").trim();
+    if (!wa_id || !body) return res.status(400).json({ ok: false, error: "conversationId and text are required" });
+
+    const existingOwnershipState = await getConversationOwnershipState(wa_id);
+    const humanOwnershipState = buildHumanOutboundOwnershipState({
+      conversationType: existingOwnershipState.conversationType,
+      lastCustomerMessageAt: existingOwnershipState.lastCustomerMessageAt
+    });
+    const staffReplyLanguage = INTERNAL_WORKING_LANGUAGE_DEFAULT;
+    const customerLanguage = await getLatestCustomerLanguage(wa_id);
+    const sentReplyText = shouldTranslateText(body)
+      ? await translateTextViaOpenAi({
+        text: body,
+        sourceLanguage: staffReplyLanguage,
+        targetLanguage: customerLanguage,
+        purpose: "Translate internal mobile staff reply for customer delivery."
+      })
+      : body;
+
+    const sendResult = await sendWhatsAppText(wa_id, sentReplyText);
+    await saveMessage({
+      wa_id,
+      direction: "out",
+      body,
+      message_type: "text",
+      staff_reply_text: body,
+      staff_reply_language: staffReplyLanguage,
+      sent_reply_text: sentReplyText,
+      sent_reply_language: customerLanguage,
+      ...humanOwnershipState
+    });
+    await updateConversationOwnershipRows(wa_id, humanOwnershipState);
+    console.log("[mobile-api] reply send succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), wa_id });
+    return res.json({ ok: true, sendResult, mediation: { staff_reply_text: body, staff_reply_language: staffReplyLanguage, sent_reply_text: sentReplyText, sent_reply_language: customerLanguage } });
+  } catch (error) {
+    console.error("[mobile-api] reply send failed", { error: error.response?.data || error.message || error });
+    return res.status(500).json({ ok: false, error: error.response?.data || error.message });
   }
 });
 
