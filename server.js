@@ -9219,7 +9219,7 @@ app.delete("/api/providers/:id", async (req, res) => {
   }
 });
 app.get("/kb-capture", requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "kb-capture.html"));
+  res.redirect("/kb");
 });
 
 app.get("/api/kb-capture", async (req, res) => {
