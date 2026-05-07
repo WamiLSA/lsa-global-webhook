@@ -37,6 +37,18 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Resolve mobile API base URL
+        env:
+          LSA_MOBILE_API_BASE_URL: ${{ vars.LSA_MOBILE_API_BASE_URL || secrets.LSA_MOBILE_API_BASE_URL }}
+        run: |
+          if [ -z "$LSA_MOBILE_API_BASE_URL" ]; then
+            echo "LSA_MOBILE_API_BASE_URL is required for installable APK builds."
+            echo "Set it as a GitHub repository variable or secret to the same backend origin used by the web app, for example https://your-production-backend.example.com"
+            exit 1
+          fi
+          echo "LSA_MOBILE_API_BASE_URL=$LSA_MOBILE_API_BASE_URL" >> "$GITHUB_ENV"
+          node -e "const cfg=require('./app.config.js'); if(!cfg.extra.apiBaseUrl) process.exit(1); console.log('Mobile API base URL resolved:', cfg.extra.apiBaseUrl)"
+
       - name: Ensure native Android project exists
         run: |
           if [ -d android ]; then

@@ -23,7 +23,7 @@
       "package": "com.lsaglobal.internal"
     },
     "extra": {
-      "apiBaseUrl": "http://10.0.2.2:3000"
+      "apiBaseUrl": ""
     }
   }
 }
