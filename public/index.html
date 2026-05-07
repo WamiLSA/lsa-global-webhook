@@ -474,6 +474,8 @@
     let pendingAttachment = null;
     let currentView = "active";
     let currentChannel = "whatsapp";
+    let threadListRequestSeq = 0;
+    let conversationRequestSeq = 0;
 
     function setChannel(channel) {
       currentChannel = channel === "mail" ? "mail" : "whatsapp";
@@ -483,6 +485,7 @@
       composer.style.display = "flex";
       document.getElementById("replyBox").placeholder = currentChannel === "mail" ? "Type an email reply..." : "Type your reply...";
       resetConversationPane();
+      clearAttachmentSelection();
       loadThreads();
     }
 
@@ -807,6 +810,7 @@
     async function loadThreads() {
       const channelAtRequest = currentChannel;
       const viewAtRequest = currentView;
+      const requestSeq = ++threadListRequestSeq;
       const endpoint = channelAtRequest === "mail"
         ? (viewAtRequest === "archived" ? "/api/communications/mail/threads?view=archived" : "/api/communications/mail/threads")
         : (viewAtRequest === "archived" ? "/api/conversations/archived" : "/api/conversations");
@@ -817,6 +821,7 @@
         res = await fetch(endpoint);
         payload = await res.json();
       } catch (error) {
+        if (requestSeq !== threadListRequestSeq || currentChannel !== channelAtRequest || currentView !== viewAtRequest) return;
         console.error("[inbox-frontend] thread fetch request failed", { endpoint, error: error?.message || String(error) });
         container.innerHTML = `
           <div class="thread-diagnostic">
@@ -827,7 +832,7 @@
         return;
       }
 
-      if (currentChannel !== channelAtRequest || currentView !== viewAtRequest) return;
+      if (requestSeq !== threadListRequestSeq || currentChannel !== channelAtRequest || currentView !== viewAtRequest) return;
 
       if (!res.ok || !Array.isArray(payload)) {
         console.error("[inbox-frontend] thread fetch failed", { endpoint, status: res.status, payload });
@@ -917,6 +922,8 @@
 
     async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel) {
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
+      const requestSeq = ++conversationRequestSeq;
+      if (currentChannel !== channelAtRequest) return;
       const conversationChanged = currentWaId !== wa_id;
       currentWaId = wa_id;
       currentContactName = contactName || "Contact";
@@ -934,9 +941,24 @@
         ? formatLastActivity(knownActivityTime, knownActivityDirection)
         : "Loading latest activity...";
 
-      const res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(wa_id)}` : `/api/conversations/${encodeURIComponent(wa_id)}`);
-      const messages = await res.json();
-      if (currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
+      let res;
+      let messages;
+      try {
+        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(wa_id)}` : `/api/conversations/${encodeURIComponent(wa_id)}`);
+        messages = await res.json();
+      } catch (error) {
+        if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
+        console.error("[inbox-frontend] thread message fetch failed", { wa_id, channel: channelAtRequest, error: error?.message || String(error) });
+        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
+        document.getElementById("chatActivity").textContent = "Thread loading failed";
+        return;
+      }
+      if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
+      if (!res.ok) {
+        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
+        document.getElementById("chatActivity").textContent = "Thread loading failed";
+        return;
+      }
       console.log("[inbox-frontend] thread messages fetched", {
         wa_id,
         count: Array.isArray(messages) ? messages.length : 0

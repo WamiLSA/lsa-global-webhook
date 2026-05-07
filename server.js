@@ -952,19 +952,40 @@ function findMailThread(state, threadId) {
   return { threads, thread: index >= 0 ? threads[index] : null, index };
 }
 
+function getMailEntryTimestamp(entry = {}) {
+  return entry.timestamp || entry.created_at || entry.sent_at || entry.received_at || entry.date || null;
+}
+
+function normalizeMailEntryForTimeline(entry = {}, thread = {}) {
+  const timestamp = getMailEntryTimestamp(entry) || thread.timestamp || thread.created_at || new Date().toISOString();
+  const direction = entry.direction || (entry.sender && thread.sender && String(entry.sender).toLowerCase() !== String(thread.sender).toLowerCase() ? "out" : "in");
+  return {
+    ...entry,
+    direction,
+    timestamp,
+    created_at: entry.created_at || timestamp,
+    last_activity_at: entry.last_activity_at || timestamp,
+    channel: entry.channel || "mail"
+  };
+}
+
+function getNormalizedMailEntries(thread = {}) {
+  return (Array.isArray(thread.entries) ? thread.entries : [])
+    .map(entry => normalizeMailEntryForTimeline(entry, thread))
+    .sort((a, b) => new Date(getMailEntryTimestamp(a) || 0) - new Date(getMailEntryTimestamp(b) || 0));
+}
+
 function summarizeMailThread(thread) {
-  const entries = Array.isArray(thread.entries) ? thread.entries : [];
-  const latestEntry = entries
-    .slice()
-    .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0))[0];
-  const lastActivityAt = latestEntry?.timestamp || latestEntry?.created_at || thread.timestamp || null;
+  const entries = getNormalizedMailEntries(thread);
+  const latestEntry = entries[entries.length - 1];
+  const lastActivityAt = getMailEntryTimestamp(latestEntry || {}) || thread.last_activity_at || thread.timestamp || thread.created_at || null;
   const lastMessage = latestEntry?.preview || latestEntry?.body || thread.preview || "";
   return {
     thread_id: thread.thread_id,
     contact_name: thread.subject,
     sender: thread.sender,
     subject: thread.subject,
-    preview: thread.preview,
+    preview: lastMessage || thread.preview || "",
     last_message: lastMessage,
     timestamp: lastActivityAt,
     last_time: lastActivityAt,
@@ -2389,7 +2410,9 @@ function detectProviderCollaborationIntent(text = "") {
     { reason: "work_with_lsa", pattern: /\b(i\s+)?(want|would like|souhaite|veux|voudrais|quiero|quisiera|vorrei|möchte|mochte|gostaria)\s+to\s+(work\s+with\s+(you|lsa\s+global)|collaborate|partner\s+with\s+you|join\s+(your\s+)?team)\b/i },
     { reason: "work_with_lsa_multilingual", pattern: /\b(collaborer|collaborer\s+avec|travailler\s+(avec|chez)|rejoindre|postuler|candidature|candidato|candidata|colaborar|trabajar\s+con|unirme|collaborare|lavorare\s+con|bewerben|zusammenarbeiten|trabalhar\s+com|colaborar)\b.*\b(lsa\s+global|vous|you|ustedes|voi|ihnen|voces|vocês)\b/i },
     { reason: "project_seeking", pattern: /\b(i\s+)?want\s+(translation\s+|interpreting\s+)?(projects?|assignments?|freelance\s+work|work)\b/i },
-    { reason: "provider_application", pattern: /\b(provider|prestataire|supplier|vendor|freelancer|freelance|translator|interpreter|teacher|trainer|tech|ai|automation|collaborator|collaborateur|collaboratrice)\s+(application|registration|intake|collaboration|candidature|inscription)\b/i }
+    { reason: "provider_application", pattern: /\b(provider|prestataire|supplier|vendor|freelancer|freelance|translator|interpreter|teacher|trainer|tech|ai|automation|collaborator|collaborateur|collaboratrice)\s+(application|registration|intake|collaboration|candidature|inscription)\b/i },
+    { reason: "provider_offer_multilingual", pattern: /\b(i\s+am\s+available|available\s+for|i\s+offer|i\s+provide|je\s+suis\s+disponible|je\s+propose|j\s+offre|ofrezco|estoy\s+disponible|ofereco|estou\s+disponivel|offro|sono\s+disponibile|ich\s+biete|ich\s+bin\s+verfugbar|ik\s+bied|ik\s+ben\s+beschikbaar|oferuje|jestem\s+dostepn|jeg\s+tilbyr|jeg\s+er\s+tilgjengelig|jag\s+erbjuder|jag\s+ar\s+tillganglig)\b.*\b(translation|translator|interpreting|interpreter|teaching|training|courses?|tech|ai|automation|projects?|assignments?|work|services?|traduction|interpretation|enseignement|formation|traduccion|interpretacion|enseñanza|traducao|interpretacao|ensino|traduzione|interpretariato|ubersetzung|unterricht|vertaling|tolken|tlumaczen|tłumaczen|oversett|oversaett|oversæt|oversatt)\b/i },
+    { reason: "work_with_lsa_expanded_multilingual", pattern: /\b(samenwerken|samenwerken\s+met|wspolpracowac|współpracować|wspolpraca|współpraca|arbeide\s+med|jobbe\s+med|samarbeide|samarbeta|arbeta\s+med|samarbejde|arbejde\s+med|colaborare|lucrez\s+cu)\b.*\b(lsa\s+global|you|vous|ustedes|voces|vocês|jullie|dere|er|jer|panstwa|państwa)\b/i }
   ];
   const match = patterns.find(({ pattern }) => pattern.test(normalized));
   return { detected: Boolean(match), reason: match?.reason || "none", generalized: false };
@@ -2416,18 +2439,18 @@ function detectCollaboratorSubtype(text = "", recentContext = {}) {
     {
       subtype: "ai_automation_provider",
       reason: "ai_automation_terms",
-      patterns: [/\b(ai|ia|artificial intelligence|intelligence artificielle|inteligencia artificial|intelligenza artificiale|kunstliche intelligenz|ki|automation|automatisation|automatizacion|automazione|automatisierung|workflow|workflows|chatbot|bot|agent|agents|openai|llm|machine learning|generative ai|ia generativa)\b/i]
+      patterns: [/\b(ai|ia|artificial intelligence|intelligence artificielle|inteligencia artificial|intelligenza artificiale|kunstliche intelligenz|ki|automation|automatisation|automatizacion|automazione|automatisierung|automatisering|automatyzacja|workflow|workflows|chatbot|bot|agent|agents|openai|llm|machine learning|generative ai|ia generativa)\b/i]
     },
     {
       subtype: "tech_provider",
       reason: "technology_provider_terms",
-      patterns: [/\b(lms|moodle|website|web\s+site|site\s+web|web\s+development|developer|developpeur|développeur|desarrollador|sviluppatore|entwickler|wordpress|software|app|platform|plateforme|plataforma|piattaforma|tech|technology|technical|informatique|it\s+support|support\s+informatique|soporte\s+tecnico|suporte\s+tecnico|devops|hosting|cloud|database|api)\b/i]
+      patterns: [/\b(lms|moodle|website|web\s+site|site\s+web|web\s+development|developer|developpeur|développeur|desarrollador|sviluppatore|entwickler|ontwikkelaar|udvikler|utvecklare|programista|wordpress|software|app|platform|plateforme|plataforma|piattaforma|tech|technology|technical|informatique|it\s+support|support\s+informatique|soporte\s+tecnico|suporte\s+tecnico|devops|hosting|cloud|database|api)\b/i]
     },
     {
       subtype: "teacher_trainer",
       reason: "teacher_trainer_terms",
       blocked: negatedTeacherTrainer,
-      patterns: [/\b(teacher|trainer|language\s+trainer|instructor|tutor|professor|enseignant|enseignante|professeur|formateur|formatrice|tuteur|tutrice|profesor|profesora|docente|maestro|maestra|insegnante|professore|professoressa|lehrer|lehrerin|dozent|dozentin|professor|professora|instrutor|instrutora|formation|training|teaching|enseigne|enseigner|enseignement|cours\s+de\s+langue)\b/i]
+      patterns: [/\b(teacher|trainer|language\s+trainer|instructor|tutor|professor|enseignant|enseignante|professeur|formateur|formatrice|tuteur|tutrice|profesor|profesora|docente|maestro|maestra|insegnante|professore|professoressa|lehrer|lehrerin|dozent|dozentin|professor|professora|instrutor|instrutora|leraar|docent|nauczyciel|lærer|laerer|lärare|formator|formation|training|teaching|enseigne|enseigner|enseignement|cours\s+de\s+langue|taalles|lekcje|undervisning)\b/i]
     },
     {
       subtype: "examiner_coach",
@@ -2438,18 +2461,18 @@ function detectCollaboratorSubtype(text = "", recentContext = {}) {
       subtype: "interpreter",
       reason: "interpreter_terms",
       blocked: negatedTranslatorInterpreter,
-      patterns: [/\b(interpreter|interpreting|interpretation|interpretariat|interprete|interpretes|dolmetscher|dolmetschen|口译|通訳|устн(?:ый|ого)?\s+перевод)\b/i]
+      patterns: [/\b(interpreter|interpreting|interpretation|interpretariat|interprete|interpretes|dolmetscher|dolmetschen|tolk|tolken|tolkning|ustne\s+tlumaczenie|ustne\s+tłumaczenie|interpretare|口译|通訳|устн(?:ый|ого)?\s+перевод)\b/i]
     },
     {
       subtype: "translator",
       reason: "translator_terms",
       blocked: negatedTranslatorInterpreter,
-      patterns: [/\b(translator|translation\s+provider|traducteur|traductrice|traductor|traductora|traduttore|traduttrice|tradutor|tradutora|ubersetzer|uebersetzer|переводчик|翻译者|翻訳者)\b/i]
+      patterns: [/\b(translator|translation\s+provider|traducteur|traductrice|traductor|traductora|traduttore|traduttrice|tradutor|tradutora|ubersetzer|uebersetzer|vertaler|tlumacz|tłumacz|oversetter|oversaetter|oversætter|oversattare|översättare|traducator|переводчик|翻译者|翻訳者)\b/i]
     },
     {
       subtype: "general_collaborator",
       reason: "general_collaboration_terms",
-      patterns: [/\b(collaborator|collaborateur|collaboratrice|partner|partenaire|partnership|partenariat|socio|socia|partnerariato|prestataire|supplier|vendor|provider|freelancer|freelance|agency|agence|outsourcing|subcontractor|sous-traitant)\b/i]
+      patterns: [/\b(collaborator|collaborateur|collaboratrice|partner|partenaire|partnership|partenariat|socio|socia|partnerariato|prestataire|supplier|vendor|provider|freelancer|freelance|agency|agence|outsourcing|subcontractor|sous-traitant|leverancier|leverandor|leverandør|leverantor|leverantör|dostawca|wspolpraca|współpraca|samenwerken|samarbejde|samarbeid|samarbete|colaborare)\b/i]
     }
   ];
 
@@ -6554,7 +6577,7 @@ app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
   const state = await readCommunicationsLayerState();
   const { thread } = findMailThread(state, req.params.thread_id);
   if (!thread) return res.status(404).json({ error: "Mail thread not found" });
-  return res.json(thread.entries || []);
+  return res.json(getNormalizedMailEntries(thread));
 });
 
 app.post("/api/communications/mail/threads/:thread_id/archive", async (req, res) => {
@@ -6562,8 +6585,10 @@ app.post("/api/communications/mail/threads/:thread_id/archive", async (req, res)
     const state = await readCommunicationsLayerState();
     const { thread } = findMailThread(state, req.params.thread_id);
     if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    const now = new Date().toISOString();
     thread.is_archived = true;
-    thread.archived_at = new Date().toISOString();
+    thread.archived_at = now;
+    thread.last_action_at = now;
     await writeCommunicationsLayerState(state);
     return res.json({ ok: true, thread: summarizeMailThread(thread) });
   } catch (error) {
@@ -6576,8 +6601,10 @@ app.post("/api/communications/mail/threads/:thread_id/unarchive", async (req, re
     const state = await readCommunicationsLayerState();
     const { thread } = findMailThread(state, req.params.thread_id);
     if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    const now = new Date().toISOString();
     thread.is_archived = false;
-    thread.unarchived_at = new Date().toISOString();
+    thread.unarchived_at = now;
+    thread.last_action_at = now;
     delete thread.archived_at;
     await writeCommunicationsLayerState(state);
     return res.json({ ok: true, thread: summarizeMailThread(thread) });
@@ -6591,9 +6618,11 @@ app.post("/api/communications/mail/threads/:thread_id/clear", async (req, res) =
     const state = await readCommunicationsLayerState();
     const { thread } = findMailThread(state, req.params.thread_id);
     if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+    const now = new Date().toISOString();
     thread.entries = [];
     thread.preview = "";
-    thread.timestamp = new Date().toISOString();
+    thread.timestamp = now;
+    thread.last_activity_at = now;
     thread.is_read = true;
     await writeCommunicationsLayerState(state);
     return res.json({ ok: true, contactRetained: true });
@@ -6625,6 +6654,7 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
     if (!thread) return res.status(404).json({ error: "Mail thread not found" });
     if (!body && !req.file) return res.status(400).json({ error: "Reply content or attachment required" });
 
+    const now = new Date().toISOString();
     const newEntry = {
       entry_id: `mail-entry-${Date.now()}`,
       direction: "out",
@@ -6634,7 +6664,8 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
       subject: thread.subject,
       body,
       preview: body || `Attachment: ${req.file?.originalname || "file"}`,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
+      created_at: now,
       is_read: true,
       channel: "mail"
     };
@@ -6643,7 +6674,7 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
         file_name: req.file.originalname,
         mime_type: req.file.mimetype,
         size: req.file.size,
-        path: `/uploads/outbound/${req.file.filename}`
+        path: `/uploads/whatsapp/${req.file.filename}`
       };
     }
 
@@ -6653,6 +6684,7 @@ app.post("/api/communications/mail/reply", outboundUpload.single("attachment"), 
     thread.entries.push(newEntry);
     thread.preview = newEntry.preview;
     thread.timestamp = newEntry.timestamp;
+    thread.last_activity_at = newEntry.timestamp;
     thread.is_read = true;
     await writeCommunicationsLayerState(state);
     return res.json({ ok: true, entry: newEntry });
