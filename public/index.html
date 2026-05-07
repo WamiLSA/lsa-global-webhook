@@ -242,10 +242,47 @@
       margin-top: 6px;
     }
     
-        .hub-identity { margin-bottom: 12px; }
-    .hub-identity h3 { margin: 0; }
-    .channel-toggle {display:flex; gap:8px; margin-bottom:10px;}
-    .channel-toggle button{flex:1; border:1px solid var(--lsa-input-border); border-radius:10px; padding:10px 10px; cursor:pointer; font-weight:700;}
+    .hub-identity {
+      margin-bottom: 14px;
+      padding: 14px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 18px;
+      background: linear-gradient(135deg, color-mix(in srgb, var(--lsa-blue) 10%, var(--lsa-surface)), var(--lsa-surface));
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+    .hub-identity h3 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+    .hub-identity p {
+      margin: 0;
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .inbox-controls {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 18px;
+      background: var(--lsa-surface);
+    }
+    .control-section {
+      display: grid;
+      gap: 7px;
+    }
+    .control-section__label {
+      color: var(--lsa-text-muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .channel-toggle {display:flex; gap:8px;}
+    .channel-toggle button{flex:1; border:1px solid var(--lsa-input-border); border-radius:12px; padding:10px 10px; cursor:pointer; font-weight:700;}
     .channel-toggle .whatsapp{background:#ffffff; color:#1f2937; border-color:#d0d7e2;}
     .channel-toggle .mail{background:#e9f1ff; border-color:#8fb5f8; color:#113f92;}
     .channel-toggle button.active{box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--lsa-blue) 38%, transparent);}
@@ -254,22 +291,71 @@
     .thread-mail{border-left:4px solid #2d6cdf; background:color-mix(in srgb, #2d6cdf 8%, var(--lsa-surface));}
 
     .view-toggle {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-bottom: 10px;
+      padding: 4px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 14px;
+      background: var(--lsa-surface-muted);
     }
     .view-toggle button {
-      border: 1px solid var(--lsa-input-border);
-      background: var(--lsa-surface);
-      border-radius: 6px;
-      padding: 6px 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 11px;
+      padding: 10px;
       cursor: pointer;
       font-size: 12px;
+      font-weight: 800;
+      color: var(--lsa-text-muted);
     }
     .view-toggle button.active {
-      background: var(--lsa-hover);
+      background: var(--lsa-surface);
       border-color: var(--lsa-border);
+      color: var(--lsa-blue);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+    .view-toggle button small {
+      display: block;
+      margin-top: 3px;
+      color: var(--lsa-text-muted);
+      font-size: 10px;
       font-weight: 600;
+      line-height: 1.2;
+    }
+    .view-toggle button.active small {
+      color: color-mix(in srgb, var(--lsa-blue) 68%, var(--lsa-text-muted));
+    }
+    .view-context {
+      border: 1px solid color-mix(in srgb, var(--lsa-blue) 16%, var(--lsa-border));
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--lsa-blue) 6%, var(--lsa-surface));
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .view-context strong {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--lsa-text);
+      font-size: 13px;
+    }
+    .view-context--archived {
+      border-color: color-mix(in srgb, #64748b 26%, var(--lsa-border));
+      background: color-mix(in srgb, #64748b 10%, var(--lsa-surface));
+    }
+    .thread-list-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 12px 2px 8px;
+      color: var(--lsa-text-muted);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
     .badge {
       display: inline-block;
@@ -409,15 +495,31 @@
   <div id="topNavMount"></div>
   <div id="appLayout">
   <div id="sidebar">
-    <div class="hub-identity"><h3>Communications Hub</h3></div>
-    <div class="channel-toggle">
-      <button id="channelWhatsAppBtn" type="button" class="active whatsapp" onclick="setChannel('whatsapp')">💬 WhatsApp Inbox</button>
-      <button id="channelMailBtn" type="button" class="mail" onclick="setChannel('mail')">✉️ Mail Inbox</button>
+    <div class="hub-identity">
+      <h3>Communications Hub</h3>
+      <p>Inbox is the single home for active and archived client communication across WhatsApp and Mail.</p>
     </div>
-    <div class="view-toggle">
-      <button id="activeViewBtn" type="button" class="active" onclick="setInboxView('active')">Active</button>
-      <button id="archivedViewBtn" type="button" onclick="setInboxView('archived')">Archived</button>
+    <div class="inbox-controls" aria-label="Inbox controls">
+      <div class="control-section">
+        <div class="control-section__label">Channel</div>
+        <div class="channel-toggle">
+          <button id="channelWhatsAppBtn" type="button" class="active whatsapp" onclick="setChannel('whatsapp')">💬 WhatsApp Inbox</button>
+          <button id="channelMailBtn" type="button" class="mail" onclick="setChannel('mail')">✉️ Mail Inbox</button>
+        </div>
+      </div>
+      <div class="control-section">
+        <div class="control-section__label">Thread status</div>
+        <div class="view-toggle" role="tablist" aria-label="Thread status filter">
+          <button id="activeViewBtn" type="button" class="active" role="tab" aria-selected="true" onclick="setInboxView('active')">Active<small>Open work queue</small></button>
+          <button id="archivedViewBtn" type="button" role="tab" aria-selected="false" onclick="setInboxView('archived')">Archived<small>Closed reference</small></button>
+        </div>
+      </div>
+      <div id="viewContext" class="view-context">
+        <strong>Active threads</strong>
+        Current WhatsApp and Mail conversations that need monitoring, labels, replies, or follow-up.
+      </div>
     </div>
+    <div class="thread-list-heading"><span id="threadListHeading">Active threads</span><span id="threadListChannel">WhatsApp</span></div>
     <div id="threads"></div>
   </div>
 
@@ -481,6 +583,9 @@
       currentChannel = channel === "mail" ? "mail" : "whatsapp";
       document.getElementById("channelWhatsAppBtn").classList.toggle("active", currentChannel === "whatsapp");
       document.getElementById("channelMailBtn").classList.toggle("active", currentChannel === "mail");
+      renderInboxViewControls();
+      const isMail = currentChannel === "mail";
+      document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       const composer = document.getElementById("composer");
       composer.style.display = "flex";
       document.getElementById("replyBox").placeholder = currentChannel === "mail" ? "Type an email reply..." : "Type your reply...";
@@ -489,10 +594,30 @@
       loadThreads();
     }
 
+    function renderInboxViewControls() {
+      const isArchived = currentView === "archived";
+      const isMail = currentChannel === "mail";
+      const activeViewBtn = document.getElementById("activeViewBtn");
+      const archivedViewBtn = document.getElementById("archivedViewBtn");
+      const viewContext = document.getElementById("viewContext");
+      const threadListHeading = document.getElementById("threadListHeading");
+      const threadListChannel = document.getElementById("threadListChannel");
+
+      activeViewBtn.classList.toggle("active", !isArchived);
+      archivedViewBtn.classList.toggle("active", isArchived);
+      activeViewBtn.setAttribute("aria-selected", !isArchived ? "true" : "false");
+      archivedViewBtn.setAttribute("aria-selected", isArchived ? "true" : "false");
+      viewContext.classList.toggle("view-context--archived", isArchived);
+      viewContext.innerHTML = isArchived
+        ? `<strong>Archived threads</strong>Closed conversations are preserved here for reference and can be restored to the active inbox when work resumes.`
+        : `<strong>Active threads</strong>Current WhatsApp and Mail conversations that need monitoring, labels, replies, or follow-up.`;
+      threadListHeading.textContent = isArchived ? "Archived threads" : "Active threads";
+      threadListChannel.textContent = isMail ? "Mail" : "WhatsApp";
+    }
+
     function setInboxView(view) {
       currentView = view === "archived" ? "archived" : "active";
-      document.getElementById("activeViewBtn").classList.toggle("active", currentView === "active");
-      document.getElementById("archivedViewBtn").classList.toggle("active", currentView === "archived");
+      renderInboxViewControls();
       setThreadActionButtons();
       const isMail = currentChannel === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
@@ -1229,13 +1354,9 @@
 
     const initialView = new URLSearchParams(window.location.search).get("view");
     if (initialView === "archived") {
-      document.body.setAttribute("data-page", "archived");
-      const archivedLink = document.querySelector('.lsa-top-nav__link[href="/archived"]');
-      const inboxLink = document.querySelector('.lsa-top-nav__link[href="/inbox"]');
-      if (archivedLink) archivedLink.classList.add("is-active");
-      if (inboxLink) inboxLink.classList.remove("is-active");
       setInboxView("archived");
     } else {
+      renderInboxViewControls();
       setThreadActionButtons();
       const isMail = currentChannel === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
