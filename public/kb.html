@@ -2,213 +2,614 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>LSA GLOBAL Knowledge Base Manager</title>
+  <title>LSA GLOBAL Knowledge Base</title>
   <script src="/theme-init.js"></script>
   <link rel="stylesheet" href="/top-nav.css" />
   <style>
+    :root {
+      --kb-panel-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      --kb-radius-lg: 18px;
+      --kb-radius-md: 12px;
+    }
+
     body {
       font-family: Arial, sans-serif;
       margin: 0;
-      background: var(--lsa-app-bg);
+      background:
+        radial-gradient(circle at top left, rgba(59, 130, 246, 0.10), transparent 34rem),
+        var(--lsa-app-bg);
+      color: var(--lsa-text);
     }
 
-    #pageLayout {
+    button, input, textarea, select {
+      font: inherit;
+    }
+
+    .kb-shell {
+      box-sizing: border-box;
+      min-height: calc(100vh - 64px);
+      padding: 24px;
+    }
+
+    .kb-hero {
+      align-items: flex-start;
       display: flex;
-      height: calc(100vh - 64px);
+      gap: 18px;
+      justify-content: space-between;
+      margin: 0 auto 20px;
+      max-width: 1480px;
     }
 
-    #left {
-      width: 38%;
-      border-right: 1px solid var(--lsa-border);
+    .kb-eyebrow {
+      color: var(--lsa-text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      margin: 0 0 8px;
+      text-transform: uppercase;
+    }
+
+    .kb-hero h1 {
+      font-size: clamp(28px, 3vw, 42px);
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin: 0 0 10px;
+    }
+
+    .kb-hero p {
+      color: var(--lsa-text-muted);
+      font-size: 15px;
+      line-height: 1.6;
+      margin: 0;
+      max-width: 780px;
+    }
+
+    .kb-hero__badge {
       background: var(--lsa-surface);
-      overflow-y: auto;
-      padding: 16px;
+      border: 1px solid var(--lsa-border);
+      border-radius: 999px;
+      box-shadow: var(--kb-panel-shadow);
+      color: var(--lsa-text-muted);
+      flex: 0 0 auto;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 14px;
+      white-space: nowrap;
+    }
+
+    .kb-layout {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(340px, 0.85fr) minmax(0, 1.35fr);
+      margin: 0 auto;
+      max-width: 1480px;
+    }
+
+    .kb-stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .kb-card {
+      background: var(--lsa-surface);
+      border: 1px solid var(--lsa-border);
+      border-radius: var(--kb-radius-lg);
+      box-shadow: var(--kb-panel-shadow);
+      padding: 18px;
+    }
+
+    .kb-card--subtle {
+      box-shadow: none;
+    }
+
+    .kb-section-title {
+      align-items: flex-start;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .kb-section-title h2,
+    .kb-section-title h3 {
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    .kb-section-title p {
+      color: var(--lsa-text-muted);
+      font-size: 13px;
+      line-height: 1.45;
+      margin: 6px 0 0;
+    }
+
+    .kb-tag {
+      background: rgba(59, 130, 246, 0.10);
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      border-radius: 999px;
+      color: var(--lsa-text-muted);
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 8px;
+      text-transform: uppercase;
+    }
+
+    .kb-field-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .kb-field-grid--three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .kb-field-grid--single {
+      grid-template-columns: 1fr;
+    }
+
+    input, textarea, select {
+      background: var(--lsa-input-bg, var(--lsa-surface));
+      border: 1px solid var(--lsa-border);
+      border-radius: var(--kb-radius-md);
       box-sizing: border-box;
-    }
-
-    #right {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      box-sizing: border-box;
-    }
-
-    h2, h3 {
-      margin-top: 0;
-    }
-
-    input, textarea, select, button {
+      color: var(--lsa-text);
+      margin: 0;
+      padding: 11px 12px;
       width: 100%;
-      box-sizing: border-box;
-      margin-bottom: 10px;
-      padding: 10px;
-      font-size: 14px;
     }
 
     textarea {
-      min-height: 90px;
+      line-height: 1.45;
+      min-height: 110px;
       resize: vertical;
     }
 
-    .card {
+    .kb-large-textarea {
+      min-height: 150px;
+    }
+
+    .kb-button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    button {
+      background: #1d4ed8;
+      border: 1px solid #1d4ed8;
+      border-radius: var(--kb-radius-md);
+      color: #fff;
+      cursor: pointer;
+      font-weight: 700;
+      padding: 10px 13px;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+
+    button:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    .kb-button-row button {
+      flex: 1 1 160px;
+    }
+
+    .kb-secondary-button {
+      background: transparent;
+      border-color: var(--lsa-border);
+      color: var(--lsa-text);
+    }
+
+    .kb-danger-button {
+      background: #b91c1c;
+      border-color: #b91c1c;
+    }
+
+    .kb-list-card {
       background: var(--lsa-surface);
       border: 1px solid var(--lsa-border);
-      border-radius: 10px;
-      padding: 12px;
+      border-radius: var(--kb-radius-md);
       margin-bottom: 12px;
+      padding: 14px;
     }
 
     .small {
-      font-size: 12px;
       color: var(--lsa-text-muted);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     .title {
-      font-weight: bold;
-      margin-bottom: 6px;
+      font-weight: 800;
+      margin-bottom: 7px;
     }
 
     .answer {
+      line-height: 1.5;
+      margin-top: 9px;
       white-space: pre-wrap;
-      margin-top: 8px;
-    }
-
-    .filters {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 16px;
     }
 
     .actions {
       display: flex;
-      gap: 10px;
-      margin-top: 10px;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
     }
 
     .actions button {
-      width: auto;
-      flex: 1;
+      flex: 1 1 120px;
+      padding: 9px 10px;
     }
 
     .edit-mode {
-      background: var(--lsa-warning-bg);
+      outline: 2px solid rgba(245, 158, 11, 0.45);
+    }
+
+    .kb-review-panel {
+      background: rgba(59, 130, 246, 0.06);
+      border: 1px dashed rgba(59, 130, 246, 0.30);
+      border-radius: var(--kb-radius-lg);
+      margin-top: 14px;
+      padding: 14px;
+    }
+
+    .kb-preview-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-bottom: 10px;
+    }
+
+    .kb-preview-answer {
+      background: var(--lsa-surface);
+      border: 1px solid var(--lsa-border);
+      border-radius: var(--kb-radius-md);
+      padding: 12px;
+    }
+
+    .kb-check-label {
+      align-items: center;
+      color: var(--lsa-text-muted);
+      display: flex;
+      font-size: 13px;
+      gap: 8px;
+      margin: 2px 0 10px;
+    }
+
+    .kb-check-label input {
+      margin: 0;
+      width: auto;
+    }
+
+    .kb-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .kb-tab-button {
+      background: transparent;
+      border-color: var(--lsa-border);
+      color: var(--lsa-text-muted);
+      flex: 0 0 auto;
+    }
+
+    .kb-tab-button.is-active {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+      color: #fff;
+    }
+
+    .kb-list-section[hidden] {
+      display: none;
+    }
+
+    .filters {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 12px 0 16px;
     }
 
     hr {
       border: none;
       border-top: 1px solid var(--lsa-border);
-      margin: 20px 0;
+      margin: 16px 0;
+    }
+
+    @media (max-width: 1100px) {
+      .kb-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .kb-shell {
+        padding: 16px;
+      }
+
+      .kb-hero {
+        display: block;
+      }
+
+      .kb-hero__badge {
+        display: inline-block;
+        margin-top: 14px;
+      }
+
+      .kb-field-grid,
+      .kb-field-grid--three,
+      .filters,
+      .kb-preview-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body data-page="kb">
   <div id="topNavMount"></div>
-  <div id="pageLayout">
-  <div id="left">
-    <h2>KB Manager</h2>
 
-    <div class="card">
-      <h3>Quick Capture / Random Knowledge</h3>
+  <main class="kb-shell">
+    <section class="kb-hero" aria-labelledby="kbPageTitle">
+      <div>
+        <p class="kb-eyebrow">Knowledge operations</p>
+        <h1 id="kbPageTitle">Knowledge Base</h1>
+        <p>Capture raw operational knowledge, refine it with the structured assistant, create categories, and publish approved articles from one coherent workspace.</p>
+      </div>
+      <div class="kb-hero__badge">Capture Assistant merged into Knowledge Base</div>
+    </section>
 
-      <input id="quickTitle" placeholder="Optional title" />
+    <div class="kb-layout">
+      <section class="kb-stack" aria-label="Knowledge creation forms">
+        <div class="kb-card" id="quickCaptureCard">
+          <div class="kb-section-title">
+            <div>
+              <h2>Quick Capture / Random Knowledge</h2>
+              <p>Fast parking area for useful notes before they are reviewed or converted.</p>
+            </div>
+            <span class="kb-tag">Fast input</span>
+          </div>
+          <div class="kb-field-grid kb-field-grid--single">
+            <input id="quickTitle" placeholder="Optional title" />
+            <textarea id="quickRawText" class="kb-large-textarea" placeholder="Paste raw knowledge: policies, service explanations, random notes, archive text, staff guidance, FAQs, copied website text, or anything useful..."></textarea>
+            <input id="quickNotes" placeholder="Optional notes" />
+          </div>
+          <div class="kb-field-grid">
+            <select id="quickSourceType">
+              <option value="manual">manual</option>
+              <option value="email">email</option>
+              <option value="website">website</option>
+              <option value="archive">archive</option>
+              <option value="staff">staff</option>
+            </select>
+            <select id="quickStatus">
+              <option value="pending">pending</option>
+              <option value="reviewed">reviewed</option>
+              <option value="processed">processed</option>
+            </select>
+          </div>
+          <div class="kb-button-row">
+            <button onclick="createQuickCapture()">Save Quick Capture</button>
+          </div>
+        </div>
 
-      <textarea id="quickRawText" placeholder="Paste any raw knowledge here: policies, service explanations, random notes, old archive text, staff guidance, FAQs, copied website text, anything useful..."></textarea>
+        <div class="kb-card" id="captureFormCard">
+          <div class="kb-section-title">
+            <div>
+              <h2 id="captureFormTitle">Capture Assistant</h2>
+              <p>Structure raw question-answer knowledge, review it, check duplicates, and send it to the official KB.</p>
+            </div>
+            <span class="kb-tag">Assisted review</span>
+          </div>
 
-      <input id="quickNotes" placeholder="Optional notes" />
+          <input type="hidden" id="capture_id" />
+          <div class="kb-field-grid kb-field-grid--single">
+            <input id="title" placeholder="Optional title" />
+            <input id="raw_question" placeholder="Original question (optional)" />
+            <textarea id="raw_answer" class="kb-large-textarea" placeholder="Raw answer / explanation / useful human response"></textarea>
+          </div>
+          <div class="kb-field-grid">
+            <input id="suggested_category" placeholder="Suggested category" />
+            <input id="audience" placeholder="Audience (client, student, partner, staff)" />
+          </div>
+          <div class="kb-field-grid kb-field-grid--three">
+            <select id="source_channel">
+              <option value="manual">manual</option>
+              <option value="inbox">inbox</option>
+              <option value="email">email</option>
+              <option value="whatsapp">whatsapp</option>
+              <option value="website">website</option>
+              <option value="staff">staff</option>
+            </select>
+            <input id="source_reference" placeholder="Source reference (optional)" />
+            <select id="status">
+              <option value="pending">pending</option>
+              <option value="reviewed">reviewed</option>
+              <option value="approved">approved</option>
+              <option value="converted">converted</option>
+            </select>
+          </div>
+          <textarea id="notes" placeholder="Review notes / processing notes"></textarea>
 
-      <select id="quickSourceType">
-        <option value="manual">manual</option>
-        <option value="email">email</option>
-        <option value="website">website</option>
-        <option value="archive">archive</option>
-        <option value="staff">staff</option>
-      </select>
+          <div class="kb-review-panel" id="aiSuggestionCard" style="display:none;">
+            <div class="kb-section-title">
+              <div>
+                <h3>Structured Knowledge Preview</h3>
+                <p>Review the generated structure before checking duplicates or publishing.</p>
+              </div>
+            </div>
+            <div class="kb-preview-grid">
+              <div class="small"><strong>Title:</strong> <span id="preview_title"></span></div>
+              <div class="small"><strong>Improved Question:</strong> <span id="preview_question"></span></div>
+              <div class="small"><strong>Keywords:</strong> <span id="preview_keywords"></span></div>
+              <div class="small"><strong>Audience:</strong> <span id="preview_audience"></span></div>
+              <div class="small"><strong>Suggested Category:</strong> <span id="preview_category"></span></div>
+              <div class="small"><strong>New Category Suggestion:</strong> <span id="preview_new_category"></span></div>
+            </div>
+            <div class="answer kb-preview-answer" id="preview_answer"></div>
+            <hr>
+            <div class="kb-field-grid">
+              <input id="convert_keywords" placeholder="Keywords for KB article" />
+              <input id="convert_category_name" placeholder="Category to use for KB article" />
+            </div>
+            <label class="kb-check-label">
+              <input type="checkbox" id="convert_create_new_category" />
+              Create new category if it does not exist
+            </label>
+            <div class="kb-button-row">
+              <button class="kb-secondary-button" onclick="checkDuplicates()">Check Duplicates</button>
+              <button onclick="convertToKB()">Convert to KB Article</button>
+            </div>
+            <div id="duplicateResults"></div>
+          </div>
 
-      <select id="quickStatus">
-        <option value="pending">pending</option>
-        <option value="reviewed">reviewed</option>
-        <option value="processed">processed</option>
-      </select>
+          <div class="kb-button-row">
+            <button class="kb-secondary-button" onclick="generateStructuredKnowledge()">Generate Structured Knowledge</button>
+            <button id="saveBtn" onclick="createOrUpdateCapture()">Save Capture</button>
+            <button id="cancelCaptureEditBtn" class="kb-secondary-button" onclick="cancelCaptureEdit()" style="display:none;">Cancel Capture Edit</button>
+          </div>
+        </div>
 
-      <button onclick="createQuickCapture()">Save Quick Capture</button>
+        <div class="kb-card">
+          <div class="kb-section-title">
+            <div>
+              <h2>Create Category</h2>
+              <p>Add a clean retrieval category for official knowledge articles.</p>
+            </div>
+          </div>
+          <div class="kb-field-grid kb-field-grid--single">
+            <input id="catName" placeholder="Category name" />
+            <textarea id="catDesc" placeholder="Category description"></textarea>
+          </div>
+          <div class="kb-button-row">
+            <button onclick="createCategory()">Save Category</button>
+          </div>
+        </div>
+
+        <div class="kb-card" id="articleFormCard">
+          <div class="kb-section-title">
+            <div>
+              <h2 id="articleFormTitle">Create Knowledge Article</h2>
+              <p>Create or edit official KB content for controlled internal retrieval.</p>
+            </div>
+            <span class="kb-tag">Official KB</span>
+          </div>
+          <div class="kb-field-grid">
+            <select id="articleCategory"></select>
+            <input id="articleTitle" placeholder="Title" />
+          </div>
+          <input id="articleQuestion" placeholder="Question (optional)" />
+          <textarea id="articleAnswer" class="kb-large-textarea" placeholder="Answer / content"></textarea>
+          <div class="kb-field-grid">
+            <input id="articleKeywords" placeholder="Keywords (comma separated)" />
+            <input id="articleAudience" placeholder="Audience (e.g. client, student, partner, staff)" />
+          </div>
+          <div class="kb-field-grid">
+            <select id="articleLanguage">
+              <option value="en">English</option>
+              <option value="fr">French</option>
+              <option value="es">Spanish</option>
+            </select>
+            <select id="articleStatus">
+              <option value="published">Published</option>
+              <option value="draft">Draft</option>
+            </select>
+          </div>
+          <div class="kb-button-row">
+            <button id="saveArticleBtn" onclick="createOrUpdateArticle()">Save Article</button>
+            <button id="cancelArticleEditBtn" class="kb-secondary-button" onclick="cancelArticleEdit()" style="display:none;">Cancel Article Edit</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="kb-card" aria-label="Knowledge review lists">
+        <div class="kb-section-title">
+          <div>
+            <h2>Review Workspace</h2>
+            <p>Review quick captures, assisted captures, and official articles without leaving the Knowledge Base.</p>
+          </div>
+        </div>
+
+        <div class="kb-tabs" role="tablist" aria-label="Knowledge review sections">
+          <button id="tabQuick" class="kb-tab-button is-active" type="button" onclick="showReviewSection('quick')">Quick Captures</button>
+          <button id="tabAssisted" class="kb-tab-button" type="button" onclick="showReviewSection('assisted')">Assisted Captures</button>
+          <button id="tabArticles" class="kb-tab-button" type="button" onclick="showReviewSection('articles')">Knowledge Articles</button>
+        </div>
+
+        <div id="sectionQuick" class="kb-list-section">
+          <div class="kb-section-title">
+            <div>
+              <h3>Quick Capture Entries</h3>
+              <p>Raw knowledge waiting for review or manual processing.</p>
+            </div>
+          </div>
+          <div id="quickCaptureList"></div>
+        </div>
+
+        <div id="sectionAssisted" class="kb-list-section" hidden>
+          <div class="kb-section-title">
+            <div>
+              <h3>Captured Knowledge</h3>
+              <p>Assistant-managed captures that have not yet been converted.</p>
+            </div>
+          </div>
+          <input id="captureSearchBox" placeholder="Search title, question, answer, category..." oninput="renderCaptures()" />
+          <div id="captures"></div>
+        </div>
+
+        <div id="sectionArticles" class="kb-list-section" hidden>
+          <div class="kb-section-title">
+            <div>
+              <h3>Knowledge Articles</h3>
+              <p>Official published or draft knowledge used by internal operations.</p>
+            </div>
+          </div>
+          <input id="articleSearchBox" placeholder="Search title, question, answer, keywords..." oninput="renderArticles()" />
+          <div class="filters">
+            <select id="filterCategory" onchange="renderArticles()">
+              <option value="">All categories</option>
+            </select>
+            <select id="filterAudience" onchange="renderArticles()">
+              <option value="">All audiences</option>
+              <option value="client">client</option>
+              <option value="student">student</option>
+              <option value="partner">partner</option>
+              <option value="staff">staff</option>
+            </select>
+            <select id="filterLanguage" onchange="renderArticles()">
+              <option value="">All languages</option>
+              <option value="en">English</option>
+              <option value="fr">French</option>
+              <option value="es">Spanish</option>
+            </select>
+          </div>
+          <div id="articles"></div>
+        </div>
+      </section>
     </div>
-
-    <div class="card">
-      <h3>Create Category</h3>
-      <input id="catName" placeholder="Category name" />
-      <textarea id="catDesc" placeholder="Category description"></textarea>
-      <button onclick="createCategory()">Save Category</button>
-    </div>
-
-    <div class="card" id="articleFormCard">
-      <h3 id="formTitle">Create Knowledge Article</h3>
-
-      <select id="articleCategory"></select>
-
-      <input id="articleTitle" placeholder="Title" />
-      <input id="articleQuestion" placeholder="Question (optional)" />
-      <textarea id="articleAnswer" placeholder="Answer / content"></textarea>
-      <input id="articleKeywords" placeholder="Keywords (comma separated)" />
-      <input id="articleAudience" placeholder="Audience (e.g. client, student, partner, staff)" />
-
-      <select id="articleLanguage">
-        <option value="en">English</option>
-        <option value="fr">French</option>
-        <option value="es">Spanish</option>
-      </select>
-
-      <select id="articleStatus">
-        <option value="published">Published</option>
-        <option value="draft">Draft</option>
-      </select>
-
-      <button id="saveArticleBtn" onclick="createOrUpdateArticle()">Save Article</button>
-      <button id="cancelEditBtn" onclick="cancelEdit()" style="display:none;">Cancel Edit</button>
-    </div>
-  </div>
-
-  <div id="right">
-    <h2>Quick Capture Entries</h2>
-    <div id="quickCaptureList"></div>
-
-    <hr>
-
-    <h2>Knowledge Articles</h2>
-
-    <input id="searchBox" placeholder="Search title, question, answer, keywords..." oninput="renderArticles()" />
-
-    <div class="filters">
-      <select id="filterCategory" onchange="renderArticles()">
-        <option value="">All categories</option>
-      </select>
-
-      <select id="filterAudience" onchange="renderArticles()">
-        <option value="">All audiences</option>
-        <option value="client">client</option>
-        <option value="student">student</option>
-        <option value="partner">partner</option>
-        <option value="staff">staff</option>
-      </select>
-
-      <select id="filterLanguage" onchange="renderArticles()">
-        <option value="">All languages</option>
-        <option value="en">English</option>
-        <option value="fr">French</option>
-        <option value="es">Spanish</option>
-      </select>
-    </div>
-
-    <div id="articles"></div>
-  </div>
-
-  </div>
+  </main>
 
   <script src="/top-nav.js"></script>
   <script>
     let categories = [];
     let articles = [];
+    let captures = [];
     let editingArticleId = null;
+    let editingCaptureId = null;
+
+    function showReviewSection(section) {
+      ["quick", "assisted", "articles"].forEach(name => {
+        document.getElementById(`section${name.charAt(0).toUpperCase()}${name.slice(1)}`).hidden = name !== section;
+        document.getElementById(`tab${name.charAt(0).toUpperCase()}${name.slice(1)}`).classList.toggle("is-active", name === section);
+      });
+    }
 
     async function loadCategories() {
       const res = await fetch("/api/kb/categories");
@@ -243,7 +644,7 @@
     }
 
     function renderArticles() {
-      const search = document.getElementById("searchBox").value.toLowerCase().trim();
+      const search = document.getElementById("articleSearchBox").value.toLowerCase().trim();
       const categoryFilter = document.getElementById("filterCategory").value;
       const audienceFilter = document.getElementById("filterAudience").value;
       const languageFilter = document.getElementById("filterLanguage").value;
@@ -272,7 +673,7 @@
 
       filtered.forEach(article => {
         const div = document.createElement("div");
-        div.className = "card";
+        div.className = "kb-list-card";
 
         div.innerHTML = `
           <div class="title">${article.title || ""}</div>
@@ -286,8 +687,8 @@
           <div class="small">Keywords: ${article.keywords || ""}</div>
           <div class="answer">${article.answer || ""}</div>
           <div class="actions">
-            <button onclick="editArticle(${article.id})">Edit</button>
-            <button onclick="deleteArticle(${article.id})">Delete</button>
+            <button class="kb-secondary-button" onclick="editArticle(${article.id})">Edit</button>
+            <button class="kb-danger-button" onclick="deleteArticle(${article.id})">Delete</button>
           </div>
         `;
 
@@ -301,9 +702,7 @@
 
       const res = await fetch("/api/kb/categories", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description })
       });
 
@@ -321,45 +720,28 @@
     }
 
     async function createOrUpdateArticle() {
-      const category_id = document.getElementById("articleCategory").value;
-      const title = document.getElementById("articleTitle").value.trim();
-      const question = document.getElementById("articleQuestion").value.trim();
-      const answer = document.getElementById("articleAnswer").value.trim();
-      const keywords = document.getElementById("articleKeywords").value.trim();
-      const audience = document.getElementById("articleAudience").value.trim();
-      const language = document.getElementById("articleLanguage").value;
-      const status = document.getElementById("articleStatus").value;
-
       const payload = {
-        category_id,
-        title,
-        question,
-        answer,
-        keywords,
-        audience,
-        language,
-        status
+        category_id: document.getElementById("articleCategory").value,
+        title: document.getElementById("articleTitle").value.trim(),
+        question: document.getElementById("articleQuestion").value.trim(),
+        answer: document.getElementById("articleAnswer").value.trim(),
+        keywords: document.getElementById("articleKeywords").value.trim(),
+        audience: document.getElementById("articleAudience").value.trim(),
+        language: document.getElementById("articleLanguage").value,
+        status: document.getElementById("articleStatus").value
       };
 
-      let res;
-
-      if (editingArticleId) {
-        res = await fetch(`/api/kb/articles/${editingArticleId}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload)
-        });
-      } else {
-        res = await fetch("/api/kb/articles", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload)
-        });
-      }
+      const res = editingArticleId
+        ? await fetch(`/api/kb/articles/${editingArticleId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          })
+        : await fetch("/api/kb/articles", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
 
       const result = await res.json();
 
@@ -368,8 +750,9 @@
         return;
       }
 
-      clearForm();
+      clearArticleForm();
       await loadArticles();
+      showReviewSection("articles");
     }
 
     function editArticle(id) {
@@ -378,10 +761,10 @@
 
       editingArticleId = id;
 
-      document.getElementById("formTitle").textContent = "Edit Knowledge Article";
+      document.getElementById("articleFormTitle").textContent = "Edit Knowledge Article";
       document.getElementById("articleFormCard").classList.add("edit-mode");
       document.getElementById("saveArticleBtn").textContent = "Update Article";
-      document.getElementById("cancelEditBtn").style.display = "block";
+      document.getElementById("cancelArticleEditBtn").style.display = "block";
 
       document.getElementById("articleCategory").value = article.category_id || "";
       document.getElementById("articleTitle").value = article.title || "";
@@ -392,20 +775,20 @@
       document.getElementById("articleLanguage").value = article.language || "en";
       document.getElementById("articleStatus").value = article.status || "published";
 
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      document.getElementById("articleFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
-    function cancelEdit() {
-      clearForm();
+    function cancelArticleEdit() {
+      clearArticleForm();
     }
 
-    function clearForm() {
+    function clearArticleForm() {
       editingArticleId = null;
 
-      document.getElementById("formTitle").textContent = "Create Knowledge Article";
+      document.getElementById("articleFormTitle").textContent = "Create Knowledge Article";
       document.getElementById("articleFormCard").classList.remove("edit-mode");
       document.getElementById("saveArticleBtn").textContent = "Save Article";
-      document.getElementById("cancelEditBtn").style.display = "none";
+      document.getElementById("cancelArticleEditBtn").style.display = "none";
 
       document.getElementById("articleCategory").value = "";
       document.getElementById("articleTitle").value = "";
@@ -421,10 +804,7 @@
       const confirmed = confirm("Are you sure you want to delete this article?");
       if (!confirmed) return;
 
-      const res = await fetch(`/api/kb/articles/${id}`, {
-        method: "DELETE"
-      });
-
+      const res = await fetch(`/api/kb/articles/${id}`, { method: "DELETE" });
       const result = await res.json();
 
       if (!res.ok) {
@@ -433,7 +813,7 @@
       }
 
       if (editingArticleId === id) {
-        clearForm();
+        clearArticleForm();
       }
 
       await loadArticles();
@@ -450,7 +830,7 @@
 
       items.forEach(item => {
         const div = document.createElement("div");
-        div.className = "card";
+        div.className = "kb-list-card";
 
         div.innerHTML = `
           <div class="title">${item.title || "Untitled Quick Capture"}</div>
@@ -461,7 +841,7 @@
           <div class="small">${item.notes || ""}</div>
           <div class="answer">${item.raw_text || ""}</div>
           <div class="actions">
-            <button onclick="deleteQuickCapture(${item.id})">Delete</button>
+            <button class="kb-danger-button" onclick="deleteQuickCapture(${item.id})">Delete</button>
           </div>
         `;
 
@@ -470,24 +850,18 @@
     }
 
     async function createQuickCapture() {
-      const title = document.getElementById("quickTitle").value.trim();
-      const raw_text = document.getElementById("quickRawText").value.trim();
-      const notes = document.getElementById("quickNotes").value.trim();
-      const source_type = document.getElementById("quickSourceType").value;
-      const status = document.getElementById("quickStatus").value;
+      const payload = {
+        title: document.getElementById("quickTitle").value.trim(),
+        raw_text: document.getElementById("quickRawText").value.trim(),
+        notes: document.getElementById("quickNotes").value.trim(),
+        source_type: document.getElementById("quickSourceType").value,
+        status: document.getElementById("quickStatus").value
+      };
 
       const res = await fetch("/api/kb/quick-capture", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          title,
-          raw_text,
-          notes,
-          source_type,
-          status
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       });
 
       const result = await res.json();
@@ -504,16 +878,14 @@
       document.getElementById("quickStatus").value = "pending";
 
       await loadQuickCapture();
+      showReviewSection("quick");
     }
 
     async function deleteQuickCapture(id) {
       const confirmed = confirm("Delete this quick capture entry?");
       if (!confirmed) return;
 
-      const res = await fetch(`/api/kb/quick-capture/${id}`, {
-        method: "DELETE"
-      });
-
+      const res = await fetch(`/api/kb/quick-capture/${id}`, { method: "DELETE" });
       const result = await res.json();
 
       if (!res.ok) {
@@ -524,9 +896,342 @@
       await loadQuickCapture();
     }
 
+    async function loadCaptures() {
+      const res = await fetch("/api/kb-capture");
+      const data = await res.json();
+      captures = Array.isArray(data) ? data : [];
+      renderCaptures();
+    }
+
+    function renderCaptures() {
+      const search = document.getElementById("captureSearchBox").value.toLowerCase().trim();
+      const container = document.getElementById("captures");
+      container.innerHTML = "";
+
+      const filtered = captures.filter(item => {
+        if ((item.status || "").toLowerCase() === "converted") {
+          return false;
+        }
+
+        const haystack = [
+          item.title || "",
+          item.raw_question || "",
+          item.raw_answer || "",
+          item.suggested_category || "",
+          item.audience || "",
+          item.source_channel || "",
+          item.notes || ""
+        ].join(" ").toLowerCase();
+
+        return !search || haystack.includes(search);
+      });
+
+      filtered.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "kb-list-card";
+
+        div.innerHTML = `
+          <div class="title">${item.title || "Untitled Capture"}</div>
+          <div class="small">
+            Category: ${item.suggested_category || ""} |
+            Audience: ${item.audience || ""} |
+            Source: ${item.source_channel || ""} |
+            Status: ${item.status || ""}
+          </div>
+          <div class="small">Question: ${item.raw_question || ""}</div>
+          <div class="small">Reference: ${item.source_reference || ""}</div>
+          <div class="answer">${item.raw_answer || ""}</div>
+          <div class="small">${item.notes || ""}</div>
+          <div class="actions">
+            <button class="kb-secondary-button" onclick="editCapture(${item.id})">Edit</button>
+            <button onclick="quickConvertToKB(${item.id})">Send to KB</button>
+            <button class="kb-danger-button" onclick="deleteCapture(${item.id})">Delete</button>
+          </div>
+        `;
+
+        container.appendChild(div);
+      });
+    }
+
+    async function createOrUpdateCapture() {
+      const payload = {
+        title: document.getElementById("title").value.trim(),
+        raw_question: document.getElementById("raw_question").value.trim(),
+        raw_answer: document.getElementById("raw_answer").value.trim(),
+        suggested_category: document.getElementById("suggested_category").value.trim(),
+        audience: document.getElementById("audience").value.trim(),
+        source_channel: document.getElementById("source_channel").value,
+        source_reference: document.getElementById("source_reference").value.trim(),
+        status: document.getElementById("status").value,
+        notes: document.getElementById("notes").value.trim()
+      };
+
+      const res = editingCaptureId
+        ? await fetch(`/api/kb-capture/${editingCaptureId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          })
+        : await fetch("/api/kb-capture", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Save failed: " + JSON.stringify(result));
+        return;
+      }
+
+      clearCaptureForm();
+      await loadCaptures();
+      showReviewSection("assisted");
+    }
+
+    async function generateStructuredKnowledge() {
+      const raw_question = document.getElementById("raw_question").value.trim();
+      const raw_answer = document.getElementById("raw_answer").value.trim();
+
+      const res = await fetch("/api/kb-capture/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw_question, raw_answer })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Generation failed: " + JSON.stringify(result));
+        return;
+      }
+
+      const data = result.result || {};
+
+      document.getElementById("title").value = data.title || "";
+      document.getElementById("raw_question").value = data.improved_question || raw_question;
+      document.getElementById("raw_answer").value = data.improved_answer || raw_answer;
+      document.getElementById("suggested_category").value = data.suggested_category || "";
+      document.getElementById("audience").value = data.audience || "";
+      document.getElementById("notes").value =
+        (document.getElementById("notes").value ? document.getElementById("notes").value + "\n\n" : "") +
+        "Keywords: " + (data.keywords || "") +
+        (data.new_category_suggestion ? "\nNew category suggestion: " + data.new_category_suggestion : "");
+
+      document.getElementById("preview_title").textContent = data.title || "";
+      document.getElementById("preview_question").textContent = data.improved_question || "";
+      document.getElementById("preview_keywords").textContent = data.keywords || "";
+      document.getElementById("preview_audience").textContent = data.audience || "";
+      document.getElementById("preview_category").textContent = data.suggested_category || "";
+      document.getElementById("preview_new_category").textContent = data.new_category_suggestion || "";
+      document.getElementById("preview_answer").textContent = data.improved_answer || "";
+
+      document.getElementById("convert_keywords").value = data.keywords || "";
+      document.getElementById("convert_category_name").value = data.suggested_category || data.new_category_suggestion || "";
+      document.getElementById("aiSuggestionCard").style.display = "block";
+    }
+
+    async function checkDuplicates() {
+      const title = document.getElementById("title").value.trim();
+      const raw_question = document.getElementById("raw_question").value.trim();
+      const raw_answer = document.getElementById("raw_answer").value.trim();
+
+      const res = await fetch("/api/kb-capture/check-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, raw_question, raw_answer })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Duplicate check failed: " + JSON.stringify(result));
+        return;
+      }
+
+      const container = document.getElementById("duplicateResults");
+      container.innerHTML = "<h3>Possible Duplicate Matches</h3>";
+
+      if (!result.matches || result.matches.length === 0) {
+        container.innerHTML += `<div class="kb-list-card">No likely duplicates found.</div>`;
+        return;
+      }
+
+      result.matches.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "kb-list-card";
+        div.innerHTML = `
+          <div class="title">${item.title || ""}</div>
+          <div class="small">
+            Category: ${item.kb_categories?.name || "None"} |
+            Audience: ${item.audience || ""} |
+            Language: ${item.language || ""}
+          </div>
+          <div class="small">Question: ${item.question || ""}</div>
+          <div class="answer">${item.answer || ""}</div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    async function convertToKB() {
+      const capture_id = document.getElementById("capture_id").value || null;
+      const title = document.getElementById("title").value.trim();
+      const question = document.getElementById("raw_question").value.trim();
+      const answer = document.getElementById("raw_answer").value.trim();
+      const keywords = document.getElementById("convert_keywords").value.trim();
+      const audience = document.getElementById("audience").value.trim();
+      const category_name = document.getElementById("convert_category_name").value.trim();
+      const create_new_category = document.getElementById("convert_create_new_category").checked;
+
+      const res = await fetch("/api/kb-capture/convert-to-kb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          capture_id,
+          title,
+          question,
+          answer,
+          keywords,
+          audience,
+          language: "en",
+          status: "published",
+          category_name,
+          create_new_category
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Convert to KB failed: " + JSON.stringify(result));
+        return;
+      }
+
+      alert("Converted to KB article successfully.");
+      clearCaptureForm();
+      await Promise.all([loadCaptures(), loadCategories(), loadArticles()]);
+      showReviewSection("articles");
+    }
+
+    function editCapture(id) {
+      const item = captures.find(c => c.id === id);
+      if (!item) return;
+
+      editingCaptureId = id;
+      document.getElementById("capture_id").value = id;
+      document.getElementById("captureFormTitle").textContent = "Edit Capture";
+      document.getElementById("captureFormCard").classList.add("edit-mode");
+      document.getElementById("saveBtn").textContent = "Update Capture";
+      document.getElementById("cancelCaptureEditBtn").style.display = "block";
+
+      document.getElementById("title").value = item.title || "";
+      document.getElementById("raw_question").value = item.raw_question || "";
+      document.getElementById("raw_answer").value = item.raw_answer || "";
+      document.getElementById("suggested_category").value = item.suggested_category || "";
+      document.getElementById("audience").value = item.audience || "";
+      document.getElementById("source_channel").value = item.source_channel || "manual";
+      document.getElementById("source_reference").value = item.source_reference || "";
+      document.getElementById("status").value = item.status || "pending";
+      document.getElementById("notes").value = item.notes || "";
+      document.getElementById("captureFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function cancelCaptureEdit() {
+      clearCaptureForm();
+    }
+
+    function clearCaptureForm() {
+      document.getElementById("capture_id").value = "";
+      document.getElementById("aiSuggestionCard").style.display = "none";
+      document.getElementById("duplicateResults").innerHTML = "";
+
+      editingCaptureId = null;
+      document.getElementById("captureFormTitle").textContent = "Capture Assistant";
+      document.getElementById("captureFormCard").classList.remove("edit-mode");
+      document.getElementById("saveBtn").textContent = "Save Capture";
+      document.getElementById("cancelCaptureEditBtn").style.display = "none";
+
+      document.getElementById("title").value = "";
+      document.getElementById("raw_question").value = "";
+      document.getElementById("raw_answer").value = "";
+      document.getElementById("suggested_category").value = "";
+      document.getElementById("audience").value = "";
+      document.getElementById("source_channel").value = "manual";
+      document.getElementById("source_reference").value = "";
+      document.getElementById("status").value = "pending";
+      document.getElementById("notes").value = "";
+      document.getElementById("convert_keywords").value = "";
+      document.getElementById("convert_category_name").value = "";
+      document.getElementById("convert_create_new_category").checked = false;
+    }
+
+    async function deleteCapture(id) {
+      const confirmed = confirm("Delete this captured knowledge?");
+      if (!confirmed) return;
+
+      const res = await fetch(`/api/kb-capture/${id}`, { method: "DELETE" });
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Delete failed: " + JSON.stringify(result));
+        return;
+      }
+
+      if (editingCaptureId === id) {
+        clearCaptureForm();
+      }
+
+      await loadCaptures();
+    }
+
+    async function quickConvertToKB(id) {
+      const item = captures.find(c => c.id === id);
+      if (!item) {
+        alert("Capture not found.");
+        return;
+      }
+
+      const confirmed = confirm("Send this captured knowledge to the official Knowledge Base?");
+      if (!confirmed) return;
+
+      const category_name = item.suggested_category || "";
+      const create_new_category = !!category_name;
+
+      const res = await fetch("/api/kb-capture/convert-to-kb", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          capture_id: item.id,
+          title: item.title || "Untitled Knowledge",
+          question: item.raw_question || "",
+          answer: item.raw_answer || "",
+          keywords: "",
+          audience: item.audience || "",
+          language: "en",
+          status: "published",
+          category_name,
+          create_new_category
+        })
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        alert("Quick convert failed: " + JSON.stringify(result));
+        return;
+      }
+
+      alert("Sent to official Knowledge Base successfully.");
+      await Promise.all([loadCaptures(), loadCategories(), loadArticles()]);
+      showReviewSection("articles");
+    }
+
     loadCategories();
     loadArticles();
     loadQuickCapture();
+    loadCaptures();
   </script>
 </body>
 </html>

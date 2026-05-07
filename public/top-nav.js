@@ -44,7 +44,6 @@
   const navItems = [
     { key: "inbox", label: "Inbox", href: "/inbox" },
     { key: "kb", label: "Knowledge Base", href: "/kb" },
-    { key: "capture", label: "Capture Assistant", href: "/kb-capture" },
     { key: "providers", label: "Providers", href: "/providers" },
     { key: "archived", label: "Archived Threads", href: "/archived" },
     { key: "automation", label: "Automation Hub", href: "/automation" },
