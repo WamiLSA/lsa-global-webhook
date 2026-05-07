@@ -36,6 +36,7 @@
     </section>
     <section id="tools" class="grid"></section>
   </main>
+  <script src="/global-progress.js"></script>
   <script src="/top-nav.js"></script>
   <script>
     const fmt = (n) => Number(n || 0).toLocaleString();
@@ -101,7 +102,22 @@
       return '';
     }
 
-    function runAction(card, action) {
+    async function runAction(card, action) {
+      const label = {
+        write: 'Generate refined draft',
+        translate: 'Translate message',
+        summarize: 'Summarize content',
+        kbformat: 'Format knowledge content',
+        provider: 'Extract provider data',
+        similarity: 'Compare duplicate similarity',
+        match: 'Generate match suggestions',
+        retrieval: 'Run retrieval test',
+        savePrompt: 'Save prompt',
+        testPrompt: 'Test prompt',
+        insights: 'Generate operational insights'
+      }[action] || 'Run AI tool';
+      return LSAGlobalProgress.withProgress(label, async (progress) => {
+        progress.update(16, 'Preparing tool input…');
       const get = (k) => card.querySelector(`[data-f="${k}"]`)?.value?.trim() || '';
       const out = card.querySelector('[data-o="out"]');
       const q = get('text') || get('brief') || get('query') || get('prompt') || get('a');
@@ -121,6 +137,9 @@
       if (action === 'savePrompt') { localStorage.setItem('lsa_prompt_studio', get('prompt')); out.textContent = 'Prompt saved locally for next test iteration.'; }
       if (action === 'testPrompt') out.textContent = `Prompt test output:\n${firstSentence(get('prompt'))}\n(Use Open Workspace for advanced template versioning.)`;
       if (action === 'insights') out.textContent = `Recommendations:\n- Prioritize fee extraction precision in Test Mode.\n- Keep Live Mode reply shaping conservative.\n- Expand provider ranking signals from recent fulfillment outcomes.`;
+      progress.update(94, 'Rendering tool result…');
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      });
     }
 
     function render(data) {
