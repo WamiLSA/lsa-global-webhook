@@ -3739,6 +3739,99 @@ async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, speci
   });
 }
 
+
+const CONTACT_NAME_PLACEHOLDERS = new Set([
+  "unknown",
+  "unknown contact",
+  "unknown name",
+  "unnamed",
+  "no name",
+  "no contact name",
+  "contact",
+  "customer",
+  "client",
+  "whatsapp user",
+  "whatsapp contact",
+  "n/a",
+  "na",
+  "none",
+  "null",
+  "undefined",
+  "-",
+  "--"
+]);
+
+function normalizeContactNameCandidate(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isValidKnownContactName(value, { waId = null } = {}) {
+  const normalized = normalizeContactNameCandidate(value);
+  if (!normalized) return false;
+  const lowered = normalized.toLowerCase();
+  if (CONTACT_NAME_PLACEHOLDERS.has(lowered)) return false;
+  if (/^unknown\b/i.test(normalized)) return false;
+  if (/^(fallback|placeholder)\b/i.test(normalized)) return false;
+
+  const normalizedWaId = normalizeContactNameCandidate(waId);
+  if (normalizedWaId && normalized === normalizedWaId) return false;
+  return true;
+}
+
+function getPreferredContactName(existingName, candidateName, { waId = null } = {}) {
+  const candidate = normalizeContactNameCandidate(candidateName);
+  if (isValidKnownContactName(candidate, { waId })) return candidate;
+
+  const existing = normalizeContactNameCandidate(existingName);
+  if (isValidKnownContactName(existing, { waId })) return existing;
+
+  return null;
+}
+
+async function getBestKnownContactName(waId) {
+  const safeWaId = normalizeContactNameCandidate(waId);
+  if (!safeWaId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("contact_name, created_at")
+      .eq("wa_id", safeWaId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.warn("[contact-name] existing name lookup skipped", {
+        wa_id: safeWaId,
+        error_code: error?.code || null,
+        error_message: error?.message || String(error)
+      });
+      return null;
+    }
+
+    for (const row of data || []) {
+      const knownName = getPreferredContactName(null, row?.contact_name, { waId: safeWaId });
+      if (knownName) return knownName;
+    }
+  } catch (error) {
+    console.warn("[contact-name] existing name lookup failed", {
+      wa_id: safeWaId,
+      error_message: error?.message || String(error)
+    });
+  }
+
+  return null;
+}
+
+async function resolveDurableContactNameForInsert(payload = {}) {
+  const waId = payload.wa_id;
+  const inboundName = getPreferredContactName(null, payload.contact_name, { waId });
+  if (inboundName) return inboundName;
+
+  const existingName = await getBestKnownContactName(waId);
+  return getPreferredContactName(null, existingName, { waId });
+}
+
 async function saveMessage({
   wa_id,
   contact_name = null,
@@ -4133,6 +4226,7 @@ async function applyArchivedInboundBehavior(waId, direction) {
 
 async function insertConversationPayload(payload) {
   const safePayload = { ...payload };
+  safePayload.contact_name = await resolveDurableContactNameForInsert(payload);
   const removedColumns = new Set();
   const direction = String(payload?.direction || "unknown");
   const waId = String(payload?.wa_id || "");
@@ -4170,7 +4264,7 @@ async function insertConversationPayload(payload) {
         });
         const corePayload = {
           wa_id: payload.wa_id,
-          contact_name: payload.contact_name ?? null,
+          contact_name: safePayload.contact_name ?? null,
           direction: payload.direction,
           body: payload.body,
           message_type: payload.message_type || "text"
@@ -7165,43 +7259,29 @@ async function buildConversationThreadSummary(rows) {
 
   for (const row of rows || []) {
     if (!row?.wa_id) continue;
-    const list = groupedRows.get(row.wa_id) || [];
-    list.push(row);
-    groupedRows.set(row.wa_id, list);
+
+    const existingThread = map.get(row.wa_id);
+    if (existingThread) {
+      existingThread.contact_name = getPreferredContactName(existingThread.contact_name, row.contact_name, { waId: row.wa_id });
+      continue;
+    }
+
+    map.set(row.wa_id, {
+      wa_id: row.wa_id,
+      contact_name: getPreferredContactName(null, row.contact_name, { waId: row.wa_id }),
+      last_message: row.body,
+      last_direction: row.direction,
+      last_time: row.created_at,
+      label: row.label || "",
+      is_archived: row.is_archived === true,
+      conversation_owner: row.conversation_owner || null,
+      human_takeover: row.human_takeover ?? null,
+      conversation_type: row.conversation_type || null,
+      followup_eligible: row.followup_eligible ?? null
+    });
   }
 
-  const summaries = [];
-  for (const [waId, threadRows] of groupedRows.entries()) {
-    const latest = threadRows[0];
-    const state = getThreadState(settings, "whatsapp", waId);
-    const unreadCount = countUnreadInboundRows(threadRows, state);
-    summaries.push(decorateThreadSummaryWithState({
-      wa_id: latest.wa_id,
-      contact_name: latest.contact_name,
-      last_message: latest.body,
-      last_direction: latest.direction,
-      last_time: latest.created_at,
-      label: latest.label || "",
-      is_archived: latest.is_archived === true,
-      conversation_owner: latest.conversation_owner || null,
-      human_takeover: latest.human_takeover ?? null,
-      conversation_type: latest.conversation_type || null,
-      followup_eligible: latest.followup_eligible ?? null,
-      unread_count: unreadCount
-    }, state));
-  }
-
-  return sortThreadSummaries(summaries, settings);
-}
-
-function sortThreadSummaries(threads = [], settings = {}) {
-  const preference = settings.thread_list?.sort_preference || "pinned_then_unread_then_recent";
-  const byRecent = (a, b) => new Date(b.last_time || b.last_activity_at || b.timestamp || 0) - new Date(a.last_time || a.last_activity_at || a.timestamp || 0);
-  return [...threads].sort((a, b) => {
-    if (preference.includes("pinned") && a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
-    if (preference.includes("unread") && a.is_unread !== b.is_unread) return a.is_unread ? -1 : 1;
-    return byRecent(a, b);
-  });
+  return Array.from(map.values());
 }
 
 async function queryConversationRowsForThreadView({ archived = false } = {}) {
