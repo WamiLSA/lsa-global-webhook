@@ -60,13 +60,15 @@ const INTERNAL_MODE_ADMIN_USERS = String(process.env.INTERNAL_MODE_ADMIN_USERS |
   .filter(Boolean);
 const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
+const AUTOMATION_HUB_STATE_FILE = path.join(__dirname, "data", "automation-hub-state.json");
 const SYSTEM_MODE_CONFIG_KEY = "system_mode";
 const ACCOUNT_SETTINGS_CONFIG_KEY = "account_settings_store";
 const COMMUNICATIONS_SETTINGS_CONFIG_KEY = "communications_settings_store";
 const FALLBACK_BRAND_NAME = "LSA GLOBAL";
 const SYSTEM_MODE_REFRESH_MS = Number(process.env.SYSTEM_MODE_REFRESH_MS || 5000);
 const automationHub = createAutomationHub({
-  getSystemMode: () => runtimeSystemState.mode
+  getSystemMode: () => runtimeSystemState.mode,
+  persistencePath: AUTOMATION_HUB_STATE_FILE
 });
 
 const OUTBOUND_ALLOWED_MIME_PREFIXES = [
@@ -8490,6 +8492,14 @@ app.get("/api/automation/history", requireAuth, async (req, res) => {
 
 app.get("/api/automation/notifications", requireAuth, async (req, res) => {
   return res.json({ notifications: automationHub.listNotifications(Number(req.query.limit || 30)) });
+});
+
+app.get("/api/automation/audit", requireAuth, async (req, res) => {
+  return res.json({ audit: automationHub.listAuditLog(Number(req.query.limit || 200)) });
+});
+
+app.get("/api/automation/module-state", requireAuth, async (req, res) => {
+  return res.json({ moduleState: automationHub.listTargetModuleState(req.query.module || "", Number(req.query.limit || 50)) });
 });
 
 app.get("/api/automation/artifacts", requireAuth, async (req, res) => {

@@ -173,6 +173,14 @@
       margin-bottom: 4px;
     }
 
+
+    .automation-sync-card,.automation-sync-empty{border:1px solid var(--lsa-border);border-radius:10px;background:var(--lsa-surface);padding:10px;margin-bottom:12px;font-size:12px;color:var(--lsa-text)}
+    .automation-sync-title{font-weight:700;margin-bottom:8px}
+    .automation-sync-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--lsa-border);padding-top:7px;margin-top:7px}
+    .automation-sync-status{border-radius:999px;padding:2px 8px;background:#dcfce7;color:#14532d;font-weight:700}
+    .automation-sync-status.pending{background:#dbeafe;color:#1e3a8a}
+    .automation-sync-muted{color:var(--lsa-text-muted)}
+
     @media (max-width: 760px) {
       #pageLayout {
         display: block;
@@ -197,6 +205,7 @@
   <div id="pageLayout">
   <div id="left">
     <h2>Provider Network Manager</h2>
+    <div id="automationModuleSync"></div>
 
     <div class="card" id="providerCaptureAssistantCard">
       <h3>Provider Capture Assistant</h3>
@@ -329,6 +338,7 @@
 
   <script src="/global-progress.js"></script>
   <script src="/top-nav.js"></script>
+  <script src="/automation-module-sync.js" data-module="Provider" data-mount="automationModuleSync"></script>
   <script>
     let providers = [];
     let editingProviderId = null;
