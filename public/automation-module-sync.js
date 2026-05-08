@@ -38,6 +38,8 @@
     if (!response.ok) return;
     const payload = await response.json();
     const items = payload.moduleState || [];
+    window.__automationModuleSyncItems = items;
+    window.dispatchEvent(new CustomEvent('automation-module-sync:loaded', { detail: { moduleName, items } }));
     if (!items.length) {
       mount.innerHTML = '<div class="automation-sync-empty">No Automation Hub decisions are currently synchronized with this module.</div>';
       return;
@@ -47,12 +49,20 @@
       ${items.map((item) => {
         const syncState = item.syncState || (item.pendingReview ? 'awaiting_review' : 'synchronized');
         const stateClass = item.pendingReview ? 'pending' : 'closed';
+        const target = item.targetReference || {};
+        const destinationRecord = item.destinationRecordId || target.destinationRecordId || 'Not assigned yet';
+        const destinationObject = item.destinationObjectName || target.destinationObjectName || item.surface || '';
+        const destinationPanel = item.destinationPanel || target.destinationPanel || item.surface || '';
+        const targetUrl = item.targetUrl || target.destinationUrl || '';
+        const openLabel = item.openTargetLabel || target.openTargetLabel || 'Open target record';
         return `<div class="automation-sync-row">
           <span class="automation-sync-status ${stateClass}">${escapeHtml(item.statusLabel || item.status || '')}</span>
-          <span>${escapeHtml(item.title || item.surface || '')}</span>
+          <span><strong>${escapeHtml(item.title || item.surface || '')}</strong></span>
           <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(syncState)} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
+          <span class="automation-sync-muted"><strong>Record:</strong> ${escapeHtml(destinationRecord)} • <strong>Object:</strong> ${escapeHtml(destinationObject)} • <strong>Panel:</strong> ${escapeHtml(destinationPanel)}</span>
           ${item.syncConfirmation ? `<span class="automation-sync-muted">${escapeHtml(item.syncConfirmation)}</span>` : ''}
-          ${item.targetUrl ? `<a href="${escapeHtml(item.targetUrl)}">Open</a>` : ''}
+          ${item.verificationHint || target.verificationHint ? `<span class="automation-sync-muted">Verify here: ${escapeHtml(item.verificationHint || target.verificationHint)}</span>` : ''}
+          ${targetUrl ? `<a href="${escapeHtml(targetUrl)}">${escapeHtml(openLabel)}</a>` : ''}
         </div>`;
       }).join('')}
     </div>`;
