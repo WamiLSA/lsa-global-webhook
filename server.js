@@ -1687,6 +1687,25 @@ function requestUsesBearerAuth(req) {
   return /^Bearer\s+\S+$/i.test(String(req.headers.authorization || "").trim());
 }
 
+function getRequestAccountIdentifier(req) {
+  return normalizeUserIdentifier(req.accountIdentifier || req.session?.username || "");
+}
+
+function canRunAutomationWorkflow(req) {
+  const identifier = getRequestAccountIdentifier(req);
+  if (!identifier) return false;
+
+  const explicitAutomationUsers = String(process.env.INTERNAL_AUTOMATION_RUNNER_USERS || "")
+    .split(",")
+    .map(item => normalizeUserIdentifier(item))
+    .filter(Boolean);
+
+  if (explicitAutomationUsers.length) return explicitAutomationUsers.includes(identifier);
+  if (INTERNAL_MODE_ADMIN_USERS.length) return INTERNAL_MODE_ADMIN_USERS.includes(identifier);
+
+  return true;
+}
+
 app.post("/api/mobile/auth/login", async (req, res) => {
   const { username, email, identifier, password } = req.body || {};
   const loginIdentifier = username || email || identifier;
@@ -8472,9 +8491,35 @@ app.get("/api/automation/notifications", requireAuth, async (req, res) => {
 });
 
 app.post("/api/automation/run/:id", requireAuth, async (req, res) => {
-  const workflowId = req.params.id;
-  await automationHub.trigger("manual_trigger", { manualAction: workflowId === "wf-manual-provider-rematch" ? "rerun_provider_matching" : workflowId }, { initiatedBy: req.session?.username || "staff" });
-  return res.json({ ok: true });
+  try {
+    if (!canRunAutomationWorkflow(req)) {
+      return res.status(403).json({
+        ok: false,
+        error: "Your authenticated account is not allowed to run Automation Hub workflows.",
+        code: "AUTOMATION_RUN_FORBIDDEN"
+      });
+    }
+
+    const workflowId = req.params.id;
+    const result = await automationHub.runWorkflowById(workflowId, {
+      initiatedBy: getRequestAccountIdentifier(req) || "staff",
+      source: "automation_hub_run_now"
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 500).json({
+        ok: false,
+        error: result.error || "Workflow run failed",
+        code: result.status === 404 ? "WORKFLOW_NOT_FOUND" : result.status === 409 ? "WORKFLOW_INACTIVE" : "WORKFLOW_RUN_FAILED",
+        run: result.run || null
+      });
+    }
+
+    return res.json({ ok: true, run: result.run });
+  } catch (error) {
+    console.error("[automation] manual_run_failed", { workflowId: req.params.id, error: error.message || String(error) });
+    return res.status(500).json({ ok: false, error: error.message || "Workflow run failed", code: "WORKFLOW_RUN_FAILED" });
+  }
 });
 
 app.get("/api/kb/categories", async (req, res) => {
