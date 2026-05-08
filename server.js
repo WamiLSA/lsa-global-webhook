@@ -7242,23 +7242,41 @@ function summarizeThreadForMobile(thread) {
   };
 }
 
+function normalizeMobileDirection(direction) {
+  const value = String(direction || "").toLowerCase();
+  if (["out", "outgoing", "sent"].includes(value)) return "outgoing";
+  return "incoming";
+}
+
 function summarizeMessageForMobile(row) {
+  const body = row.body || "";
+  const translatedText = row.translated_text || null;
+  const staffReplyText = row.staff_reply_text || null;
+  const sentReplyText = row.sent_reply_text || null;
+  const attachmentUrl = row.attachment_url || row.media_url || null;
+
   return {
     id: row.id || `${row.wa_id || "thread"}-${row.created_at || Date.now()}`,
     wa_id: row.wa_id,
-    direction: row.direction,
-    body: row.body || "",
+    contactName: row.contact_name || null,
+    direction: normalizeMobileDirection(row.direction),
+    rawDirection: row.direction || null,
+    body,
+    originalText: body,
     messageType: row.message_type || row.type || "text",
     createdAt: row.created_at,
     timestamp: row.created_at,
     originalLanguage: row.original_language || null,
-    translatedText: row.translated_text || null,
+    translatedText,
     translatedLanguage: row.translated_language || null,
-    staffReplyText: row.staff_reply_text || null,
+    staffReplyText,
+    staffTranslation: staffReplyText,
     staffReplyLanguage: row.staff_reply_language || null,
-    sentReplyText: row.sent_reply_text || null,
+    sentReplyText,
+    customerTranslation: sentReplyText || translatedText,
     sentReplyLanguage: row.sent_reply_language || null,
-    mediaUrl: row.media_url || row.attachment_url || null,
+    mediaUrl: attachmentUrl,
+    attachmentUrl,
     mediaMimeType: row.media_mime_type || row.mime_type || null
   };
 }
