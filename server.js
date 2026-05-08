@@ -1138,6 +1138,34 @@ function countUnreadInboundRows(rows = [], state = {}) {
   }).length;
 }
 
+
+function getThreadSummaryActivityMs(summary = {}) {
+  const raw = summary.last_time || summary.timestamp || summary.created_at || summary.last_activity_at || 0;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sortThreadSummaries(summaries = [], settings = cloneDefaultCommunicationsSettings()) {
+  const preference = settings?.thread_list?.sort_preference || "pinned_then_unread_then_recent";
+  const rows = Array.isArray(summaries) ? [...summaries] : [];
+  const byRecent = (a, b) => getThreadSummaryActivityMs(b) - getThreadSummaryActivityMs(a);
+  const byUnread = (a, b) => Number(b.unread_count || 0) - Number(a.unread_count || 0);
+  const byPinned = (a, b) => Number(b.is_pinned === true) - Number(a.is_pinned === true);
+
+  return rows.sort((a, b) => {
+    if (preference === "unread_first") {
+      return byUnread(a, b) || byRecent(a, b);
+    }
+    if (preference === "pinned_then_recent") {
+      return byPinned(a, b) || byRecent(a, b);
+    }
+    if (preference === "pinned_then_unread_then_recent") {
+      return byPinned(a, b) || byUnread(a, b) || byRecent(a, b);
+    }
+    return byRecent(a, b);
+  });
+}
+
 function decorateThreadSummaryWithState(summary, state = {}) {
   return {
     ...summary,
@@ -7259,29 +7287,41 @@ async function buildConversationThreadSummary(rows) {
 
   for (const row of rows || []) {
     if (!row?.wa_id) continue;
-
-    const existingThread = map.get(row.wa_id);
-    if (existingThread) {
-      existingThread.contact_name = getPreferredContactName(existingThread.contact_name, row.contact_name, { waId: row.wa_id });
-      continue;
+    const waId = String(row.wa_id);
+    const group = groupedRows.get(waId) || { rows: [], contact_name: null, latest: null };
+    group.rows.push(row);
+    group.contact_name = getPreferredContactName(group.contact_name, row.contact_name, { waId });
+    const rowTime = new Date(row.created_at || 0).getTime();
+    const latestTime = new Date(group.latest?.created_at || 0).getTime();
+    if (!group.latest || (Number.isFinite(rowTime) && rowTime > latestTime)) {
+      group.latest = row;
     }
-
-    map.set(row.wa_id, {
-      wa_id: row.wa_id,
-      contact_name: getPreferredContactName(null, row.contact_name, { waId: row.wa_id }),
-      last_message: row.body,
-      last_direction: row.direction,
-      last_time: row.created_at,
-      label: row.label || "",
-      is_archived: row.is_archived === true,
-      conversation_owner: row.conversation_owner || null,
-      human_takeover: row.human_takeover ?? null,
-      conversation_type: row.conversation_type || null,
-      followup_eligible: row.followup_eligible ?? null
-    });
+    groupedRows.set(waId, group);
   }
 
-  return Array.from(map.values());
+  const summaries = [];
+  for (const [waId, group] of groupedRows.entries()) {
+    const latest = group.latest || group.rows[0] || {};
+    const state = getThreadState(settings, "whatsapp", waId);
+    const unreadCount = countUnreadInboundRows(group.rows, state);
+    summaries.push(decorateThreadSummaryWithState({
+      wa_id: waId,
+      contact_name: group.contact_name,
+      last_message: latest.body || "",
+      last_direction: latest.direction || "",
+      last_time: latest.created_at || "",
+      timestamp: latest.created_at || "",
+      label: latest.label || "",
+      is_archived: latest.is_archived === true,
+      conversation_owner: latest.conversation_owner || null,
+      human_takeover: latest.human_takeover ?? null,
+      conversation_type: latest.conversation_type || null,
+      followup_eligible: latest.followup_eligible ?? null,
+      unread_count: unreadCount
+    }, state));
+  }
+
+  return sortThreadSummaries(summaries, settings);
 }
 
 async function queryConversationRowsForThreadView({ archived = false } = {}) {
@@ -7549,7 +7589,13 @@ app.get("/api/conversations", async (req, res) => {
 
     return res.json(threads);
   } catch (err) {
-    console.error("[inbox-api] active conversation thread route crashed", { error_message: err?.message || String(err) });
+    console.error("[inbox-api] active conversation thread route crashed", {
+      route: "GET /api/conversations",
+      code: "INBOX_THREAD_ROUTE_ERROR",
+      error_name: err?.name || null,
+      error_message: err?.message || String(err),
+      stack: err?.stack || null
+    });
     return res.status(500).json({
       error: {
         code: "INBOX_THREAD_ROUTE_ERROR",
@@ -7586,7 +7632,13 @@ app.get("/api/conversations/archived", async (req, res) => {
 
     return res.json(await buildConversationThreadSummary(result.rows));
   } catch (err) {
-    console.error("[inbox-api] archived conversation thread route crashed", { error_message: err?.message || String(err) });
+    console.error("[inbox-api] archived conversation thread route crashed", {
+      route: "GET /api/conversations/archived",
+      code: "INBOX_ARCHIVED_THREAD_ROUTE_ERROR",
+      error_name: err?.name || null,
+      error_message: err?.message || String(err),
+      stack: err?.stack || null
+    });
     return res.status(500).json({
       error: {
         code: "INBOX_ARCHIVED_THREAD_ROUTE_ERROR",
