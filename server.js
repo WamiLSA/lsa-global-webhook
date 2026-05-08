@@ -5687,6 +5687,8 @@ app.post("/webhook", async (req, res) => {
 
     await automationHub.trigger("new_inbox_message", {
       serviceIntent: getKnownServiceIntent(inboundBody) || null,
+      threadId: from,
+      messageId: message.id || null,
       attachmentExists: Boolean(hasAttachment),
       mode: String(activeMode || "live").toUpperCase()
     }, {
@@ -8490,6 +8492,16 @@ app.get("/api/automation/notifications", requireAuth, async (req, res) => {
   return res.json({ notifications: automationHub.listNotifications(Number(req.query.limit || 30)) });
 });
 
+app.get("/api/automation/artifacts", requireAuth, async (req, res) => {
+  return res.json({ artifacts: automationHub.listArtifacts(Number(req.query.limit || 100)) });
+});
+
+app.get("/api/automation/artifacts/:id", requireAuth, async (req, res) => {
+  const artifact = automationHub.getArtifact(req.params.id);
+  if (!artifact) return res.status(404).json({ error: "Automation result not found" });
+  return res.json({ artifact });
+});
+
 app.post("/api/automation/run/:id", requireAuth, async (req, res) => {
   try {
     if (!canRunAutomationWorkflow(req)) {
@@ -9215,6 +9227,7 @@ app.post("/api/providers/:providerId/documents", requireAuth, providerDocumentUp
     await automationHub.trigger("document_uploaded", {
       module: "providers",
       providerId,
+      documentId: insertedId,
       attachmentExists: true
     }, {
       source: "provider-document-upload"
@@ -9779,7 +9792,8 @@ app.post("/api/providers/duplicate-check", async (req, res) => {
 
     if (ranked.length) {
       await automationHub.trigger("duplicate_detected", {
-        duplicateScore: Number(ranked[0].confidence_score || 0) / 100
+        duplicateScore: Number(ranked[0].confidence_score || 0) / 100,
+        duplicateId: ranked[0].provider_id || null
       }, {
         source: "providers-duplicate-check"
       });
