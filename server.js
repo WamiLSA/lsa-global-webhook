@@ -7242,24 +7242,50 @@ function summarizeThreadForMobile(thread) {
   };
 }
 
+function firstMobileMessageText(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function normalizeMobileDirection(direction) {
+  return direction === "out" || direction === "outgoing" ? "outgoing" : "incoming";
+}
+
 function summarizeMessageForMobile(row) {
+  const direction = normalizeMobileDirection(row.direction);
+  const body = firstMobileMessageText(row.body, row.text, row.message, row.caption, row.preview);
+  const staffReplyText = firstMobileMessageText(row.staff_reply_text);
+  const sentReplyText = firstMobileMessageText(row.sent_reply_text);
+  const translatedText = firstMobileMessageText(row.translated_text);
+  const attachmentUrl = row.media_url || row.attachment_url || null;
+
   return {
     id: row.id || `${row.wa_id || "thread"}-${row.created_at || Date.now()}`,
     wa_id: row.wa_id,
-    direction: row.direction,
-    body: row.body || "",
+    direction,
+    body,
+    originalText: body,
+    text: body,
+    caption: row.caption || null,
     messageType: row.message_type || row.type || "text",
     createdAt: row.created_at,
     timestamp: row.created_at,
     originalLanguage: row.original_language || null,
-    translatedText: row.translated_text || null,
+    translatedText: translatedText || null,
     translatedLanguage: row.translated_language || null,
-    staffReplyText: row.staff_reply_text || null,
+    staffTranslation: translatedText || null,
+    staffReplyText: staffReplyText || null,
     staffReplyLanguage: row.staff_reply_language || null,
-    sentReplyText: row.sent_reply_text || null,
+    sentReplyText: sentReplyText || null,
     sentReplyLanguage: row.sent_reply_language || null,
-    mediaUrl: row.media_url || row.attachment_url || null,
-    mediaMimeType: row.media_mime_type || row.mime_type || null
+    customerTranslation: sentReplyText || null,
+    mediaUrl: attachmentUrl,
+    attachmentUrl,
+    mediaMimeType: row.media_mime_type || row.mime_type || null,
+    fileName: row.file_name || null
   };
 }
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, FlatList, Pressable, TextInput, RefreshControl, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { api } from '../api/client';
 import { ModeBadge } from '../components/ModeBadge';
+import { MobileAppMenu } from '../components/MobileAppMenu';
 import { Screen } from '../components/Screen';
 import { colors } from '../theme';
 import { useGlobalProgress } from '../progress/GlobalProgressContext';
@@ -30,6 +31,7 @@ export function InboxScreen({ navigation }) {
 
   return (
     <Screen>
+      <MobileAppMenu navigation={navigation} currentKey="inbox" compact mode={mode} />
       <View style={styles.brandRow}>{branding.logo_url ? <Image source={{ uri: api.resolveAssetUrl(branding.logo_url) }} style={styles.brandLogo} /> : null}<Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL'}</Text></View>
       <ModeBadge mode={mode} />
       <TextInput value={search} onChangeText={setSearch} style={styles.search} placeholder="Search contact or last message" placeholderTextColor={colors.textMuted} />
@@ -64,7 +66,7 @@ export function InboxScreen({ navigation }) {
           ListEmptyComponent={<Text style={styles.empty}>No matching conversations.</Text>}
         />
       )}
-      <Pressable style={styles.settings} onPress={() => navigation.navigate('Settings', { mode, conversationCount: items.length })}><Text style={styles.settingsText}>Open Settings</Text></Pressable>
+      <Pressable style={styles.settings} onPress={() => navigation.navigate('Home')}><Text style={styles.settingsText}>Open Full Internal OS Menu</Text></Pressable>
     </Screen>
   );
 }
