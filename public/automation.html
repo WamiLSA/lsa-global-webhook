@@ -8,36 +8,146 @@
   <style>
     body { font-family: Arial, sans-serif; margin:0; background:var(--lsa-app-bg); color:var(--lsa-text); }
     .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
-    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
     .card { background:var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:10px; padding:12px; }
     .muted{color:var(--lsa-text-muted);font-size:12px}
+    .status{font-size:12px;margin-top:8px;padding:8px;border-radius:8px;background:var(--lsa-surface-muted,#f1f5f9)}
+    .status.error{color:#991b1b;background:#fee2e2}.status.success{color:#166534;background:#dcfce7}
     button{padding:6px 10px;border:1px solid var(--lsa-input-border);background:var(--lsa-surface);border-radius:6px;cursor:pointer}
+    button:disabled{cursor:not-allowed;opacity:.65}
     .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .pill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--lsa-border);border-radius:999px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px;color:var(--lsa-text-muted)}
     table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto}
-    th,td{padding:8px;border-bottom:1px solid var(--lsa-border);text-align:left;font-size:13px}
+    th,td{padding:8px;border-bottom:1px solid var(--lsa-border);text-align:left;font-size:13px;vertical-align:top}
+    .error-text{color:#b91c1c}.success-text{color:#15803d}
   </style>
 </head>
 <body data-page="automation">
   <div id="topNavMount"></div>
   <div class="wrap">
     <h1>Automation Hub (Phase 1)</h1>
+    <p class="muted">Controlled Phase 1 execution layer for internal workflow runs, history, and notifications.</p>
+    <div id="pageStatus" class="status" hidden></div>
     <div id="workflowGrid" class="grid"></div>
-    <h2>Run History</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Time</th><th>Result</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+    <h2>Run History</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
   <script src="/global-progress.js"></script>
   <script src="/top-nav.js"></script>
   <script>
-    async function getJson(url, options){const r=await fetch(url,Object.assign({credentials:'same-origin'},options||{}));if(!r.ok)throw new Error('request failed');return r.json();}
-    async function load(){
-      const [w,h,n]=await Promise.all([getJson('/api/automation/workflows'),getJson('/api/automation/history'),getJson('/api/automation/notifications')]);
-      const grid=document.getElementById('workflowGrid');
-      grid.innerHTML=w.workflows.map(wf=>`<div class='card'><div class='row'><strong>${wf.name}</strong><label><input type='checkbox' ${wf.active?'checked':''} onchange='setState("${wf.id}",this.checked)'/> Active</label></div><div class='muted'>Trigger: ${wf.trigger.type}</div><div class='muted'>Runs: ${wf.stats.runCount} • Last: ${wf.stats.lastRunAt||'Never'} • State: ${wf.stats.lastState}</div><div style='margin-top:8px'><button onclick='runNow("${wf.id}")'>Run now</button></div></div>`).join('');
-      document.getElementById('historyRows').innerHTML=h.history.map(i=>`<tr><td>${i.workflowName}</td><td>${i.triggerType}</td><td>${i.startedAt}</td><td>${i.success?'Success':'Failed'}</td><td>${i.error||''}</td></tr>`).join('');
-      document.getElementById('notify').innerHTML=n.notifications.map(x=>`<div class='card'>${x.message}<div class='muted'>${x.createdAt}</div></div>`).join('');
+    const TOKEN_STORAGE_KEYS = ['lsa_internal_token', 'lsaInternalToken', 'authToken'];
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[char]));
     }
-    async function setState(id, active){ await getJson('/api/automation/workflows/'+id+'/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}); }
-    async function runNow(id){ await getJson('/api/automation/run/'+id,{method:'POST'}); await load(); }
+
+    function getStoredBearerToken() {
+      for (const storage of [window.localStorage, window.sessionStorage]) {
+        if (!storage) continue;
+        for (const key of TOKEN_STORAGE_KEYS) {
+          const token = storage.getItem(key);
+          if (token) return token;
+        }
+      }
+      return '';
+    }
+
+    async function getJson(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const token = getStoredBearerToken();
+      if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+      const response = await fetch(url, { credentials: 'include', ...options, headers });
+      let payload = null;
+      try { payload = await response.json(); } catch (error) {}
+      if (!response.ok) {
+        const message = payload?.error || payload?.message || `Request failed (${response.status})`;
+        const err = new Error(message);
+        err.status = response.status;
+        err.payload = payload;
+        throw err;
+      }
+      return payload;
+    }
+
+    function setPageStatus(message, type = 'info') {
+      const el = document.getElementById('pageStatus');
+      el.hidden = !message;
+      el.className = `status ${type === 'error' ? 'error' : type === 'success' ? 'success' : ''}`;
+      el.textContent = message || '';
+    }
+
+    function formatTime(value) {
+      if (!value) return 'Never';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
+    function renderWorkflows(workflows) {
+      const grid = document.getElementById('workflowGrid');
+      grid.innerHTML = workflows.map((wf) => {
+        const stats = wf.stats || {};
+        const failed = stats.lastState === 'failed';
+        return `<div class='card'>
+          <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
+          <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span></div>
+          <div class='muted'>Runs: ${escapeHtml(stats.runCount || 0)} • Last run: ${escapeHtml(formatTime(stats.lastRunAt))}</div>
+          <div class='muted ${failed ? 'error-text' : ''}'>Last result: ${escapeHtml(stats.lastResult || stats.lastState || 'Never run')}</div>
+          ${failed && stats.lastError ? `<div class='status error'>${escapeHtml(stats.lastError)}</div>` : ''}
+          <div style='margin-top:8px'><button id='run-${escapeHtml(wf.id)}' onclick='runNow("${escapeHtml(wf.id)}")'>Run now</button></div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderHistory(history) {
+      document.getElementById('historyRows').innerHTML = (history || []).map(i => `<tr>
+        <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
+        <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td><td>${escapeHtml(i.error || '')}</td>
+      </tr>`).join('') || `<tr><td colspan='6' class='muted'>No runs recorded yet.</td></tr>`;
+    }
+
+    function renderNotifications(notifications) {
+      document.getElementById('notify').innerHTML = (notifications || []).map(x => `<div class='card'>${escapeHtml(x.message)}<div class='muted'>${escapeHtml(formatTime(x.createdAt))}</div></div>`).join('') || `<div class='muted'>No internal notifications yet.</div>`;
+    }
+
+    async function load(){
+      try {
+        const [w,h,n]=await Promise.all([getJson('/api/automation/workflows'),getJson('/api/automation/history'),getJson('/api/automation/notifications')]);
+        renderWorkflows(w.workflows || []);
+        renderHistory(h.history || []);
+        renderNotifications(n.notifications || []);
+      } catch (error) {
+        setPageStatus(error.status === 401 ? 'Automation Hub is not authorized. Please log in again, then retry Run now.' : error.message, 'error');
+      }
+    }
+
+    async function setState(id, active){
+      try {
+        await getJson('/api/automation/workflows/'+encodeURIComponent(id)+'/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});
+        await load();
+      } catch (error) {
+        setPageStatus(error.message, 'error');
+        await load();
+      }
+    }
+
+    async function runNow(id){
+      const btn = document.getElementById(`run-${id}`);
+      if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+      setPageStatus('', 'info');
+      try {
+        const result = await getJson('/api/automation/run/'+encodeURIComponent(id),{method:'POST'});
+        setPageStatus(`Workflow completed: ${result.run?.result || 'run recorded'}`, 'success');
+      } catch (error) {
+        const authHint = error.status === 401 ? ' Authorization failed: your session or bearer token was not accepted.' : '';
+        setPageStatus(`${error.message}${authHint}`, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run now'; }
+        await load();
+      }
+    }
+
     load();
   </script>
 </body>
