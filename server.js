@@ -3572,6 +3572,99 @@ async function buildReplyFromUnifiedRetrieval({ retrievalResult, language, speci
   });
 }
 
+
+const CONTACT_NAME_PLACEHOLDERS = new Set([
+  "unknown",
+  "unknown contact",
+  "unknown name",
+  "unnamed",
+  "no name",
+  "no contact name",
+  "contact",
+  "customer",
+  "client",
+  "whatsapp user",
+  "whatsapp contact",
+  "n/a",
+  "na",
+  "none",
+  "null",
+  "undefined",
+  "-",
+  "--"
+]);
+
+function normalizeContactNameCandidate(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isValidKnownContactName(value, { waId = null } = {}) {
+  const normalized = normalizeContactNameCandidate(value);
+  if (!normalized) return false;
+  const lowered = normalized.toLowerCase();
+  if (CONTACT_NAME_PLACEHOLDERS.has(lowered)) return false;
+  if (/^unknown\b/i.test(normalized)) return false;
+  if (/^(fallback|placeholder)\b/i.test(normalized)) return false;
+
+  const normalizedWaId = normalizeContactNameCandidate(waId);
+  if (normalizedWaId && normalized === normalizedWaId) return false;
+  return true;
+}
+
+function getPreferredContactName(existingName, candidateName, { waId = null } = {}) {
+  const candidate = normalizeContactNameCandidate(candidateName);
+  if (isValidKnownContactName(candidate, { waId })) return candidate;
+
+  const existing = normalizeContactNameCandidate(existingName);
+  if (isValidKnownContactName(existing, { waId })) return existing;
+
+  return null;
+}
+
+async function getBestKnownContactName(waId) {
+  const safeWaId = normalizeContactNameCandidate(waId);
+  if (!safeWaId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("contact_name, created_at")
+      .eq("wa_id", safeWaId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (error) {
+      console.warn("[contact-name] existing name lookup skipped", {
+        wa_id: safeWaId,
+        error_code: error?.code || null,
+        error_message: error?.message || String(error)
+      });
+      return null;
+    }
+
+    for (const row of data || []) {
+      const knownName = getPreferredContactName(null, row?.contact_name, { waId: safeWaId });
+      if (knownName) return knownName;
+    }
+  } catch (error) {
+    console.warn("[contact-name] existing name lookup failed", {
+      wa_id: safeWaId,
+      error_message: error?.message || String(error)
+    });
+  }
+
+  return null;
+}
+
+async function resolveDurableContactNameForInsert(payload = {}) {
+  const waId = payload.wa_id;
+  const inboundName = getPreferredContactName(null, payload.contact_name, { waId });
+  if (inboundName) return inboundName;
+
+  const existingName = await getBestKnownContactName(waId);
+  return getPreferredContactName(null, existingName, { waId });
+}
+
 async function saveMessage({
   wa_id,
   contact_name = null,
@@ -3951,6 +4044,7 @@ function isSchemaCacheMissingColumnError(error) {
 
 async function insertConversationPayload(payload) {
   const safePayload = { ...payload };
+  safePayload.contact_name = await resolveDurableContactNameForInsert(payload);
   const removedColumns = new Set();
   const direction = String(payload?.direction || "unknown");
   const waId = String(payload?.wa_id || "");
@@ -3987,7 +4081,7 @@ async function insertConversationPayload(payload) {
         });
         const corePayload = {
           wa_id: payload.wa_id,
-          contact_name: payload.contact_name ?? null,
+          contact_name: safePayload.contact_name ?? null,
           direction: payload.direction,
           body: payload.body,
           message_type: payload.message_type || "text"
@@ -6858,10 +6952,17 @@ function buildConversationThreadSummary(rows) {
   const map = new Map();
 
   for (const row of rows || []) {
-    if (!row?.wa_id || map.has(row.wa_id)) continue;
+    if (!row?.wa_id) continue;
+
+    const existingThread = map.get(row.wa_id);
+    if (existingThread) {
+      existingThread.contact_name = getPreferredContactName(existingThread.contact_name, row.contact_name, { waId: row.wa_id });
+      continue;
+    }
+
     map.set(row.wa_id, {
       wa_id: row.wa_id,
-      contact_name: row.contact_name,
+      contact_name: getPreferredContactName(null, row.contact_name, { waId: row.wa_id }),
       last_message: row.body,
       last_direction: row.direction,
       last_time: row.created_at,
