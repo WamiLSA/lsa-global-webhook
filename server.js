@@ -1138,6 +1138,34 @@ function countUnreadInboundRows(rows = [], state = {}) {
   }).length;
 }
 
+
+function getThreadSummaryActivityMs(summary = {}) {
+  const raw = summary.last_time || summary.timestamp || summary.created_at || summary.last_activity_at || 0;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sortThreadSummaries(summaries = [], settings = cloneDefaultCommunicationsSettings()) {
+  const preference = settings?.thread_list?.sort_preference || "pinned_then_unread_then_recent";
+  const rows = Array.isArray(summaries) ? [...summaries] : [];
+  const byRecent = (a, b) => getThreadSummaryActivityMs(b) - getThreadSummaryActivityMs(a);
+  const byUnread = (a, b) => Number(b.unread_count || 0) - Number(a.unread_count || 0);
+  const byPinned = (a, b) => Number(b.is_pinned === true) - Number(a.is_pinned === true);
+
+  return rows.sort((a, b) => {
+    if (preference === "unread_first") {
+      return byUnread(a, b) || byRecent(a, b);
+    }
+    if (preference === "pinned_then_recent") {
+      return byPinned(a, b) || byRecent(a, b);
+    }
+    if (preference === "pinned_then_unread_then_recent") {
+      return byPinned(a, b) || byUnread(a, b) || byRecent(a, b);
+    }
+    return byRecent(a, b);
+  });
+}
+
 function decorateThreadSummaryWithState(summary, state = {}) {
   const unreadCount = Number(summary.unread_count || summary.unreadCount || 0);
   return {
@@ -7593,7 +7621,13 @@ app.get("/api/conversations", async (req, res) => {
 
     return res.json(threads);
   } catch (err) {
-    console.error("[inbox-api] active conversation thread route crashed", { error_message: err?.message || String(err) });
+    console.error("[inbox-api] active conversation thread route crashed", {
+      route: "GET /api/conversations",
+      code: "INBOX_THREAD_ROUTE_ERROR",
+      error_name: err?.name || null,
+      error_message: err?.message || String(err),
+      stack: err?.stack || null
+    });
     return res.status(500).json({
       error: {
         code: "INBOX_THREAD_ROUTE_ERROR",
@@ -7630,7 +7664,13 @@ app.get("/api/conversations/archived", async (req, res) => {
 
     return res.json(await buildConversationThreadSummary(result.rows));
   } catch (err) {
-    console.error("[inbox-api] archived conversation thread route crashed", { error_message: err?.message || String(err) });
+    console.error("[inbox-api] archived conversation thread route crashed", {
+      route: "GET /api/conversations/archived",
+      code: "INBOX_ARCHIVED_THREAD_ROUTE_ERROR",
+      error_name: err?.name || null,
+      error_message: err?.message || String(err),
+      stack: err?.stack || null
+    });
     return res.status(500).json({
       error: {
         code: "INBOX_ARCHIVED_THREAD_ROUTE_ERROR",
