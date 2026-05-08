@@ -44,12 +44,17 @@
     }
     mount.innerHTML = `<div class="automation-sync-card">
       <div class="automation-sync-title">Automation Hub synchronized decisions</div>
-      ${items.map((item) => `<div class="automation-sync-row">
-        <span class="automation-sync-status ${item.pendingReview ? 'pending' : 'closed'}">${escapeHtml(item.statusLabel || item.status || '')}</span>
-        <span>${escapeHtml(item.title || item.surface || '')}</span>
-        <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
-        ${item.targetUrl ? `<a href="${escapeHtml(item.targetUrl)}">Open</a>` : ''}
-      </div>`).join('')}
+      ${items.map((item) => {
+        const syncState = item.syncState || (item.pendingReview ? 'awaiting_review' : 'synchronized');
+        const stateClass = item.pendingReview ? 'pending' : 'closed';
+        return `<div class="automation-sync-row">
+          <span class="automation-sync-status ${stateClass}">${escapeHtml(item.statusLabel || item.status || '')}</span>
+          <span>${escapeHtml(item.title || item.surface || '')}</span>
+          <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(syncState)} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
+          ${item.syncConfirmation ? `<span class="automation-sync-muted">${escapeHtml(item.syncConfirmation)}</span>` : ''}
+          ${item.targetUrl ? `<a href="${escapeHtml(item.targetUrl)}">Open</a>` : ''}
+        </div>`;
+      }).join('')}
     </div>`;
   }
 
