@@ -8502,6 +8502,30 @@ app.get("/api/automation/artifacts/:id", requireAuth, async (req, res) => {
   return res.json({ artifact });
 });
 
+app.post("/api/automation/artifacts/:id/actions", requireAuth, async (req, res) => {
+  if (!canRunAutomationWorkflow(req)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Your authenticated account is not allowed to record Automation Hub decisions.",
+      code: "AUTOMATION_DECISION_FORBIDDEN"
+    });
+  }
+
+  const result = automationHub.applyArtifactDecision(req.params.id, req.body?.actionId, {
+    decidedBy: getRequestAccountIdentifier(req) || "staff"
+  });
+
+  if (!result.ok) {
+    return res.status(result.status || 500).json({
+      ok: false,
+      error: result.error || "Automation decision failed",
+      code: result.status === 404 ? "AUTOMATION_ARTIFACT_NOT_FOUND" : "AUTOMATION_DECISION_FAILED"
+    });
+  }
+
+  return res.json({ ok: true, artifact: result.artifact, decision: result.decision });
+});
+
 app.post("/api/automation/run/:id", requireAuth, async (req, res) => {
   try {
     if (!canRunAutomationWorkflow(req)) {
