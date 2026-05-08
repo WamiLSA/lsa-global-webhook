@@ -10,26 +10,50 @@
     .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
     .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
     .card { background:var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:10px; padding:12px; }
+    .surface-card { border-left:4px solid #2563eb; }
     .muted{color:var(--lsa-text-muted);font-size:12px}
     .status{font-size:12px;margin-top:8px;padding:8px;border-radius:8px;background:var(--lsa-surface-muted,#f1f5f9)}
     .status.error{color:#991b1b;background:#fee2e2}.status.success{color:#166534;background:#dcfce7}
-    button{padding:6px 10px;border:1px solid var(--lsa-input-border);background:var(--lsa-surface);border-radius:6px;cursor:pointer}
+    button,.action-link{padding:6px 10px;border:1px solid var(--lsa-input-border);background:var(--lsa-surface);border-radius:6px;cursor:pointer;color:var(--lsa-text);text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:13px}
     button:disabled{cursor:not-allowed;opacity:.65}
-    .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .primary-action{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+    .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
     .pill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--lsa-border);border-radius:999px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px;color:var(--lsa-text-muted)}
+    .artifact-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+    .decision{font-size:13px;line-height:1.4;margin:8px 0}
+    .checklist{margin:8px 0 0 18px;padding:0;font-size:12px;color:var(--lsa-text-muted)}
+    .checklist li{margin:3px 0}
     table{width:100%;border-collapse:collapse}.table-wrap{overflow:auto}
     th,td{padding:8px;border-bottom:1px solid var(--lsa-border);text-align:left;font-size:13px;vertical-align:top}
     .error-text{color:#b91c1c}.success-text{color:#15803d}
+    .section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:22px;flex-wrap:wrap}
+    @media (max-width: 700px) {
+      .wrap { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      th,td { min-width: 120px; }
+      .row { align-items:flex-start; }
+    }
   </style>
 </head>
 <body data-page="automation">
   <div id="topNavMount"></div>
   <div class="wrap">
-    <h1>Automation Hub (Phase 1)</h1>
-    <p class="muted">Controlled Phase 1 execution layer for internal workflow runs, history, and notifications.</p>
+    <h1>Automation Hub (Phase 2)</h1>
+    <p class="muted">Controlled workflow execution with run history, internal notifications, and actionable review surfaces for LSA GLOBAL Internal OS.</p>
     <div id="pageStatus" class="status" hidden></div>
     <div id="workflowGrid" class="grid"></div>
-    <h2>Run History</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+
+    <div class="section-heading">
+      <div>
+        <h2>Phase 2 Result Surfaces</h2>
+        <p class="muted">Workflow outputs now become visible review drafts, queues, thread panels, or matching result lists with clear next decisions.</p>
+      </div>
+      <button onclick="load()">Refresh</button>
+    </div>
+    <div id="artifactGrid" class="grid"></div>
+
+    <h2>Run History</h2>
+    <div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Action</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
   <script src="/global-progress.js"></script>
@@ -84,37 +108,93 @@
       return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
     }
 
+    function renderAction(artifact, compact = false) {
+      if (!artifact) return compact ? '' : '<span class="muted">No result surface</span>';
+      const label = escapeHtml(artifact.actionLabel || 'Open result');
+      return `<button class="primary-action" onclick='openArtifact("${escapeHtml(artifact.id)}")'>${label}</button>`;
+    }
+
     function renderWorkflows(workflows) {
       const grid = document.getElementById('workflowGrid');
       grid.innerHTML = workflows.map((wf) => {
         const stats = wf.stats || {};
         const failed = stats.lastState === 'failed';
+        const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactTitle ? 'Open result' : 'Open result' } : null;
         return `<div class='card'>
           <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
           <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span></div>
           <div class='muted'>Runs: ${escapeHtml(stats.runCount || 0)} • Last run: ${escapeHtml(formatTime(stats.lastRunAt))}</div>
           <div class='muted ${failed ? 'error-text' : ''}'>Last result: ${escapeHtml(stats.lastResult || stats.lastState || 'Never run')}</div>
+          ${stats.lastArtifactTitle ? `<div class='status success'>Latest output: ${escapeHtml(stats.lastArtifactTitle)}</div>` : ''}
           ${failed && stats.lastError ? `<div class='status error'>${escapeHtml(stats.lastError)}</div>` : ''}
-          <div style='margin-top:8px'><button id='run-${escapeHtml(wf.id)}' onclick='runNow("${escapeHtml(wf.id)}")'>Run now</button></div>
+          <div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap'><button id='run-${escapeHtml(wf.id)}' onclick='runNow("${escapeHtml(wf.id)}")'>Run now</button>${lastArtifact ? renderAction(lastArtifact, true) : ''}</div>
         </div>`;
       }).join('');
+    }
+
+    function renderArtifacts(artifacts) {
+      const grid = document.getElementById('artifactGrid');
+      grid.innerHTML = (artifacts || []).map((artifact) => `<div class='card surface-card' id='artifact-${escapeHtml(artifact.id)}'>
+        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill'>${escapeHtml(artifact.status || 'pending_review')}</span></div>
+        <div class='artifact-meta'>
+          <span class='pill'>${escapeHtml(artifact.module)}</span>
+          <span class='pill'>${escapeHtml(artifact.surface)}</span>
+          <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
+        </div>
+        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
+        <div class='decision'>${escapeHtml(artifact.decision)}</div>
+        <ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        <div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>
+          ${renderAction(artifact)}
+          <a class='action-link' href='${escapeHtml(artifact.destinationUrl || '/automation')}'>Open target module</a>
+        </div>
+      </div>`).join('') || `<div class='muted'>No Phase 2 workflow result surfaces have been created yet. Run a workflow to create the first review surface.</div>`;
     }
 
     function renderHistory(history) {
       document.getElementById('historyRows').innerHTML = (history || []).map(i => `<tr>
         <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
-        <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td><td>${escapeHtml(i.error || '')}</td>
-      </tr>`).join('') || `<tr><td colspan='6' class='muted'>No runs recorded yet.</td></tr>`;
+        <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td><td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
+      </tr>`).join('') || `<tr><td colspan='7' class='muted'>No runs recorded yet.</td></tr>`;
     }
 
     function renderNotifications(notifications) {
-      document.getElementById('notify').innerHTML = (notifications || []).map(x => `<div class='card'>${escapeHtml(x.message)}<div class='muted'>${escapeHtml(formatTime(x.createdAt))}</div></div>`).join('') || `<div class='muted'>No internal notifications yet.</div>`;
+      document.getElementById('notify').innerHTML = (notifications || []).map((x) => {
+        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open result' } : null;
+        return `<div class='card'>
+          ${escapeHtml(x.message)}
+          <div class='muted'>${escapeHtml(formatTime(x.createdAt))}${x.details?.surface ? ` • ${escapeHtml(x.details.surface)}` : ''}</div>
+          ${artifact ? `<div style='margin-top:8px'>${renderAction(artifact)}</div>` : ''}
+        </div>`;
+      }).join('') || `<div class='muted'>No internal notifications yet.</div>`;
+    }
+
+    async function openArtifact(id) {
+      const el = document.getElementById(`artifact-${id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '3px solid #60a5fa';
+        window.setTimeout(() => { el.style.outline = ''; }, 1800);
+        return;
+      }
+      try {
+        const result = await getJson('/api/automation/artifacts/' + encodeURIComponent(id));
+        if (result.artifact?.destinationUrl) window.location.href = result.artifact.destinationUrl;
+      } catch (error) {
+        setPageStatus(error.message, 'error');
+      }
     }
 
     async function load(){
       try {
-        const [w,h,n]=await Promise.all([getJson('/api/automation/workflows'),getJson('/api/automation/history'),getJson('/api/automation/notifications')]);
+        const [w,h,n,a]=await Promise.all([
+          getJson('/api/automation/workflows'),
+          getJson('/api/automation/history'),
+          getJson('/api/automation/notifications'),
+          getJson('/api/automation/artifacts')
+        ]);
         renderWorkflows(w.workflows || []);
+        renderArtifacts(a.artifacts || []);
         renderHistory(h.history || []);
         renderNotifications(n.notifications || []);
       } catch (error) {
@@ -138,7 +218,8 @@
       setPageStatus('', 'info');
       try {
         const result = await getJson('/api/automation/run/'+encodeURIComponent(id),{method:'POST'});
-        setPageStatus(`Workflow completed: ${result.run?.result || 'run recorded'}`, 'success');
+        const artifact = result.run?.artifact;
+        setPageStatus(`Workflow completed: ${artifact ? `${artifact.title} created. ${artifact.actionLabel}: ${artifact.surface}.` : (result.run?.result || 'run recorded')}`, 'success');
       } catch (error) {
         const authHint = error.status === 401 ? ' Authorization failed: your session or bearer token was not accepted.' : '';
         setPageStatus(`${error.message}${authHint}`, 'error');
