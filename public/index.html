@@ -191,7 +191,33 @@
       border-bottom: 1px solid var(--lsa-border);
       padding: 10px;
       cursor: pointer;
+      position: relative;
     }
+    .thread.unread {
+      background: color-mix(in srgb, #22c55e 7%, var(--lsa-surface));
+      border-left: 4px solid #22c55e;
+    }
+    .thread.pinned { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--lsa-blue) 70%, #22c55e); }
+    .thread-name-row { display:flex; align-items:center; gap:6px; min-width:0; }
+    .thread-name-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .thread-icons { display:inline-flex; gap:4px; color:var(--lsa-text-muted); font-size:12px; }
+    .unread-badge {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-width:18px;
+      height:18px;
+      padding:0 6px;
+      border-radius:999px;
+      background:#22c55e;
+      color:white;
+      font-size:11px;
+      font-weight:800;
+      box-shadow:0 0 0 2px var(--lsa-surface);
+    }
+    .thread-controls { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .thread-controls button { border:1px solid var(--lsa-border); background:var(--lsa-surface-muted); color:var(--lsa-text); border-radius:999px; padding:4px 8px; font-size:11px; cursor:pointer; }
+    .thread-controls button:hover { background:var(--lsa-hover); }
     .thread-top {
       display: flex;
       justify-content: space-between;
@@ -531,6 +557,9 @@
           <div id="chatActivity"></div>
         </div>
         <div class="thread-actions">
+          <button type="button" id="readToggleBtn" onclick="toggleCurrentThreadReadState()">Mark unread</button>
+          <button type="button" id="pinToggleBtn" onclick="toggleCurrentThreadPin()">Pin</button>
+          <button type="button" id="muteToggleBtn" onclick="toggleCurrentThreadMute()">Mute</button>
           <button type="button" id="archiveBtn" onclick="archiveThread()">Archive</button>
           <button type="button" id="unarchiveBtn" onclick="unarchiveThread()" style="display:none;">Unarchive</button>
           <button type="button" onclick="clearChat()">Clear Chat</button>
@@ -579,6 +608,120 @@
     let currentChannel = "whatsapp";
     let threadListRequestSeq = 0;
     let conversationRequestSeq = 0;
+    let communicationsSettings = null;
+    let currentThreadMeta = null;
+    let previousUnreadTotal = null;
+
+    
+    const DEFAULT_COMMUNICATIONS_SETTINGS = {
+      notifications: { sound_enabled: true, vibration_enabled: true, desktop_notifications_enabled: false, default_inbound_behavior: "badge_and_sound" },
+      thread_list: { show_message_preview: true, show_unread_badge_count: true, sort_preference: "pinned_then_unread_then_recent", archived_new_message_behavior: "keep_archived", recency_display: "smart" },
+      media: { auto_download: "wifi_only" },
+      quick_replies: []
+    };
+
+    async function loadCommunicationsSettings() {
+      try {
+        const res = await fetch("/api/communications/settings");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Communications settings unavailable");
+        communicationsSettings = {
+          ...DEFAULT_COMMUNICATIONS_SETTINGS,
+          ...(data.settings || {}),
+          notifications: { ...DEFAULT_COMMUNICATIONS_SETTINGS.notifications, ...(data.settings?.notifications || {}) },
+          thread_list: { ...DEFAULT_COMMUNICATIONS_SETTINGS.thread_list, ...(data.settings?.thread_list || {}) },
+          media: { ...DEFAULT_COMMUNICATIONS_SETTINGS.media, ...(data.settings?.media || {}) },
+          quick_replies: data.settings?.quick_replies || []
+        };
+      } catch (error) {
+        console.warn("[inbox-frontend] communications settings fallback", error?.message || error);
+        communicationsSettings = DEFAULT_COMMUNICATIONS_SETTINGS;
+      }
+      applyComposerQuickReplyHint();
+    }
+
+    function getCommunicationsSettings() {
+      return communicationsSettings || DEFAULT_COMMUNICATIONS_SETTINGS;
+    }
+
+    
+    function maybeNotifyUnreadIncrease(threads = []) {
+      const total = threads.reduce((sum, thread) => sum + Number(thread.unread_count || thread.unreadCount || 0), 0);
+      const settings = getCommunicationsSettings();
+      if (previousUnreadTotal !== null && total > previousUnreadTotal) {
+        const behavior = settings.notifications?.default_inbound_behavior || "badge_and_sound";
+        if (behavior !== "silent" && settings.notifications?.desktop_notifications_enabled && "Notification" in window && Notification.permission === "granted") {
+          try { new Notification("LSA GLOBAL Communications", { body: "New unread inbound message in the Internal OS inbox." }); } catch (_) {}
+        }
+        if (behavior === "badge_and_sound" && settings.notifications?.sound_enabled) {
+          try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            oscillator.frequency.value = 720;
+            gain.gain.value = 0.035;
+            oscillator.connect(gain); gain.connect(audioContext.destination);
+            oscillator.start(); oscillator.stop(audioContext.currentTime + 0.09);
+          } catch (_) {}
+        }
+        if (settings.notifications?.vibration_enabled && navigator.vibrate) {
+          try { navigator.vibrate(90); } catch (_) {}
+        }
+      }
+      previousUnreadTotal = total;
+    }
+
+    function applyComposerQuickReplyHint() {
+      const box = document.getElementById("replyBox");
+      if (!box) return;
+      const replies = getCommunicationsSettings().quick_replies || [];
+      box.title = replies.length ? `Quick replies: ${replies.map(r => r.shortcut).join(", ")}` : "";
+    }
+
+    function syncThreadHeaderActions() {
+      const meta = currentThreadMeta || {};
+      document.getElementById("readToggleBtn").textContent = meta.is_unread ? "Mark read" : "Mark unread";
+      document.getElementById("pinToggleBtn").textContent = meta.is_pinned ? "Unpin" : "Pin";
+      document.getElementById("muteToggleBtn").textContent = meta.is_muted ? "Unmute" : "Mute";
+    }
+
+    async function updateThreadStateAction(threadId, channel, action) {
+      if (!threadId) return;
+      const res = await fetch(getThreadActionEndpoint(channel, threadId, `state/${action}`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+      const result = await res.json();
+      if (!res.ok) { alert("Thread state update failed: " + JSON.stringify(result)); return false; }
+      return true;
+    }
+
+    async function toggleCurrentThreadReadState() {
+      if (!currentWaId) return alert("Select a conversation first.");
+      const action = currentThreadMeta?.is_unread ? "read" : "unread";
+      if (await updateThreadStateAction(currentWaId, currentChannel, action)) {
+        currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: action === "unread", unread_count: action === "unread" ? 1 : 0 };
+        syncThreadHeaderActions();
+        await loadThreads();
+      }
+    }
+
+    async function toggleCurrentThreadPin() {
+      if (!currentWaId) return alert("Select a conversation first.");
+      const action = currentThreadMeta?.is_pinned ? "unpin" : "pin";
+      if (await updateThreadStateAction(currentWaId, currentChannel, action)) {
+        currentThreadMeta = { ...(currentThreadMeta || {}), is_pinned: action === "pin" };
+        syncThreadHeaderActions();
+        await loadThreads();
+      }
+    }
+
+    async function toggleCurrentThreadMute() {
+      if (!currentWaId) return alert("Select a conversation first.");
+      const action = currentThreadMeta?.is_muted ? "unmute" : "mute";
+      if (await updateThreadStateAction(currentWaId, currentChannel, action)) {
+        currentThreadMeta = { ...(currentThreadMeta || {}), is_muted: action === "mute" };
+        syncThreadHeaderActions();
+        await loadThreads();
+      }
+    }
 
     function setChannel(channel) {
       currentChannel = channel === "mail" ? "mail" : "whatsapp";
@@ -638,6 +781,8 @@
       document.getElementById("chatActivity").textContent = "";
       document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
       document.getElementById("labelSelect").value = "";
+      currentThreadMeta = null;
+      syncThreadHeaderActions();
     }
 
     function getThreadActionEndpoint(channel, threadId, action) {
@@ -975,6 +1120,7 @@
         return;
       }
       const threads = payload;
+      maybeNotifyUnreadIncrease(threads);
       const degraded = res.headers.get("X-LSA-Inbox-Degraded") === "true";
       const missingColumns = res.headers.get("X-LSA-Inbox-Missing-Columns") || "";
       const schemaWarning = res.headers.get("X-LSA-Inbox-Warning") || "";
@@ -1013,22 +1159,45 @@
         const activityTime = getMessageTimestamp(thread) || thread.timestamp;
         const preview = thread.last_message || thread.preview || "";
         const displayName = thread.contact_name || thread.subject || "Unknown";
+        const threadId = channelAtRequest === "mail" ? thread.thread_id : thread.wa_id;
         const threadIdText = channelAtRequest === "mail" ? (thread.sender || "") : thread.wa_id;
+        const unreadCount = Number(thread.unread_count || thread.unreadCount || 0);
+        const settings = getCommunicationsSettings();
+        const showBadges = settings.thread_list?.show_unread_badge_count !== false;
+        const showPreview = settings.thread_list?.show_message_preview !== false;
+        const showActivity = settings.thread_list?.recency_display !== "hidden";
         div.className = "thread";
+        div.classList.toggle("unread", unreadCount > 0);
+        div.classList.toggle("pinned", thread.is_pinned === true);
+        const iconHtml = `<span class="thread-icons">${thread.is_pinned ? "📌" : ""}${thread.is_muted ? "🔕" : ""}</span>`;
+        const badgeHtml = showBadges && unreadCount > 0 ? `<span class="unread-badge" title="${unreadCount} unread message${unreadCount === 1 ? "" : "s"}">${unreadCount > 99 ? "99+" : unreadCount}</span>` : "";
         div.innerHTML = `
           <div class="thread-top">
-            <strong>${escapeHtml(displayName)}</strong>
-            <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatThreadRecency(activityTime))}</span>
+            <div class="thread-name-row"><strong>${escapeHtml(displayName)}</strong>${iconHtml}</div>
+            <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(settings.thread_list?.recency_display === "exact" ? (parseMessageDate(activityTime)?.toLocaleString() || "—") : formatThreadRecency(activityTime))}</span>
           </div>
           <div>${escapeHtml(threadIdText || "")}</div>
-          <div class="small thread-preview">${escapeHtml(preview)}</div>
-          <div class="thread-activity">${escapeHtml(formatLastActivity(activityTime, thread.last_direction || thread.direction))}</div>
-          <div class="badge">${escapeHtml(thread.label || "No label")}</div>
+          ${showPreview ? `<div class="small thread-preview">${escapeHtml(preview)}</div>` : `<div class="small thread-preview">Preview hidden by Communications Settings</div>`}
+          ${showActivity ? `<div class="thread-activity">${escapeHtml(formatLastActivity(activityTime, thread.last_direction || thread.direction))}</div>` : ""}
+          <div class="thread-controls">
+            ${badgeHtml}
+            <button type="button" data-action="${unreadCount > 0 ? "read" : "unread"}">${unreadCount > 0 ? "Mark read" : "Mark unread"}</button>
+            <button type="button" data-action="${thread.is_pinned ? "unpin" : "pin"}">${thread.is_pinned ? "Unpin" : "Pin"}</button>
+            <button type="button" data-action="${thread.is_muted ? "unmute" : "mute"}">${thread.is_muted ? "Unmute" : "Mute"}</button>
+          </div>
+          <div class="badge">${escapeHtml(thread.label || (unreadCount > 0 ? "Unread" : "No label"))}</div>
         `;
         if (channelAtRequest === "mail") div.classList.add("thread-mail");
+        div.querySelectorAll("button[data-action]").forEach((button) => {
+          button.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            if (currentChannel !== channelAtRequest) return;
+            if (await updateThreadStateAction(threadId, channelAtRequest, button.dataset.action)) await loadThreads();
+          });
+        });
         div.onclick = () => {
           if (currentChannel !== channelAtRequest) return;
-          loadConversation(channelAtRequest === "mail" ? thread.thread_id : thread.wa_id, displayName, activityTime, thread.last_direction || thread.direction, channelAtRequest);
+          loadConversation(threadId, displayName, activityTime, thread.last_direction || thread.direction, channelAtRequest, thread);
         };
         container.appendChild(div);
       });
@@ -1046,13 +1215,15 @@
       document.getElementById("attachmentName").textContent = "";
     }
 
-    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel) {
+    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null) {
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
       const conversationChanged = currentWaId !== wa_id;
       currentWaId = wa_id;
       currentContactName = contactName || "Contact";
+      currentThreadMeta = { ...(threadMeta || {}), is_unread: false, unread_count: 0 };
+      syncThreadHeaderActions();
       setThreadActionButtons();
       const isMail = channelAtRequest === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
@@ -1096,6 +1267,8 @@
       if (!Array.isArray(messages) || messages.length === 0) {
         container.innerHTML = "<div class='small'>No messages yet.</div>";
         document.getElementById("labelSelect").value = "";
+        currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
+        syncThreadHeaderActions();
         document.getElementById("chatActivity").textContent = "No activity yet";
         return;
       }
@@ -1138,6 +1311,9 @@
       document.getElementById("chatActivity").textContent = formatLastActivity(lastTimestamp, last.direction);
 
       container.scrollTop = container.scrollHeight;
+      currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
+      syncThreadHeaderActions();
+      await loadThreads();
     }
 
     async function sendReply() {
@@ -1355,13 +1531,13 @@
 
     const initialView = new URLSearchParams(window.location.search).get("view");
     if (initialView === "archived") {
-      setInboxView("archived");
+      loadCommunicationsSettings().then(() => setInboxView("archived"));
     } else {
       renderInboxViewControls();
       setThreadActionButtons();
       const isMail = currentChannel === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
-      loadThreads();
+      loadCommunicationsSettings().then(loadThreads);
     }
     setInterval(loadThreads, 5000);
   </script>

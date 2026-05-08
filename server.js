@@ -62,6 +62,7 @@ const MEDIA_STORAGE_DIR = path.join(__dirname, "uploads", "whatsapp");
 const SYSTEM_MODE_FILE = path.join(__dirname, "data", "system-mode.json");
 const SYSTEM_MODE_CONFIG_KEY = "system_mode";
 const ACCOUNT_SETTINGS_CONFIG_KEY = "account_settings_store";
+const COMMUNICATIONS_SETTINGS_CONFIG_KEY = "communications_settings_store";
 const FALLBACK_BRAND_NAME = "LSA GLOBAL";
 const SYSTEM_MODE_REFRESH_MS = Number(process.env.SYSTEM_MODE_REFRESH_MS || 5000);
 const automationHub = createAutomationHub({
@@ -1013,6 +1014,139 @@ function verifyPassword(password, storedHash) {
   if (scheme !== "pbkdf2" || !rounds || !salt || !expected) return false;
   const derived = crypto.pbkdf2Sync(String(password), salt, Number(rounds), 64, "sha512").toString("hex");
   return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(derived, "hex"));
+}
+
+
+const DEFAULT_COMMUNICATIONS_SETTINGS = {
+  notifications: {
+    sound_enabled: true,
+    vibration_enabled: true,
+    desktop_notifications_enabled: false,
+    default_inbound_behavior: "badge_and_sound"
+  },
+  thread_list: {
+    show_message_preview: true,
+    show_unread_badge_count: true,
+    sort_preference: "pinned_then_unread_then_recent",
+    archived_new_message_behavior: "keep_archived",
+    recency_display: "smart"
+  },
+  media: {
+    auto_download: "wifi_only"
+  },
+  quick_replies: [
+    { shortcut: "/hello", text: "Hello, thank you for contacting LSA GLOBAL. How may we help you today?" },
+    { shortcut: "/thanks", text: "Thank you. We will review this and get back to you shortly." },
+    { shortcut: "/followup", text: "Just following up on your request. Please let us know if you would like us to proceed." }
+  ],
+  thread_state: {}
+};
+
+function cloneDefaultCommunicationsSettings() {
+  return JSON.parse(JSON.stringify(DEFAULT_COMMUNICATIONS_SETTINGS));
+}
+
+function normalizeCommunicationsSettings(input = {}) {
+  const defaults = cloneDefaultCommunicationsSettings();
+  const next = {
+    ...defaults,
+    ...(input && typeof input === "object" ? input : {}),
+    notifications: { ...defaults.notifications, ...(input.notifications || {}) },
+    thread_list: { ...defaults.thread_list, ...(input.thread_list || {}) },
+    media: { ...defaults.media, ...(input.media || {}) },
+    thread_state: input.thread_state && typeof input.thread_state === "object" ? input.thread_state : {},
+    quick_replies: Array.isArray(input.quick_replies) ? input.quick_replies : defaults.quick_replies
+  };
+
+  const allowedSorts = new Set(["recent", "unread_first", "pinned_then_recent", "pinned_then_unread_then_recent"]);
+  if (!allowedSorts.has(next.thread_list.sort_preference)) next.thread_list.sort_preference = defaults.thread_list.sort_preference;
+  const allowedArchiveBehaviors = new Set(["keep_archived", "unarchive_on_new_inbound"]);
+  if (!allowedArchiveBehaviors.has(next.thread_list.archived_new_message_behavior)) next.thread_list.archived_new_message_behavior = defaults.thread_list.archived_new_message_behavior;
+  const allowedRecency = new Set(["smart", "exact", "hidden"]);
+  if (!allowedRecency.has(next.thread_list.recency_display)) next.thread_list.recency_display = defaults.thread_list.recency_display;
+  const allowedMedia = new Set(["never", "wifi_only", "always"]);
+  if (!allowedMedia.has(next.media.auto_download)) next.media.auto_download = defaults.media.auto_download;
+  const allowedInbound = new Set(["badge_only", "badge_and_sound", "silent"]);
+  if (!allowedInbound.has(next.notifications.default_inbound_behavior)) next.notifications.default_inbound_behavior = defaults.notifications.default_inbound_behavior;
+
+  next.quick_replies = next.quick_replies
+    .slice(0, 8)
+    .map((reply) => ({
+      shortcut: String(reply.shortcut || "").trim().slice(0, 32),
+      text: String(reply.text || "").trim().slice(0, 500)
+    }))
+    .filter((reply) => reply.shortcut && reply.text);
+
+  return next;
+}
+
+async function readCommunicationsSettings() {
+  try {
+    const { data, error } = await supabase
+      .from("app_config")
+      .select("value")
+      .eq("key", COMMUNICATIONS_SETTINGS_CONFIG_KEY)
+      .maybeSingle();
+    if (error) throw error;
+    return normalizeCommunicationsSettings(data?.value ? (typeof data.value === "string" ? JSON.parse(data.value) : data.value) : {});
+  } catch (error) {
+    console.warn("[communications-settings] Falling back to defaults:", error.message || error);
+    return cloneDefaultCommunicationsSettings();
+  }
+}
+
+async function writeCommunicationsSettings(settings) {
+  const normalized = normalizeCommunicationsSettings(settings);
+  const { error } = await supabase
+    .from("app_config")
+    .upsert({
+      key: COMMUNICATIONS_SETTINGS_CONFIG_KEY,
+      value: JSON.stringify(normalized),
+      updated_at: new Date().toISOString()
+    }, { onConflict: "key" });
+  if (error) throw new Error(`Unable to persist communications settings: ${error.message}`);
+  return normalized;
+}
+
+function getThreadStateKey(channel, threadId) {
+  return `${channel === "mail" ? "mail" : "whatsapp"}:${String(threadId || "")}`;
+}
+
+function getThreadState(settings, channel, threadId) {
+  const key = getThreadStateKey(channel, threadId);
+  settings.thread_state = settings.thread_state || {};
+  settings.thread_state[key] = settings.thread_state[key] || {};
+  return settings.thread_state[key];
+}
+
+async function updateThreadState(channel, threadId, patch = {}) {
+  const settings = await readCommunicationsSettings();
+  const state = getThreadState(settings, channel, threadId);
+  Object.assign(state, patch, { updated_at: new Date().toISOString() });
+  return writeCommunicationsSettings(settings);
+}
+
+function countUnreadInboundRows(rows = [], state = {}) {
+  const manuallyUnread = Number(state.manual_unread_count || 0);
+  if (manuallyUnread > 0) return manuallyUnread;
+  const lastReadAt = state.last_read_at ? new Date(state.last_read_at).getTime() : 0;
+  return (rows || []).filter((row) => {
+    const direction = String(row.direction || "in").toLowerCase();
+    if (direction === "out" || direction === "outgoing") return false;
+    const timestamp = new Date(row.created_at || row.timestamp || 0).getTime();
+    return !lastReadAt || timestamp > lastReadAt;
+  }).length;
+}
+
+function decorateThreadSummaryWithState(summary, state = {}) {
+  return {
+    ...summary,
+    unread_count: Number(summary.unread_count || 0),
+    is_unread: Number(summary.unread_count || 0) > 0,
+    is_pinned: state.is_pinned === true,
+    is_muted: state.is_muted === true,
+    last_read_at: state.last_read_at || null
+  };
 }
 
 async function readLocalAccountSettingsStore() {
@@ -4075,6 +4209,21 @@ function isSchemaCacheMissingColumnError(error) {
   return code === "PGRST204" || /schema cache/i.test(message);
 }
 
+
+async function applyArchivedInboundBehavior(waId, direction) {
+  if (!waId || String(direction || "").toLowerCase().startsWith("out")) return;
+  try {
+    const settings = await readCommunicationsSettings();
+    if (settings.thread_list?.archived_new_message_behavior !== "unarchive_on_new_inbound") return;
+    const { error } = await supabase.from("conversations").update({ is_archived: false }).eq("wa_id", waId);
+    if (error && extractMissingColumnName(error) !== "is_archived") {
+      console.warn("[communications-settings] archived inbound behavior update failed", { wa_id: waId, error_message: error.message || String(error) });
+    }
+  } catch (error) {
+    console.warn("[communications-settings] archived inbound behavior skipped", { wa_id: waId, error_message: error.message || String(error) });
+  }
+}
+
 async function insertConversationPayload(payload) {
   const safePayload = { ...payload };
   safePayload.contact_name = await resolveDurableContactNameForInsert(payload);
@@ -4098,6 +4247,7 @@ async function insertConversationPayload(payload) {
         message_type: messageType,
         removed_columns: Array.from(removedColumns)
       });
+      await applyArchivedInboundBehavior(waId, direction);
       return { ok: true, removedColumns: Array.from(removedColumns) };
     }
 
@@ -4121,6 +4271,7 @@ async function insertConversationPayload(payload) {
         };
         const { error: coreError } = await supabase.from("conversations").insert([corePayload]);
         if (!coreError) {
+          await applyArchivedInboundBehavior(waId, direction);
           return {
             ok: true,
             removedColumns: Array.from(new Set([...removedColumns, ...Object.keys(payload).filter((key) => !(key in corePayload))])),
@@ -6825,16 +6976,61 @@ app.get("/api/communications/overview", async (req, res) => {
   });
 });
 
+
+app.get("/api/communications/settings", async (req, res) => {
+  try {
+    const settings = await readCommunicationsSettings();
+    const { thread_state, ...safeSettings } = settings;
+    return res.json({ ok: true, settings: safeSettings });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/communications/settings", async (req, res) => {
+  try {
+    const existing = await readCommunicationsSettings();
+    const incoming = req.body?.settings || req.body || {};
+    const settings = await writeCommunicationsSettings({
+      ...existing,
+      ...incoming,
+      notifications: { ...existing.notifications, ...(incoming.notifications || {}) },
+      thread_list: { ...existing.thread_list, ...(incoming.thread_list || {}) },
+      media: { ...existing.media, ...(incoming.media || {}) },
+      quick_replies: incoming.quick_replies || existing.quick_replies,
+      thread_state: existing.thread_state || {}
+    });
+    const { thread_state, ...safeSettings } = settings;
+    return res.json({ ok: true, settings: safeSettings });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+async function applyMailThreadStateSummary(thread) {
+  const settings = await readCommunicationsSettings();
+  const summary = summarizeMailThread(thread);
+  const entries = getNormalizedMailEntries(thread);
+  const state = getThreadState(settings, "mail", thread.thread_id);
+  const unreadCount = countUnreadInboundRows(entries, state) || (thread.is_read === false ? 1 : 0);
+  return decorateThreadSummaryWithState({ ...summary, unread_count: unreadCount }, state);
+}
+
+async function markThreadReadState(channel, threadId) {
+  await updateThreadState(channel, threadId, {
+    last_read_at: new Date().toISOString(),
+    manual_unread_count: 0
+  });
+}
+
 app.get("/api/communications/mail/threads", async (req, res) => {
   try {
     const state = await readCommunicationsLayerState();
     const view = String(req.query.view || "active").toLowerCase();
     const archived = view === "archived";
     const sourceThreads = getMailThreads(state);
-    const threads = sourceThreads
-      .filter(t => Boolean(t.is_archived) === archived)
-      .map(summarizeMailThread)
-      .sort((a, b) => new Date(b.last_activity_at || 0) - new Date(a.last_activity_at || 0));
+    const filtered = sourceThreads.filter(t => Boolean(t.is_archived) === archived);
+    const threads = sortThreadSummaries(await Promise.all(filtered.map(applyMailThreadStateSummary)), await readCommunicationsSettings());
     console.log("[inbox-api] mail thread load succeeded", {
       view: archived ? "archived" : "active",
       source_threads: sourceThreads.length,
@@ -6857,7 +7053,49 @@ app.get("/api/communications/mail/threads/:thread_id", async (req, res) => {
   const state = await readCommunicationsLayerState();
   const { thread } = findMailThread(state, req.params.thread_id);
   if (!thread) return res.status(404).json({ error: "Mail thread not found" });
+  thread.is_read = true;
+  await writeCommunicationsLayerState(state);
+  await markThreadReadState("mail", req.params.thread_id);
   return res.json(getNormalizedMailEntries(thread));
+});
+
+
+async function applyThreadStateAction(req, res, channel, threadId) {
+  try {
+    const action = String(req.body?.action || req.params.action || "").toLowerCase();
+    if (!threadId) return res.status(400).json({ error: "Thread id is required" });
+    const patch = {};
+    if (action === "read") {
+      patch.last_read_at = new Date().toISOString();
+      patch.manual_unread_count = 0;
+    } else if (action === "unread") {
+      patch.manual_unread_count = Math.max(1, Number(req.body?.count || 1));
+      patch.last_marked_unread_at = new Date().toISOString();
+    } else if (action === "pin") {
+      patch.is_pinned = true;
+      patch.pinned_at = new Date().toISOString();
+    } else if (action === "unpin") {
+      patch.is_pinned = false;
+      patch.unpinned_at = new Date().toISOString();
+    } else if (action === "mute") {
+      patch.is_muted = true;
+      patch.muted_at = new Date().toISOString();
+    } else if (action === "unmute") {
+      patch.is_muted = false;
+      patch.unmuted_at = new Date().toISOString();
+    } else {
+      return res.status(400).json({ error: "Unsupported thread state action" });
+    }
+    const settings = await updateThreadState(channel, threadId, patch);
+    const state = getThreadState(settings, channel, threadId);
+    return res.json({ ok: true, channel, thread_id: threadId, state });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+app.post("/api/communications/mail/threads/:thread_id/state/:action", async (req, res) => {
+  return applyThreadStateAction(req, res, "mail", req.params.thread_id);
 });
 
 app.post("/api/communications/mail/threads/:thread_id/archive", async (req, res) => {
@@ -7015,8 +7253,9 @@ const CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE = {
   followup_eligible: "follow-up eligibility"
 };
 
-function buildConversationThreadSummary(rows) {
-  const map = new Map();
+async function buildConversationThreadSummary(rows) {
+  const settings = await readCommunicationsSettings();
+  const groupedRows = new Map();
 
   for (const row of rows || []) {
     if (!row?.wa_id) continue;
@@ -7295,7 +7534,7 @@ app.get("/api/conversations", async (req, res) => {
       });
     }
 
-    const threads = buildConversationThreadSummary(result.rows);
+    const threads = await buildConversationThreadSummary(result.rows);
     if (!threads.length) {
       const diagnostics = await getConversationVisibilityDiagnostics();
       console.warn("[inbox-api] active conversation thread view returned zero threads", {
@@ -7345,7 +7584,7 @@ app.get("/api/conversations/archived", async (req, res) => {
       });
     }
 
-    return res.json(buildConversationThreadSummary(result.rows));
+    return res.json(await buildConversationThreadSummary(result.rows));
   } catch (err) {
     console.error("[inbox-api] archived conversation thread route crashed", { error_message: err?.message || String(err) });
     return res.status(500).json({
@@ -7385,6 +7624,7 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
       count: Array.isArray(data) ? data.length : 0
     });
 
+    await markThreadReadState("whatsapp", wa_id);
     return res.json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -7401,7 +7641,7 @@ function summarizeThreadForMobile(thread) {
     lastDirection: thread.last_direction || "",
     lastTime: thread.last_time || "",
     label: thread.label || "",
-    unreadCount: 0,
+    unreadCount: Number(thread.unread_count || thread.unreadCount || 0),
     isArchived: thread.is_archived === true,
     conversationOwner: thread.conversation_owner || null,
     humanTakeover: thread.human_takeover ?? null,
@@ -7494,7 +7734,7 @@ app.get("/api/mobile/inbox", async (req, res) => {
       return res.status(500).json({ ok: false, error: result.error, diagnostics: { attempts: result.attempts, blocked_columns: result.blockedColumns || [] } });
     }
     const mode = await getCurrentSystemMode();
-    const conversations = buildConversationThreadSummary(result.rows).map(summarizeThreadForMobile);
+    const conversations = (await buildConversationThreadSummary(result.rows)).map(summarizeThreadForMobile);
     console.log("[mobile-api] inbox load succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), count: conversations.length, runtime_mode: mode });
     return res.json({ ok: true, conversations, runtimeMode: mode.toUpperCase(), degraded: Boolean(result.degraded) });
   } catch (error) {
@@ -7569,6 +7809,11 @@ async function clearConversationByWaId(wa_id) {
     .delete()
     .eq("wa_id", wa_id);
 }
+
+
+app.post("/api/conversations/:wa_id/state/:action", async (req, res) => {
+  return applyThreadStateAction(req, res, "whatsapp", req.params.wa_id);
+});
 
 app.post("/api/conversations/:wa_id/clear", async (req, res) => {
   try {

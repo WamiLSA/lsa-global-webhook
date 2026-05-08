@@ -9,6 +9,14 @@
     body { margin: 0; font-family: Arial, sans-serif; background:#0f172a; color:#e2e8f0; }
     .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px 24px; }
     .card { background:#111827; border:1px solid #334155; border-radius:14px; padding:20px; }
+    .settings-row { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; padding:12px 0; border-top:1px solid #1f2937; }
+    .settings-row:first-child { border-top:0; padding-top:0; }
+    .settings-row strong { display:block; margin-bottom:4px; color:#e5e7eb; }
+    .settings-row span { color:#94a3b8; font-size:13px; line-height:1.35; }
+    .settings-row input[type="checkbox"] { width:20px; height:20px; accent-color:#22c55e; }
+    select, textarea { border:1px solid #475569; background:#0b1220; color:#e2e8f0; border-radius:8px; padding:10px; }
+    textarea { min-height:92px; resize:vertical; font-family:inherit; }
+    .settings-pill { display:inline-block; padding:4px 9px; border:1px solid #334155; border-radius:999px; color:#86efac; background:#0b1220; font-size:12px; font-weight:700; margin-bottom:10px; }
     h1 { margin:0 0 4px; }
     .sub { color:#94a3b8; margin:0 0 14px; }
     .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
@@ -60,6 +68,65 @@
         <div class="field"><label>Text on blue</label><input id="branding_text_on_primary" type="color" /></div>
       </div>
     </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="settings-pill">Communications workspace</div>
+      <h1>Messaging & Inbox Settings</h1>
+      <p class="sub">Professional WhatsApp Business–style controls adapted for LSA GLOBAL Internal OS. These settings persist centrally and shape the Communications Hub thread list.</p>
+      <div class="grid">
+        <div class="field">
+          <label>Conversation sort preference</label>
+          <select id="comm_sort_preference">
+            <option value="pinned_then_unread_then_recent">Pinned, unread, then recent</option>
+            <option value="pinned_then_recent">Pinned, then recent</option>
+            <option value="unread_first">Unread first</option>
+            <option value="recent">Most recent only</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Media handling</label>
+          <select id="comm_auto_download">
+            <option value="wifi_only">Auto-download on trusted/Wi-Fi networks</option>
+            <option value="never">Never auto-download</option>
+            <option value="always">Always auto-download where supported</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Archived chat behavior</label>
+          <select id="comm_archived_behavior">
+            <option value="keep_archived">Keep archived when new messages arrive</option>
+            <option value="unarchive_on_new_inbound">Return to active inbox on new inbound</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Last activity display</label>
+          <select id="comm_recency_display">
+            <option value="smart">Smart relative display</option>
+            <option value="exact">Exact timestamp</option>
+            <option value="hidden">Hide recency metadata</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Default inbound behavior</label>
+          <select id="comm_default_inbound_behavior">
+            <option value="badge_and_sound">Badge and sound</option>
+            <option value="badge_only">Badge only</option>
+            <option value="silent">Silent badge update</option>
+          </select>
+        </div>
+        <div class="field full">
+          <label>Quick reply shortcuts</label>
+          <textarea id="comm_quick_replies" placeholder="/hello | Hello, thank you for contacting LSA GLOBAL..."></textarea>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="settings-row"><div><strong>Unread badge counts</strong><span>Show green unread dots/counts in WhatsApp and Mail thread lists.</span></div><input id="comm_show_unread_badges" type="checkbox" /></div>
+        <div class="settings-row"><div><strong>Message previews</strong><span>Display the latest message snippet in the thread list.</span></div><input id="comm_show_previews" type="checkbox" /></div>
+        <div class="settings-row"><div><strong>Notification sound</strong><span>Allow inbox sound cues for new inbound activity where the browser permits audio.</span></div><input id="comm_sound_enabled" type="checkbox" /></div>
+        <div class="settings-row"><div><strong>Vibration</strong><span>Use device vibration on supported mobile browsers; ignored gracefully on unsupported web browsers.</span></div><input id="comm_vibration_enabled" type="checkbox" /></div>
+        <div class="settings-row"><div><strong>Desktop/web notifications</strong><span>Enable browser notification behavior where permission has been granted.</span></div><input id="comm_desktop_notifications" type="checkbox" /></div>
+      </div>
+    </div>
     <div class="actions"><button class="save" id="saveBtn">Save Settings</button><div class="status" id="status" aria-live="polite"></div></div>
   </main>
   <script src="/top-nav.js"></script>
@@ -72,6 +139,7 @@
     let brandingState={};
     let initialFormState={};
     let initialBrandingState={};
+    let communicationsState={};
     let statusTimer;
     function msg(t,bad){
       clearTimeout(statusTimer);
@@ -92,6 +160,43 @@
         },12000);
       }
     }
+    
+    function getCommunicationsFormState(){
+      const quickReplyLines = document.getElementById('comm_quick_replies').value.split('\n').map(line=>line.trim()).filter(Boolean);
+      return {
+        notifications:{
+          sound_enabled:document.getElementById('comm_sound_enabled').checked,
+          vibration_enabled:document.getElementById('comm_vibration_enabled').checked,
+          desktop_notifications_enabled:document.getElementById('comm_desktop_notifications').checked,
+          default_inbound_behavior:document.getElementById('comm_default_inbound_behavior').value
+        },
+        thread_list:{
+          show_message_preview:document.getElementById('comm_show_previews').checked,
+          show_unread_badge_count:document.getElementById('comm_show_unread_badges').checked,
+          sort_preference:document.getElementById('comm_sort_preference').value,
+          archived_new_message_behavior:document.getElementById('comm_archived_behavior').value,
+          recency_display:document.getElementById('comm_recency_display').value
+        },
+        media:{ auto_download:document.getElementById('comm_auto_download').value },
+        quick_replies:quickReplyLines.map(line=>{ const parts=line.split('|'); return { shortcut:(parts[0]||'').trim(), text:parts.slice(1).join('|').trim() }; }).filter(r=>r.shortcut&&r.text)
+      };
+    }
+    function applyCommunicationsFormState(settings){
+      communicationsState=settings||{};
+      const n=communicationsState.notifications||{}; const t=communicationsState.thread_list||{}; const m=communicationsState.media||{};
+      document.getElementById('comm_sound_enabled').checked=n.sound_enabled!==false;
+      document.getElementById('comm_vibration_enabled').checked=n.vibration_enabled!==false;
+      document.getElementById('comm_desktop_notifications').checked=n.desktop_notifications_enabled===true;
+      document.getElementById('comm_default_inbound_behavior').value=n.default_inbound_behavior||'badge_and_sound';
+      document.getElementById('comm_show_previews').checked=t.show_message_preview!==false;
+      document.getElementById('comm_show_unread_badges').checked=t.show_unread_badge_count!==false;
+      document.getElementById('comm_sort_preference').value=t.sort_preference||'pinned_then_unread_then_recent';
+      document.getElementById('comm_archived_behavior').value=t.archived_new_message_behavior||'keep_archived';
+      document.getElementById('comm_recency_display').value=t.recency_display||'smart';
+      document.getElementById('comm_auto_download').value=m.auto_download||'wifi_only';
+      document.getElementById('comm_quick_replies').value=(communicationsState.quick_replies||[]).map(r=>`${r.shortcut} | ${r.text}`).join('\n');
+    }
+
     function refreshPreview(url){avatarPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     function refreshBrandingPreview(url){brandingPreview.src=url||'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';}
     async function load(){
@@ -119,6 +224,9 @@
         text_on_primary: brandingState.text_on_primary || '#FFFFFF'
       };
       refreshBrandingPreview(brandingState.logo_url||'');
+      const cr=await fetch('/api/communications/settings'); const cd=await cr.json();
+      if(!cr.ok) throw new Error(cd.error||'Communications settings load failed');
+      applyCommunicationsFormState(cd.settings||{});
     }
     document.querySelectorAll('[data-toggle]').forEach((btn)=>btn.addEventListener('click',()=>{ const input=document.getElementById(btn.dataset.toggle); input.type=input.type==='password'?'text':'password'; }));
     document.getElementById('saveBtn').addEventListener('click', async()=>{
@@ -171,6 +279,10 @@
           const bs=await fetch('/api/branding/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brandingBody)});
           const bsd=await bs.json(); if(!bs.ok) throw new Error(bsd.error||'Branding save failed');
         }
+        progress.update(78, 'Saving communications preferences...');
+        const commRes=await fetch('/api/communications/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:getCommunicationsFormState()})});
+        const commData=await commRes.json(); if(!commRes.ok) throw new Error(commData.error||'Communications settings save failed');
+
         if(wantsPasswordChange){
           progress.update(84, 'Updating password...');
           const p=await fetch('/api/account/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password:cp,new_password:np,confirm_password:cnp})});
