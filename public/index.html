@@ -534,6 +534,7 @@
       <p>Inbox is the single home for active and archived client communication across WhatsApp and Mail.</p>
     </div>
     <div id="automationModuleSync"></div>
+    <div id="automation-inbox-helper" aria-hidden="true"></div>
     <div class="inbox-controls" aria-label="Inbox controls">
       <div class="control-section">
         <div class="control-section__label">Channel</div>
@@ -1177,6 +1178,7 @@
         const showPreview = settings.thread_list?.show_message_preview !== false;
         const showActivity = settings.thread_list?.recency_display !== "hidden";
         div.className = "thread";
+        div.id = `thread-${encodeURIComponent(threadId || "latest")}`;
         div.classList.toggle("unread", unreadCount > 0);
         div.classList.toggle("pinned", thread.is_pinned === true);
         const iconHtml = `<span class="thread-icons">${thread.is_pinned ? "📌" : ""}${thread.is_muted ? "🔕" : ""}</span>`;
@@ -1211,6 +1213,18 @@
         };
         container.appendChild(div);
       });
+      openHashThreadIfPresent();
+    }
+
+
+    function openHashThreadIfPresent() {
+      const hash = window.location.hash || "";
+      if (!hash.startsWith("#thread-")) return;
+      const target = document.getElementById(hash.slice(1));
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.style.outline = "3px solid #60a5fa";
+      window.setTimeout(() => { target.style.outline = ""; }, 1800);
     }
 
     function updateAttachmentName(file) {

@@ -206,6 +206,7 @@
   <div id="left">
     <h2>Provider Network Manager</h2>
     <div id="automationModuleSync"></div>
+    <div id="automation-review-draft" aria-hidden="true"></div>
 
     <div class="card" id="providerCaptureAssistantCard">
       <h3>Provider Capture Assistant</h3>
@@ -233,11 +234,13 @@
         <div class="small" id="providerDraftSummary"></div>
         <button onclick="checkProviderDuplicates()">Check Duplicates</button>
         <div id="duplicateReviewState" class="small" style="display:none;"></div>
+        <div id="duplicate-review-latest" aria-hidden="true"></div>
         <div id="duplicateCheckPanel" style="display:none;"></div>
         <button onclick="applyDraftToProviderForm()">Send to Official Providers</button>
       </div>
     </div>
 
+    <div id="provider-record" aria-hidden="true"></div>
     <div class="card" id="providerFormCard">
       <h3 id="formTitle">Create Provider</h3>
 
@@ -297,6 +300,7 @@
 
   <div id="right">
     <h2>Providers</h2>
+    <div id="matching-results" aria-hidden="true"></div>
     <div class="card" id="matchingEngineCard">
       <h3>Provider Matching Engine (Operational Refinement)</h3>
       <div class="small">Weighted matching + explainable shortlist for translation, interpreting, language-teaching/course assignments, and general provider search.</div>
@@ -357,6 +361,28 @@
       renderProviders();
     }
 
+
+    function getProviderAutomationSyncItems(providerId) {
+      const items = Array.isArray(window.__automationModuleSyncItems) ? window.__automationModuleSyncItems : [];
+      return items.filter(item => {
+        const refs = item.refs || {};
+        const target = item.targetReference || {};
+        return String(refs.providerId || target.destinationRecordId || item.destinationRecordId || "") === String(providerId);
+      });
+    }
+
+    function renderProviderAutomationSyncBadges(providerId) {
+      const items = getProviderAutomationSyncItems(providerId);
+      if (!items.length) return "";
+      return `<div class="card" style="margin-top:10px;border-left:4px solid #16a34a;">
+        <div class="title">Automation-applied decisions</div>
+        ${items.map(item => {
+          const target = item.targetReference || {};
+          return `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(target.destinationPanel || item.destinationPanel || item.surface || "Provider Management")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">open synchronized item</a>` : ""}</div>`;
+        }).join("")}
+      </div>`;
+    }
+
     function renderProviders() {
       const search = document.getElementById("searchBox").value.toLowerCase().trim();
       const container = document.getElementById("providers");
@@ -387,6 +413,7 @@
       filtered.forEach(provider => {
         const div = document.createElement("div");
         div.className = "card";
+        div.id = `provider-record-${provider.id}`;
 
         div.innerHTML = `
           <div class="title">${provider.full_name || provider.organization_name || "Unnamed Provider"}</div>
@@ -403,6 +430,7 @@
           <div class="small">Experience: ${provider.years_experience || ""}</div>
           <div class="small">Source: ${provider.source_channel || ""}</div>
           <div style="margin-top:8px; white-space:pre-wrap;">${provider.notes || ""}</div>
+          ${renderProviderAutomationSyncBadges(provider.id)}
           <div class="card" style="margin-top:10px;">
             <div class="title">Provider Documents</div>
             <div class="small">Upload Document</div>
@@ -425,6 +453,20 @@
         container.appendChild(div);
         loadProviderDocuments(provider.id);
       });
+      scrollToHashTarget();
+    }
+
+
+    function scrollToHashTarget() {
+      const hash = decodeURIComponent(window.location.hash || "").replace(/^#/, "");
+      if (!hash) return;
+      const target = document.getElementById(hash);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (target.classList?.contains("card")) {
+        target.style.outline = "3px solid #60a5fa";
+        window.setTimeout(() => { target.style.outline = ""; }, 1800);
+      }
     }
 
     function getMatchPayload() {
@@ -1121,6 +1163,7 @@ ${sourceLine}` : sourceLine;
       await loadProviders();
     }
 
+    window.addEventListener("automation-module-sync:loaded", () => renderProviders());
     setupDuplicateCheckInvalidation();
     renderCaptureAttachmentList();
     loadProviders();
