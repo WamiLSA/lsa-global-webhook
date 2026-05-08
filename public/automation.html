@@ -19,6 +19,12 @@
     .primary-action{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
     .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
     .pill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--lsa-border);border-radius:999px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px;color:var(--lsa-text-muted)}
+    .status-pill{font-weight:700;color:#1e3a8a;background:#dbeafe;border-color:#bfdbfe}
+    .decision-actions{border-top:1px solid var(--lsa-border);margin-top:12px;padding-top:10px}
+    .decision-actions h3{font-size:13px;margin:0 0 6px}
+    .decision-action-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .decision-note{font-size:12px;color:var(--lsa-text-muted);line-height:1.35;margin-top:6px}
+    .secondary-action{background:var(--lsa-surface-muted,#f8fafc)}
     .artifact-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
     .decision{font-size:13px;line-height:1.4;margin:8px 0}
     .checklist{margin:8px 0 0 18px;padding:0;font-size:12px;color:var(--lsa-text-muted)}
@@ -132,21 +138,43 @@
       }).join('');
     }
 
+
+    function renderDecisionActions(artifact) {
+      const actions = artifact.decisionActions || [];
+      if (!actions.length) return '';
+      const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} → ${escapeHtml(action.statusLabel || action.nextStatus || '')}</button>`).join('');
+      const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
+      return `<div class='decision-actions'>
+        <h3>Decision required</h3>
+        <div class='muted'>Choose the controlled operator action. Target module${targetModules.includes(',') ? 's' : ''}: ${escapeHtml(targetModules || artifact.module || 'Automation Hub')}.</div>
+        <div class='decision-action-list'>${buttons}</div>
+      </div>`;
+    }
+
+    function renderDecisionHistory(artifact) {
+      const latest = artifact.lastDecision || (artifact.decisionHistory || [])[0];
+      if (!latest) return '';
+      return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(latest.previousStatus)} to ${escapeHtml(latest.statusLabel || latest.nextStatus)}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}.</div>`;
+    }
+
     function renderArtifacts(artifacts) {
       const grid = document.getElementById('artifactGrid');
       grid.innerHTML = (artifacts || []).map((artifact) => `<div class='card surface-card' id='artifact-${escapeHtml(artifact.id)}'>
-        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill'>${escapeHtml(artifact.status || 'pending_review')}</span></div>
+        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill status-pill'>${escapeHtml(artifact.statusLabel || artifact.status || 'Pending review')}</span></div>
         <div class='artifact-meta'>
           <span class='pill'>${escapeHtml(artifact.module)}</span>
           <span class='pill'>${escapeHtml(artifact.surface)}</span>
           <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
         </div>
-        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
+        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
         <div class='decision'>${escapeHtml(artifact.decision)}</div>
         <ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        ${renderDecisionActions(artifact)}
+        ${renderDecisionHistory(artifact)}
         <div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>
           ${renderAction(artifact)}
           <a class='action-link' href='${escapeHtml(artifact.destinationUrl || '/automation')}'>Open target module</a>
+          ${artifact.lastDecision?.targetUrl ? `<a class='action-link' href='${escapeHtml(artifact.lastDecision.targetUrl)}'>Open decision target</a>` : ''}
         </div>
       </div>`).join('') || `<div class='muted'>No Phase 2 workflow result surfaces have been created yet. Run a workflow to create the first review surface.</div>`;
     }
@@ -167,6 +195,25 @@
           ${artifact ? `<div style='margin-top:8px'>${renderAction(artifact)}</div>` : ''}
         </div>`;
       }).join('') || `<div class='muted'>No internal notifications yet.</div>`;
+    }
+
+
+    async function recordArtifactDecision(id, actionId) {
+      setPageStatus('', 'info');
+      try {
+        const result = await getJson('/api/automation/artifacts/' + encodeURIComponent(id) + '/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actionId })
+        });
+        const decision = result.decision;
+        setPageStatus(`Decision recorded: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
+      } catch (error) {
+        const authHint = error.status === 401 || error.status === 403 ? ' Please confirm your account has Automation Hub decision permissions.' : '';
+        setPageStatus(`${error.message}${authHint}`, 'error');
+      } finally {
+        await load();
+      }
     }
 
     async function openArtifact(id) {
