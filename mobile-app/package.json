@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "lint": "eslint .",
     "update:preview": "eas update --branch preview --message \"Preview OTA update\"",
-    "update:production": "eas update --branch production --message \"Production OTA update\""
+    "update:production": "eas update --branch production --message \"Production OTA update\"",
+    "validate:branding": "node ../scripts/validate-mobile-branding.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "1.23.1",
