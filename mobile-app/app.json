@@ -5,7 +5,10 @@
     "scheme": "lsainternal",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "runtimeVersion": {
@@ -20,7 +23,12 @@
       "**/*"
     ],
     "android": {
-      "package": "com.lsaglobal.internal"
+      "package": "com.lsaglobal.internal",
+      "icon": "./assets/icon.png",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
     },
     "extra": {
       "apiBaseUrl": ""

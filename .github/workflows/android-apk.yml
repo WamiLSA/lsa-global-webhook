@@ -44,6 +44,10 @@ jobs:
         working-directory: .
         run: node scripts/validate-audio-assets.js
 
+      - name: Validate mobile branding configuration
+        working-directory: .
+        run: node scripts/validate-mobile-branding.js
+
       - name: Resolve mobile API base URL
         env:
           LSA_MOBILE_API_BASE_URL: ${{ vars.LSA_MOBILE_API_BASE_URL || secrets.LSA_MOBILE_API_BASE_URL }}

@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "validate:audio": "node scripts/validate-audio-assets.js"
+    "validate:audio": "node scripts/validate-audio-assets.js",
+    "validate:mobile-branding": "node scripts/validate-mobile-branding.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
