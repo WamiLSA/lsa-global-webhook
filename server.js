@@ -8503,7 +8503,7 @@ app.get("/api/automation/module-state", requireAuth, async (req, res) => {
 });
 
 app.get("/api/automation/artifacts", requireAuth, async (req, res) => {
-  return res.json({ artifacts: automationHub.listArtifacts(Number(req.query.limit || 100)) });
+  return res.json({ artifacts: automationHub.listArtifacts(Number(req.query.limit || 100), { status: req.query.status, reviewState: req.query.reviewState }) });
 });
 
 app.get("/api/automation/artifacts/:id", requireAuth, async (req, res) => {
@@ -8533,7 +8533,31 @@ app.post("/api/automation/artifacts/:id/actions", requireAuth, async (req, res) 
     });
   }
 
-  return res.json({ ok: true, artifact: result.artifact, decision: result.decision });
+  return res.json({ ok: true, artifact: result.artifact, decision: result.decision, targetSync: result.targetSync });
+});
+
+app.post("/api/automation/artifacts/:id/lifecycle", requireAuth, async (req, res) => {
+  if (!canRunAutomationWorkflow(req)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Your authenticated account is not allowed to update Automation Hub lifecycle states.",
+      code: "AUTOMATION_LIFECYCLE_FORBIDDEN"
+    });
+  }
+
+  const result = automationHub.applyArtifactLifecycleAction(req.params.id, req.body?.actionId, {
+    decidedBy: getRequestAccountIdentifier(req) || "staff"
+  });
+
+  if (!result.ok) {
+    return res.status(result.status || 500).json({
+      ok: false,
+      error: result.error || "Automation lifecycle update failed",
+      code: result.status === 404 ? "AUTOMATION_ARTIFACT_NOT_FOUND" : "AUTOMATION_LIFECYCLE_FAILED"
+    });
+  }
+
+  return res.json({ ok: true, artifact: result.artifact, decision: result.decision, targetSync: result.targetSync });
 });
 
 app.post("/api/automation/run/:id", requireAuth, async (req, res) => {

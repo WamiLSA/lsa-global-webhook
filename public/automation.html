@@ -11,6 +11,17 @@
     .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
     .card { background:var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:10px; padding:12px; }
     .surface-card { border-left:4px solid #2563eb; }
+    .surface-card.closed-card { border-left-color:#16a34a; opacity:.94; }
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+    .toolbar select{padding:6px 10px;border:1px solid var(--lsa-input-border);border-radius:6px;background:var(--lsa-surface);color:var(--lsa-text)}
+    .summary-grid{display:grid;gap:8px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:10px 0}
+    .summary-card{border:1px solid var(--lsa-border);border-radius:10px;padding:10px;background:var(--lsa-surface-muted,#f8fafc)}
+    .summary-card strong{display:block;font-size:20px}
+    .sync-box{border:1px solid var(--lsa-border);border-radius:8px;padding:8px;margin-top:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:12px}
+    .sync-box.synced{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+    .sync-box.pending{border-color:#bfdbfe;background:#eff6ff;color:#1e3a8a}
+    .lifecycle-actions{border-top:1px dashed var(--lsa-border);margin-top:10px;padding-top:10px}
+    .empty-state{border:1px dashed var(--lsa-border);border-radius:10px;padding:16px;color:var(--lsa-text-muted);background:var(--lsa-surface)}
     .muted{color:var(--lsa-text-muted);font-size:12px}
     .status{font-size:12px;margin-top:8px;padding:8px;border-radius:8px;background:var(--lsa-surface-muted,#f1f5f9)}
     .status.error{color:#991b1b;background:#fee2e2}.status.success{color:#166534;background:#dcfce7}
@@ -53,11 +64,38 @@
     <div class="section-heading">
       <div>
         <h2>Phase 2 Result Surfaces</h2>
-        <p class="muted">Workflow outputs now become visible review drafts, queues, thread panels, or matching result lists with clear next decisions.</p>
+        <p class="muted">Active review work is separated from closed decisions, with lifecycle filters and target-module sync confirmation.</p>
       </div>
       <button onclick="load()">Refresh</button>
     </div>
-    <div id="artifactGrid" class="grid"></div>
+    <div class="toolbar">
+      <label>Status filter
+        <select id="statusFilter" onchange="handleStatusFilterChange()">
+          <option value="all">All lifecycle states</option>
+          <option value="pending_review">pending_review</option>
+          <option value="approved">approved</option>
+          <option value="rejected">rejected</option>
+          <option value="published">published</option>
+          <option value="merged">merged</option>
+          <option value="dismissed">dismissed</option>
+          <option value="kept_separate">kept_separate</option>
+          <option value="shortlisted">shortlisted</option>
+          <option value="closed">closed</option>
+        </select>
+      </label>
+      <label>Work queue
+        <select id="reviewStateFilter" onchange="renderArtifacts(window.__automationArtifacts || [])">
+          <option value="active">Active / pending only</option>
+          <option value="closed">Closed only</option>
+          <option value="all">All items</option>
+        </select>
+      </label>
+    </div>
+    <div id="artifactSummary" class="summary-grid"></div>
+    <h3>Active review queue</h3>
+    <div id="activeArtifactGrid" class="grid"></div>
+    <h3>Closed / synchronized decisions</h3>
+    <div id="closedArtifactGrid" class="grid"></div>
 
     <h2>Run History</h2>
     <div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Action</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
@@ -142,9 +180,30 @@
     }
 
 
+
+    function handleStatusFilterChange() {
+      const status = document.getElementById('statusFilter')?.value || 'all';
+      const reviewState = document.getElementById('reviewStateFilter');
+      if (reviewState && status === 'closed') reviewState.value = 'closed';
+      renderArtifacts(window.__automationArtifacts || []);
+    }
+
+    function getArtifactLifecycle(artifact) {
+      const lifecycle = artifact.lifecycle || {};
+      const pendingReview = lifecycle.pendingReview ?? artifact.pendingReview ?? artifact.decisionRequired !== false;
+      return {
+        status: lifecycle.status || artifact.status || 'pending_review',
+        statusLabel: lifecycle.statusLabel || artifact.statusLabel || artifact.status || 'Pending review',
+        reviewState: lifecycle.reviewState || (pendingReview ? 'pending' : 'closed'),
+        pendingReview,
+        closed: lifecycle.closed ?? !pendingReview
+      };
+    }
+
     function renderDecisionActions(artifact) {
       const actions = artifact.decisionActions || [];
-      if (!artifact.decisionRequired) return `<div class='decision-actions'><h3>Decision closed</h3><div class='muted'>This item has left pending review. Latest status: ${escapeHtml(artifact.statusLabel || artifact.status || '')}. Target module is synchronized.</div></div>`;
+      const lifecycle = getArtifactLifecycle(artifact);
+      if (!lifecycle.pendingReview) return `<div class='decision-actions'><h3>Decision closed</h3><div class='muted'>This item has left active review. Latest status: ${escapeHtml(lifecycle.statusLabel)}.</div></div>`;
       if (!actions.length) return '';
       const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} → ${escapeHtml(action.statusLabel || action.nextStatus || '')}</button>`).join('');
       const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
@@ -155,6 +214,23 @@
       </div>`;
     }
 
+    function renderLifecycleActions(artifact) {
+      const actions = artifact.lifecycleActions || [];
+      if (!actions.length) return `<div class='muted'>Reopen/revise: not available for this final state.</div>`;
+      return `<div class='lifecycle-actions'><strong>Lifecycle correction</strong><div class='decision-action-list'>${actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordLifecycleAction("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} → ${escapeHtml(action.statusLabel || action.nextStatus || '')}</button>`).join('')}</div></div>`;
+    }
+
+    function renderTargetSync(artifact) {
+      const sync = artifact.targetSync || artifact.lastDecision?.targetSync || {};
+      const state = sync.syncState || (artifact.decisionRequired === false ? 'synchronized' : 'awaiting_review');
+      const synced = state === 'synchronized';
+      return `<div class='sync-box ${synced ? 'synced' : 'pending'}'>
+        <strong>${escapeHtml(sync.syncLabel || (synced ? 'Target module synchronized' : 'Awaiting target-module sync'))}</strong><br/>
+        Target: ${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • Review state: ${escapeHtml(sync.reviewState || artifact.reviewState || '')} • Sync state: ${escapeHtml(state)}<br/>
+        ${escapeHtml(sync.syncConfirmation || '')}${sync.syncedAt ? ` • ${escapeHtml(formatTime(sync.syncedAt))}` : ''}
+      </div>`;
+    }
+
     function renderDecisionHistory(artifact) {
       const latest = artifact.lastDecision || (artifact.decisionHistory || [])[0];
       if (!latest) return '';
@@ -162,26 +238,59 @@
       return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(latest.previousStatus)} to ${escapeHtml(latest.statusLabel || latest.nextStatus)}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}${sync.syncedAt ? ` • Synced ${escapeHtml(formatTime(sync.syncedAt))}` : ''}.</div>`;
     }
 
-    function renderArtifacts(artifacts) {
-      const grid = document.getElementById('artifactGrid');
-      grid.innerHTML = (artifacts || []).map((artifact) => `<div class='card surface-card' id='artifact-${escapeHtml(artifact.id)}'>
-        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill status-pill ${artifact.decisionRequired === false ? 'closed' : ''}'>${escapeHtml(artifact.statusLabel || artifact.status || 'Pending review')}</span></div>
+    function renderArtifactCard(artifact) {
+      const lifecycle = getArtifactLifecycle(artifact);
+      return `<div class='card surface-card ${lifecycle.closed ? 'closed-card' : ''}' id='artifact-${escapeHtml(artifact.id)}'>
+        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill status-pill ${lifecycle.closed ? 'closed' : ''}'>${escapeHtml(lifecycle.statusLabel)}</span></div>
         <div class='artifact-meta'>
           <span class='pill'>${escapeHtml(artifact.module)}</span>
           <span class='pill'>${escapeHtml(artifact.surface)}</span>
           <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
+          <span class='pill'>${escapeHtml(lifecycle.reviewState)}</span>
         </div>
         <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
         <div class='decision'>${escapeHtml(artifact.decision)}</div>
-        <ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        ${lifecycle.pendingReview ? `<ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
         ${renderDecisionActions(artifact)}
         ${renderDecisionHistory(artifact)}
+        ${renderTargetSync(artifact)}
+        ${lifecycle.closed ? renderLifecycleActions(artifact) : ''}
         <div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>
           ${renderAction(artifact)}
           <a class='action-link' href='${escapeHtml(artifact.destinationUrl || '/automation')}'>Open target module</a>
           ${artifact.lastDecision?.targetUrl ? `<a class='action-link' href='${escapeHtml(artifact.lastDecision.targetUrl)}'>Open decision target</a>` : ''}
         </div>
-      </div>`).join('') || `<div class='muted'>No Phase 2 workflow result surfaces have been created yet. Run a workflow to create the first review surface.</div>`;
+      </div>`;
+    }
+
+    function artifactMatchesFilters(artifact) {
+      const lifecycle = getArtifactLifecycle(artifact);
+      const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+      const reviewStateFilter = document.getElementById('reviewStateFilter')?.value || 'active';
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'closed' && !lifecycle.closed) return false;
+        if (statusFilter !== 'closed' && lifecycle.status !== statusFilter) return false;
+      }
+      if (reviewStateFilter === 'active' && lifecycle.closed) return false;
+      if (reviewStateFilter === 'closed' && !lifecycle.closed) return false;
+      return true;
+    }
+
+    function renderArtifacts(artifacts) {
+      window.__automationArtifacts = artifacts || [];
+      const filtered = window.__automationArtifacts.filter(artifactMatchesFilters);
+      const active = filtered.filter(item => !getArtifactLifecycle(item).closed);
+      const closed = filtered.filter(item => getArtifactLifecycle(item).closed);
+      const totalActive = window.__automationArtifacts.filter(item => !getArtifactLifecycle(item).closed).length;
+      const totalClosed = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
+      const synchronized = window.__automationArtifacts.filter(item => (item.targetSync || {}).syncState === 'synchronized').length;
+
+      document.getElementById('artifactSummary').innerHTML = `
+        <div class='summary-card'><strong>${totalActive}</strong><span class='muted'>needs action / pending</span></div>
+        <div class='summary-card'><strong>${totalClosed}</strong><span class='muted'>closed decisions</span></div>
+        <div class='summary-card'><strong>${synchronized}</strong><span class='muted'>target sync confirmed</span></div>`;
+      document.getElementById('activeArtifactGrid').innerHTML = active.map(renderArtifactCard).join('') || `<div class='empty-state'>No active review items match this filter.</div>`;
+      document.getElementById('closedArtifactGrid').innerHTML = closed.map(renderArtifactCard).join('') || `<div class='empty-state'>No closed items match this filter. Closed decisions stay available here without cluttering the active queue.</div>`;
     }
 
     function renderHistory(history) {
@@ -224,6 +333,24 @@
         });
         const decision = result.decision;
         setPageStatus(`Decision recorded: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
+      } catch (error) {
+        const authHint = error.status === 401 || error.status === 403 ? ' Please confirm your account has Automation Hub decision permissions.' : '';
+        setPageStatus(`${error.message}${authHint}`, 'error');
+      } finally {
+        await load();
+      }
+    }
+
+    async function recordLifecycleAction(id, actionId) {
+      setPageStatus('', 'info');
+      try {
+        const result = await getJson('/api/automation/artifacts/' + encodeURIComponent(id) + '/lifecycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actionId })
+        });
+        const decision = result.decision;
+        setPageStatus(`Lifecycle updated: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
       } catch (error) {
         const authHint = error.status === 401 || error.status === 403 ? ' Please confirm your account has Automation Hub decision permissions.' : '';
         setPageStatus(`${error.message}${authHint}`, 'error');
