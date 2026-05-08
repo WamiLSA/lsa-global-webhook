@@ -15,17 +15,40 @@ export function AuthProvider({ children }) {
     (async () => {
       const savedToken = await SecureStore.getItemAsync(TOKEN_KEY);
       const savedUser = await SecureStore.getItemAsync(USER_KEY);
-      if (savedToken) {
-        setToken(savedToken);
-        api.setToken(savedToken);
-      }
+      let nextUser = null;
+
       if (savedUser) {
         try {
-          setUser(JSON.parse(savedUser));
+          nextUser = JSON.parse(savedUser);
+          setUser(nextUser);
         } catch (error) {
           console.log('[mobile-auth] saved_user_parse_failed', { message: error.message });
         }
       }
+
+      if (savedToken) {
+        setToken(savedToken);
+        api.setToken(savedToken);
+        try {
+          const session = await api.get('/api/mobile/auth/session', { retries: 0 });
+          if (session?.user) {
+            nextUser = session.user;
+            setUser(nextUser);
+            await SecureStore.setItemAsync(USER_KEY, JSON.stringify(nextUser));
+          }
+          console.log('[mobile-auth] restored_session_validated', { hasToken: true, username: nextUser?.username || null, api: api.diagnostics() });
+        } catch (error) {
+          console.log('[mobile-auth] restored_session_validation_failed', { message: error.message, code: error.code || error.status || null });
+          if (error.code === 401 || error.status === 401) {
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
+            await SecureStore.deleteItemAsync(USER_KEY);
+            setToken(null);
+            setUser(null);
+            api.setToken(null);
+          }
+        }
+      }
+
       console.log('[mobile-auth] restored_session', { hasToken: Boolean(savedToken), api: api.diagnostics() });
       setInitializing(false);
     })();

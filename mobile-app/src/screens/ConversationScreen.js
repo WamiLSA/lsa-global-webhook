@@ -3,13 +3,32 @@ import { View, Text, FlatList, TextInput, Pressable, StyleSheet, Linking, Activi
 import { api } from '../api/client';
 import * as DocumentPicker from 'expo-document-picker';
 import { ModeBadge } from '../components/ModeBadge';
+import { MobileAppMenu } from '../components/MobileAppMenu';
 import { Screen } from '../components/Screen';
 import { colors } from '../theme';
 import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
+function normalizeTextValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value).trim();
+  if (typeof value === 'object') {
+    return firstTextValue(
+      value.body,
+      value.text,
+      value.message,
+      value.caption,
+      value.content,
+      value.value,
+      value.text?.body,
+      value.message?.body
+    );
+  }
+  return '';
+}
+
 function firstTextValue(...values) {
   for (const value of values) {
-    const text = String(value || '').trim();
+    const text = normalizeTextValue(value);
     if (text) return text;
   }
   return '';
@@ -17,15 +36,28 @@ function firstTextValue(...values) {
 
 function getMessageDisplay(item = {}) {
   const direction = item.direction === 'out' || item.direction === 'outgoing' ? 'outgoing' : 'incoming';
-  const originalText = firstTextValue(item.originalText, item.body, item.text, item.caption, item.message);
-  const staffTranslation = firstTextValue(item.staffTranslation, item.translatedText);
-  const staffReply = firstTextValue(item.staffReplyText, item.staffReply, direction === 'outgoing' ? item.body : '');
-  const customerTranslation = firstTextValue(item.customerTranslation, item.sentReplyText);
-  const attachmentUrl = firstTextValue(item.attachmentUrl, item.mediaUrl);
+  const originalText = firstTextValue(
+    item.originalText,
+    item.original_text,
+    item.body,
+    item.text,
+    item.text_body,
+    item.messageText,
+    item.message_text,
+    item.caption,
+    item.preview,
+    item.message,
+    item.rawMessage,
+    item.raw_message
+  );
+  const staffTranslation = firstTextValue(item.staffTranslation, item.staff_translation, item.translatedText, item.translated_text);
+  const staffReply = firstTextValue(item.staffReplyText, item.staff_reply_text, item.staffReply, item.staff_reply, direction === 'outgoing' ? item.body : '');
+  const customerTranslation = firstTextValue(item.customerTranslation, item.customer_translation, item.sentReplyText, item.sent_reply_text);
+  const attachmentUrl = firstTextValue(item.attachmentUrl, item.attachment_url, item.mediaUrl, item.media_url);
   return { direction, originalText, staffTranslation, staffReply, customerTranslation, attachmentUrl };
 }
 
-export function ConversationScreen({ route }) {
+export function ConversationScreen({ route, navigation }) {
   const { runWithProgress } = useGlobalProgress();
   const { conversationId, mode, contact } = route.params || {};
   const [messages, setMessages] = useState([]);
@@ -59,6 +91,7 @@ export function ConversationScreen({ route }) {
 
   return (
     <Screen>
+      <MobileAppMenu navigation={navigation} currentKey="inbox" compact mode={mode} />
       <ModeBadge mode={mode} />
       <Text style={styles.header}>{contact || 'Conversation'}</Text>
       {loading ? <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} /> : (

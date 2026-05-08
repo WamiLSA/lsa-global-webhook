@@ -37,7 +37,11 @@ export function RootNavigator() {
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
       ) : (
         <>
-          <Stack.Screen name="Home" component={AppHomeScreen} options={{ title: 'LSA Internal OS' }} />
+          <Stack.Screen
+            name="Home"
+            component={AppHomeScreen}
+            options={({ navigation }) => ({ title: 'LSA Internal OS', headerRight: () => <MenuButton navigation={navigation} /> })}
+          />
           <Stack.Screen
             name="Inbox"
             component={InboxScreen}

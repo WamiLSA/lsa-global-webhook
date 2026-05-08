@@ -1240,19 +1240,27 @@ async function verifyInboxCredentials(identifier, password) {
   return { ok: false, reason: "identifier_not_found" };
 }
 
-function requireAuth(req, res, next) {
-  if (req.session && req.session.authenticated) {
-    return next();
+async function requireAuth(req, res, next) {
+  try {
+    if (req.session && req.session.authenticated) {
+      return next();
+    }
+    const bearerIdentifier = await getAuthenticatedIdentifierAsync(req);
+    if (bearerIdentifier) {
+      req.accountIdentifier = bearerIdentifier;
+      return next();
+    }
+    if (req.path?.startsWith("/api") || String(req.originalUrl || "").startsWith("/api")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    return res.redirect("/login");
+  } catch (error) {
+    console.warn("[auth-diagnostics] auth_middleware_error", { path: req.originalUrl || req.url, error: error.message || String(error) });
+    if (req.path?.startsWith("/api") || String(req.originalUrl || "").startsWith("/api")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    return res.redirect("/login");
   }
-  const bearerIdentifier = getAuthenticatedIdentifier(req);
-  if (bearerIdentifier) {
-    req.accountIdentifier = bearerIdentifier;
-    return next();
-  }
-  if (req.path?.startsWith("/api") || String(req.originalUrl || "").startsWith("/api")) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  return res.redirect("/login");
 }
 
 app.get("/login", (req, res) => {
@@ -1436,6 +1444,7 @@ function validateMobileAuthToken(rawToken) {
   const token = String(rawToken || "").trim();
   const [version, encodedPayload, signature, extra] = token.split(".");
   if (extra || version !== MOBILE_AUTH_TOKEN_VERSION || !encodedPayload || !signature) return { ok: false, reason: "malformed_token" };
+  if (!/^[A-Za-z0-9_-]+$/.test(encodedPayload) || !/^[A-Za-z0-9_-]+$/.test(signature)) return { ok: false, reason: "malformed_token" };
 
   const expectedSignature = signMobileAuthTokenPayload(encodedPayload);
   if (!safeTokenPartEquals(signature, expectedSignature)) return { ok: false, reason: "invalid_signature" };
@@ -1447,22 +1456,46 @@ function validateMobileAuthToken(rawToken) {
     return { ok: false, reason: "invalid_payload" };
   }
 
-  if (payload?.typ !== "mobile_bearer") return { ok: false, reason: "invalid_token_type" };
-  const subject = normalizeUserIdentifier(payload?.sub);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { ok: false, reason: "invalid_payload" };
+  if (payload.typ !== "mobile_bearer") return { ok: false, reason: "invalid_token_type" };
+  const subject = normalizeUserIdentifier(payload.sub);
   if (!subject) return { ok: false, reason: "missing_subject" };
 
-  const issuedAt = Number(payload?.iat || 0);
-  const expiresAt = Number(payload?.exp || 0);
+  const issuedAt = Number(payload.iat || 0);
+  const expiresAt = Number(payload.exp || 0);
   const now = Date.now();
   if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || issuedAt <= 0 || expiresAt <= issuedAt) return { ok: false, reason: "invalid_token_timestamps" };
   if (expiresAt < now) return { ok: false, reason: "expired_token" };
   if (issuedAt > now + 1000 * 60 * 5) return { ok: false, reason: "token_issued_in_future" };
+  if (expiresAt - issuedAt > MOBILE_AUTH_TOKEN_TTL_MS + 1000 * 60) return { ok: false, reason: "token_ttl_exceeds_policy" };
 
   return { ok: true, username: subject, issuedAt, expiresAt };
 }
 
+async function validateMobileAuthTokenForAccount(rawToken) {
+  const tokenResult = validateMobileAuthToken(rawToken);
+  if (!tokenResult.ok) return tokenResult;
+
+  const store = await readAccountSettingsStore();
+  const users = store.users || {};
+  const matchedUser = findUserRecordByLoginIdentifier(users, tokenResult.username);
+  const bootstrapUsername = normalizeUserIdentifier(INBOX_USERNAME);
+
+  if (!matchedUser && tokenResult.username !== bootstrapUsername) {
+    return { ok: false, reason: "unknown_token_subject" };
+  }
+
+  if (matchedUser) {
+    const canonicalUsername = normalizeUserIdentifier(matchedUser.record?.username || matchedUser.key);
+    if (canonicalUsername !== tokenResult.username) return { ok: false, reason: "token_subject_not_canonical" };
+    if (!matchedUser.record?.password_hash && tokenResult.username !== bootstrapUsername) return { ok: false, reason: "token_subject_password_not_initialized" };
+  }
+
+  return tokenResult;
+}
+
 function requestUsesBearerAuth(req) {
-  return /^Bearer\s+\S+/i.test(String(req.headers.authorization || ""));
+  return /^Bearer\s+\S+$/i.test(String(req.headers.authorization || "").trim());
 }
 
 app.post("/api/mobile/auth/login", async (req, res) => {
@@ -6453,10 +6486,28 @@ app.get("/archived", requireAuth, (req, res) => {
 
 
 
+async function getAuthenticatedIdentifierAsync(req) {
+  if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
+  const authHeader = String(req.headers.authorization || "").trim();
+  const bearerMatch = authHeader.match(/^Bearer\s+([^\s]+)$/i);
+  if (!bearerMatch) return "";
+
+  const tokenResult = await validateMobileAuthTokenForAccount(bearerMatch[1]);
+  if (!tokenResult.ok) {
+    console.warn("[auth-diagnostics] rejected_mobile_bearer_token", {
+      reason: tokenResult.reason,
+      path: req.originalUrl || req.url,
+      ip: req.ip
+    });
+    return "";
+  }
+  return tokenResult.username;
+}
+
 function getAuthenticatedIdentifier(req) {
   if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
-  const authHeader = String(req.headers.authorization || "");
-  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  const authHeader = String(req.headers.authorization || "").trim();
+  const bearerMatch = authHeader.match(/^Bearer\s+([^\s]+)$/i);
   if (!bearerMatch) return "";
 
   const tokenResult = validateMobileAuthToken(bearerMatch[1]);
@@ -6471,15 +6522,31 @@ function getAuthenticatedIdentifier(req) {
   return tokenResult.username;
 }
 
-function requireAccountAuth(req, res, next) {
-  const identifier = getAuthenticatedIdentifier(req);
-  if (!identifier) return res.status(401).json({ error: "Unauthorized" });
-  req.accountIdentifier = identifier;
-  return next();
+async function requireAccountAuth(req, res, next) {
+  try {
+    const identifier = await getAuthenticatedIdentifierAsync(req);
+    if (!identifier) return res.status(401).json({ error: "Unauthorized" });
+    req.accountIdentifier = identifier;
+    return next();
+  } catch (error) {
+    console.warn("[auth-diagnostics] account_auth_middleware_error", { path: req.originalUrl || req.url, error: error.message || String(error) });
+    return res.status(401).json({ error: "Unauthorized" });
+  }
 }
 
 app.get("/settings", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "settings.html"));
+});
+
+
+app.get("/api/mobile/auth/session", requireAccountAuth, async (req, res) => {
+  try {
+    const { record } = await getUserSettings(req.accountIdentifier);
+    const { password_hash, ...safe } = record;
+    return res.json({ ok: true, user: safe, auth: { token_type: "Bearer", validated: true } });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.get("/api/account/settings", requireAccountAuth, async (req, res) => {
@@ -7242,9 +7309,27 @@ function summarizeThreadForMobile(thread) {
   };
 }
 
+function normalizeMobileMessageText(value) {
+  if (value === null || value === undefined) return "";
+  if (["string", "number", "boolean"].includes(typeof value)) return String(value).trim();
+  if (typeof value === "object") {
+    return firstMobileMessageText(
+      value.body,
+      value.text,
+      value.message,
+      value.caption,
+      value.content,
+      value.value,
+      value.text?.body,
+      value.message?.body
+    );
+  }
+  return "";
+}
+
 function firstMobileMessageText(...values) {
   for (const value of values) {
-    const text = String(value || "").trim();
+    const text = normalizeMobileMessageText(value);
     if (text) return text;
   }
   return "";
@@ -7256,11 +7341,21 @@ function normalizeMobileDirection(direction) {
 
 function summarizeMessageForMobile(row) {
   const direction = normalizeMobileDirection(row.direction);
-  const body = firstMobileMessageText(row.body, row.text, row.message, row.caption, row.preview);
-  const staffReplyText = firstMobileMessageText(row.staff_reply_text);
-  const sentReplyText = firstMobileMessageText(row.sent_reply_text);
-  const translatedText = firstMobileMessageText(row.translated_text);
-  const attachmentUrl = row.media_url || row.attachment_url || null;
+  const body = firstMobileMessageText(
+    row.body,
+    row.original_text,
+    row.text,
+    row.text_body,
+    row.message_text,
+    row.message,
+    row.caption,
+    row.preview,
+    row.raw_message
+  );
+  const staffReplyText = firstMobileMessageText(row.staff_reply_text, row.staffReplyText, row.staff_reply);
+  const sentReplyText = firstMobileMessageText(row.sent_reply_text, row.sentReplyText, row.customer_translation);
+  const translatedText = firstMobileMessageText(row.translated_text, row.translatedText, row.staff_translation);
+  const attachmentUrl = row.media_url || row.attachment_url || row.mediaUrl || row.attachmentUrl || null;
 
   return {
     id: row.id || `${row.wa_id || "thread"}-${row.created_at || Date.now()}`,
