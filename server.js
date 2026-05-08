@@ -1388,12 +1388,81 @@ app.post("/login", async (req, res) => {
 
 
 
+const MOBILE_AUTH_TOKEN_VERSION = "v1";
+const MOBILE_AUTH_TOKEN_TTL_MS = Number(process.env.MOBILE_AUTH_TOKEN_TTL_MS || 1000 * 60 * 60 * 24 * 30);
+
+function getMobileAuthTokenSecret() {
+  return String(
+    process.env.MOBILE_AUTH_TOKEN_SECRET ||
+    process.env.SESSION_SECRET ||
+    INBOX_PASSWORD ||
+    "change_this_secret"
+  );
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+}
+
+function signMobileAuthTokenPayload(encodedPayload) {
+  return crypto
+    .createHmac("sha256", getMobileAuthTokenSecret())
+    .update(encodedPayload)
+    .digest("base64url");
+}
+
+function safeTokenPartEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""), "utf8");
+  const rightBuffer = Buffer.from(String(right || ""), "utf8");
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 function createMobileAuthToken(username) {
-  return Buffer.from(`${normalizeUserIdentifier(username)}:${Date.now()}`).toString("base64url");
+  const normalizedUsername = normalizeUserIdentifier(username);
+  if (!normalizedUsername) throw new Error("Cannot issue a mobile auth token without a username");
+  const now = Date.now();
+  const payload = {
+    typ: "mobile_bearer",
+    sub: normalizedUsername,
+    iat: now,
+    exp: now + MOBILE_AUTH_TOKEN_TTL_MS
+  };
+  const encodedPayload = base64UrlJson(payload);
+  const signature = signMobileAuthTokenPayload(encodedPayload);
+  return `${MOBILE_AUTH_TOKEN_VERSION}.${encodedPayload}.${signature}`;
+}
+
+function validateMobileAuthToken(rawToken) {
+  const token = String(rawToken || "").trim();
+  const [version, encodedPayload, signature, extra] = token.split(".");
+  if (extra || version !== MOBILE_AUTH_TOKEN_VERSION || !encodedPayload || !signature) return { ok: false, reason: "malformed_token" };
+
+  const expectedSignature = signMobileAuthTokenPayload(encodedPayload);
+  if (!safeTokenPartEquals(signature, expectedSignature)) return { ok: false, reason: "invalid_signature" };
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+  } catch (error) {
+    return { ok: false, reason: "invalid_payload" };
+  }
+
+  if (payload?.typ !== "mobile_bearer") return { ok: false, reason: "invalid_token_type" };
+  const subject = normalizeUserIdentifier(payload?.sub);
+  if (!subject) return { ok: false, reason: "missing_subject" };
+
+  const issuedAt = Number(payload?.iat || 0);
+  const expiresAt = Number(payload?.exp || 0);
+  const now = Date.now();
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || issuedAt <= 0 || expiresAt <= issuedAt) return { ok: false, reason: "invalid_token_timestamps" };
+  if (expiresAt < now) return { ok: false, reason: "expired_token" };
+  if (issuedAt > now + 1000 * 60 * 5) return { ok: false, reason: "token_issued_in_future" };
+
+  return { ok: true, username: subject, issuedAt, expiresAt };
 }
 
 function requestUsesBearerAuth(req) {
-  return String(req.headers.authorization || "").startsWith("Bearer ");
+  return /^Bearer\s+\S+/i.test(String(req.headers.authorization || ""));
 }
 
 app.post("/api/mobile/auth/login", async (req, res) => {
@@ -6387,17 +6456,19 @@ app.get("/archived", requireAuth, (req, res) => {
 function getAuthenticatedIdentifier(req) {
   if (req.session?.authenticated && req.session?.username) return normalizeUserIdentifier(req.session.username);
   const authHeader = String(req.headers.authorization || "");
-  if (authHeader.startsWith("Bearer ")) {
-    const raw = authHeader.slice(7).trim();
-    try {
-      const decoded = Buffer.from(raw, "base64url").toString("utf8");
-      const identifier = decoded.split(":")[0];
-      return normalizeUserIdentifier(identifier);
-    } catch (error) {
-      return "";
-    }
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!bearerMatch) return "";
+
+  const tokenResult = validateMobileAuthToken(bearerMatch[1]);
+  if (!tokenResult.ok) {
+    console.warn("[auth-diagnostics] rejected_mobile_bearer_token", {
+      reason: tokenResult.reason,
+      path: req.originalUrl || req.url,
+      ip: req.ip
+    });
+    return "";
   }
-  return "";
+  return tokenResult.username;
 }
 
 function requireAccountAuth(req, res, next) {
