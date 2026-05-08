@@ -5,12 +5,13 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { Screen } from '../components/Screen';
+import { MobileAppMenu } from '../components/MobileAppMenu';
 import { colors } from '../theme';
 import { useGlobalProgress } from '../progress/GlobalProgressContext';
 
 const fields = ['first_name', 'last_name', 'display_name', 'username', 'email'];
 
-export function SettingsScreen() {
+export function SettingsScreen({ navigation }) {
   const { runWithProgress } = useGlobalProgress();
   const { logout, updateSession } = useAuth();
   const [form, setForm] = useState({});
@@ -161,6 +162,7 @@ export function SettingsScreen() {
   return (
     <Screen>
       <ScrollView>
+        <MobileAppMenu navigation={navigation} currentKey="settings" compact />
         <Text style={styles.title}>Account Settings</Text>
         <View style={styles.card}><Text style={styles.k}>AVATAR</Text><View style={styles.avatarRow}><Image source={{ uri: avatarAsset?.uri || form.avatar_url || 'https://via.placeholder.com/64' }} style={styles.avatar} /><Pressable style={styles.smallButton} onPress={pickAvatar}><Text style={styles.buttonText}>Choose Photo</Text></Pressable></View></View>
         <View style={styles.card}><Text style={styles.k}>BRANDING</Text><View style={styles.avatarRow}><Image source={{ uri: brandingLogoAsset?.uri || (branding.logo_url ? api.resolveAssetUrl(branding.logo_url) : 'https://via.placeholder.com/64') }} style={styles.avatar} /><Pressable style={styles.smallButton} onPress={pickBrandingLogo}><Text style={styles.buttonText}>Choose Logo</Text></Pressable></View></View>

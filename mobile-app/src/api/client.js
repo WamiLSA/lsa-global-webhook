@@ -22,6 +22,12 @@ function resolveAssetUrl(value) {
   return `${baseUrl}${assetUrl.startsWith('/') ? '' : '/'}${assetUrl}`;
 }
 
+function resolveWebUrl(path = '/') {
+  const webPath = String(path || '/');
+  if (/^https?:/i.test(webPath)) return webPath;
+  return `${baseUrl}${webPath.startsWith('/') ? '' : '/'}${webPath}`;
+}
+
 async function parseResponsePayload(response) {
   const text = await response.text();
   if (!text) return null;
@@ -86,6 +92,7 @@ export const api = {
   config: { baseUrl },
   diagnostics: getDiagnosticsContext,
   resolveAssetUrl,
+  resolveWebUrl,
   setToken(nextToken) {
     token = nextToken;
     logApiDiagnostic('token_updated', { hasToken: Boolean(token) });
