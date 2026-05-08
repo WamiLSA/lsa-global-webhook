@@ -4,7 +4,8 @@
   "description": "LSA GLOBAL WhatsApp Webhook",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "validate:audio": "node scripts/validate-audio-assets.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
