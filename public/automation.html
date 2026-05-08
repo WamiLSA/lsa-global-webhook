@@ -20,6 +20,7 @@
     .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
     .pill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--lsa-border);border-radius:999px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px;color:var(--lsa-text-muted)}
     .status-pill{font-weight:700;color:#1e3a8a;background:#dbeafe;border-color:#bfdbfe}
+    .status-pill.closed{color:#14532d;background:#dcfce7;border-color:#bbf7d0}
     .decision-actions{border-top:1px solid var(--lsa-border);margin-top:12px;padding-top:10px}
     .decision-actions h3{font-size:13px;margin:0 0 6px}
     .decision-action-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
@@ -60,6 +61,8 @@
 
     <h2>Run History</h2>
     <div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Action</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
+    <h2>Decision Audit Trail</h2>
+    <div class="table-wrap"><table><thead><tr><th>Item / Workflow</th><th>Action</th><th>Status</th><th>Target module</th><th>Operator</th><th>Time</th></tr></thead><tbody id="auditRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
   <script src="/global-progress.js"></script>
@@ -141,6 +144,7 @@
 
     function renderDecisionActions(artifact) {
       const actions = artifact.decisionActions || [];
+      if (!artifact.decisionRequired) return `<div class='decision-actions'><h3>Decision closed</h3><div class='muted'>This item has left pending review. Latest status: ${escapeHtml(artifact.statusLabel || artifact.status || '')}. Target module is synchronized.</div></div>`;
       if (!actions.length) return '';
       const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} → ${escapeHtml(action.statusLabel || action.nextStatus || '')}</button>`).join('');
       const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
@@ -154,13 +158,14 @@
     function renderDecisionHistory(artifact) {
       const latest = artifact.lastDecision || (artifact.decisionHistory || [])[0];
       if (!latest) return '';
-      return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(latest.previousStatus)} to ${escapeHtml(latest.statusLabel || latest.nextStatus)}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}.</div>`;
+      const sync = latest.targetSync || artifact.targetSync || {};
+      return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(latest.previousStatus)} to ${escapeHtml(latest.statusLabel || latest.nextStatus)}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}${sync.syncedAt ? ` • Synced ${escapeHtml(formatTime(sync.syncedAt))}` : ''}.</div>`;
     }
 
     function renderArtifacts(artifacts) {
       const grid = document.getElementById('artifactGrid');
       grid.innerHTML = (artifacts || []).map((artifact) => `<div class='card surface-card' id='artifact-${escapeHtml(artifact.id)}'>
-        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill status-pill'>${escapeHtml(artifact.statusLabel || artifact.status || 'Pending review')}</span></div>
+        <div class='row'><strong>${escapeHtml(artifact.title)}</strong><span class='pill status-pill ${artifact.decisionRequired === false ? 'closed' : ''}'>${escapeHtml(artifact.statusLabel || artifact.status || 'Pending review')}</span></div>
         <div class='artifact-meta'>
           <span class='pill'>${escapeHtml(artifact.module)}</span>
           <span class='pill'>${escapeHtml(artifact.surface)}</span>
@@ -184,6 +189,17 @@
         <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
         <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td><td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
       </tr>`).join('') || `<tr><td colspan='7' class='muted'>No runs recorded yet.</td></tr>`;
+    }
+
+    function renderAudit(audit) {
+      document.getElementById('auditRows').innerHTML = (audit || []).map((entry) => `<tr>
+        <td><strong>${escapeHtml(entry.itemTitle || entry.artifactType || '')}</strong><div class='muted'>${escapeHtml(entry.workflowName || entry.workflowId || '')}</div></td>
+        <td>${escapeHtml(entry.actionTaken || entry.label || entry.actionId || '')}</td>
+        <td>${escapeHtml(entry.statusLabel || entry.nextStatus || '')}</td>
+        <td>${escapeHtml(entry.targetModule || '')}</td>
+        <td>${escapeHtml(entry.operator || entry.decidedBy || '')}</td>
+        <td>${escapeHtml(formatTime(entry.time || entry.decidedAt))}</td>
+      </tr>`).join('') || `<tr><td colspan='6' class='muted'>No operator decisions have been recorded yet.</td></tr>`;
     }
 
     function renderNotifications(notifications) {
@@ -234,15 +250,17 @@
 
     async function load(){
       try {
-        const [w,h,n,a]=await Promise.all([
+        const [w,h,n,a,audit]=await Promise.all([
           getJson('/api/automation/workflows'),
           getJson('/api/automation/history'),
           getJson('/api/automation/notifications'),
-          getJson('/api/automation/artifacts')
+          getJson('/api/automation/artifacts'),
+          getJson('/api/automation/audit')
         ]);
         renderWorkflows(w.workflows || []);
         renderArtifacts(a.artifacts || []);
         renderHistory(h.history || []);
+        renderAudit(audit.audit || []);
         renderNotifications(n.notifications || []);
       } catch (error) {
         setPageStatus(error.status === 401 ? 'Automation Hub is not authorized. Please log in again, then retry Run now.' : error.message, 'error');
