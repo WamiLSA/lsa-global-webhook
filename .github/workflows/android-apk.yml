@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - 'mobile-app/**'
+      - 'public/**'
+      - 'scripts/validate-audio-assets.js'
+      - 'package.json'
       - '.github/workflows/android-apk.yml'
 
 jobs:
@@ -36,6 +39,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+
+      - name: Validate audio asset references
+        working-directory: .
+        run: node scripts/validate-audio-assets.js
 
       - name: Resolve mobile API base URL
         env:

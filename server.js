@@ -1167,14 +1167,41 @@ function sortThreadSummaries(summaries = [], settings = cloneDefaultCommunicatio
 }
 
 function decorateThreadSummaryWithState(summary, state = {}) {
+  const unreadCount = Number(summary.unread_count || summary.unreadCount || 0);
   return {
     ...summary,
-    unread_count: Number(summary.unread_count || 0),
-    is_unread: Number(summary.unread_count || 0) > 0,
+    unread_count: unreadCount,
+    unreadCount,
+    is_unread: unreadCount > 0,
     is_pinned: state.is_pinned === true,
     is_muted: state.is_muted === true,
     last_read_at: state.last_read_at || null
   };
+}
+
+function getThreadActivityTime(summary = {}) {
+  const timestamp = summary.last_activity_at || summary.last_time || summary.timestamp || summary.created_at || 0;
+  const value = new Date(timestamp).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortThreadSummaries(threads = [], settings = {}) {
+  const sortPreference = settings.thread_list?.sort_preference || DEFAULT_COMMUNICATIONS_SETTINGS.thread_list.sort_preference;
+  return [...threads].sort((left, right) => {
+    if (sortPreference.startsWith("pinned")) {
+      const pinnedDelta = Number(right.is_pinned === true) - Number(left.is_pinned === true);
+      if (pinnedDelta) return pinnedDelta;
+    }
+
+    if (sortPreference.includes("unread")) {
+      const unreadDelta = Number(right.is_unread === true || Number(right.unread_count || 0) > 0) - Number(left.is_unread === true || Number(left.unread_count || 0) > 0);
+      if (unreadDelta) return unreadDelta;
+      const unreadCountDelta = Number(right.unread_count || 0) - Number(left.unread_count || 0);
+      if (unreadCountDelta) return unreadCountDelta;
+    }
+
+    return getThreadActivityTime(right) - getThreadActivityTime(left);
+  });
 }
 
 async function readLocalAccountSettingsStore() {
@@ -1205,7 +1232,7 @@ async function readAccountSettingsStoreFromDatabase() {
       return null;
     }
     if (!data?.value) return null;
-    const parsed = JSON.parse(data.value);
+    const parsed = typeof data.value === "string" ? JSON.parse(data.value) : data.value;
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch (error) {
     console.warn("[settings] Unexpected app_config settings read failure:", error.message || error);
@@ -7288,37 +7315,42 @@ async function buildConversationThreadSummary(rows) {
   for (const row of rows || []) {
     if (!row?.wa_id) continue;
     const waId = String(row.wa_id);
-    const group = groupedRows.get(waId) || { rows: [], contact_name: null, latest: null };
-    group.rows.push(row);
-    group.contact_name = getPreferredContactName(group.contact_name, row.contact_name, { waId });
-    const rowTime = new Date(row.created_at || 0).getTime();
-    const latestTime = new Date(group.latest?.created_at || 0).getTime();
-    if (!group.latest || (Number.isFinite(rowTime) && rowTime > latestTime)) {
-      group.latest = row;
+    const existingGroup = groupedRows.get(waId);
+
+    if (existingGroup) {
+      existingGroup.rows.push(row);
+      existingGroup.summary.contact_name = isValidKnownContactName(existingGroup.summary.contact_name, { waId })
+        ? existingGroup.summary.contact_name
+        : getPreferredContactName(null, row.contact_name, { waId });
+      continue;
     }
-    groupedRows.set(waId, group);
+
+    const preferredContactName = getPreferredContactName(null, row.contact_name, { waId });
+
+    groupedRows.set(waId, {
+      rows: [row],
+      summary: {
+        wa_id: waId,
+        contact_name: preferredContactName,
+        last_message: row.body,
+        last_direction: row.direction,
+        last_time: row.created_at,
+        last_activity_at: row.created_at,
+        label: row.label || "",
+        is_archived: row.is_archived === true,
+        conversation_owner: row.conversation_owner || null,
+        human_takeover: row.human_takeover ?? null,
+        conversation_type: row.conversation_type || null,
+        followup_eligible: row.followup_eligible ?? null
+      }
+    });
   }
 
   const summaries = [];
   for (const [waId, group] of groupedRows.entries()) {
-    const latest = group.latest || group.rows[0] || {};
     const state = getThreadState(settings, "whatsapp", waId);
     const unreadCount = countUnreadInboundRows(group.rows, state);
-    summaries.push(decorateThreadSummaryWithState({
-      wa_id: waId,
-      contact_name: group.contact_name,
-      last_message: latest.body || "",
-      last_direction: latest.direction || "",
-      last_time: latest.created_at || "",
-      timestamp: latest.created_at || "",
-      label: latest.label || "",
-      is_archived: latest.is_archived === true,
-      conversation_owner: latest.conversation_owner || null,
-      human_takeover: latest.human_takeover ?? null,
-      conversation_type: latest.conversation_type || null,
-      followup_eligible: latest.followup_eligible ?? null,
-      unread_count: unreadCount
-    }, state));
+    summaries.push(decorateThreadSummaryWithState({ ...group.summary, unread_count: unreadCount }, state));
   }
 
   return sortThreadSummaries(summaries, settings);
@@ -7804,6 +7836,7 @@ app.get("/api/mobile/inbox/:conversationId", async (req, res) => {
       .eq("wa_id", waId)
       .order("created_at", { ascending: true });
     if (error) return res.status(500).json({ ok: false, error });
+    await markThreadReadState("whatsapp", waId);
     console.log("[mobile-api] thread load succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), wa_id: waId, count: Array.isArray(data) ? data.length : 0 });
     return res.json({ ok: true, conversationId: waId, messages: (data || []).map(summarizeMessageForMobile) });
   } catch (error) {
