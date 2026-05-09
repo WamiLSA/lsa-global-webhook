@@ -76,12 +76,17 @@
         <select id="statusFilter" onchange="handleStatusFilterChange()">
           <option value="all">All lifecycle states</option>
           <option value="pending_review">pending_review</option>
+          <option value="edit_requested">edit_requested</option>
+          <option value="returned_to_capture">returned_to_capture</option>
+          <option value="rerun_requested">rerun_requested</option>
           <option value="approved">approved</option>
+          <option value="confirmed">confirmed</option>
           <option value="rejected">rejected</option>
           <option value="published">published</option>
           <option value="merged">merged</option>
           <option value="dismissed">dismissed</option>
           <option value="kept_separate">kept_separate</option>
+          <option value="manual_ownership">manual_ownership</option>
           <option value="shortlisted">shortlisted</option>
           <option value="closed">closed</option>
         </select>
@@ -110,6 +115,17 @@
   <script src="/top-nav.js"></script>
   <script>
     const TOKEN_STORAGE_KEYS = ['lsa_internal_token', 'lsaInternalToken', 'authToken'];
+    const FINAL_REVIEW_STATUSES = new Set([
+      'approved',
+      'confirmed',
+      'dismissed',
+      'kept_separate',
+      'manual_ownership',
+      'merged',
+      'published',
+      'rejected',
+      'shortlisted'
+    ]);
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -188,18 +204,20 @@
       const status = document.getElementById('statusFilter')?.value || 'all';
       const reviewState = document.getElementById('reviewStateFilter');
       if (reviewState && status === 'closed') reviewState.value = 'closed';
+      else if (reviewState && status !== 'all') reviewState.value = FINAL_REVIEW_STATUSES.has(status) ? 'closed' : 'active';
       renderArtifacts(window.__automationArtifacts || []);
     }
 
     function getArtifactLifecycle(artifact) {
       const lifecycle = artifact.lifecycle || {};
-      const pendingReview = lifecycle.pendingReview ?? artifact.pendingReview ?? artifact.decisionRequired !== false;
+      const status = lifecycle.status || artifact.status || 'pending_review';
+      const pendingReview = !FINAL_REVIEW_STATUSES.has(status);
       return {
-        status: lifecycle.status || artifact.status || 'pending_review',
+        status,
         statusLabel: lifecycle.statusLabel || artifact.statusLabel || artifact.status || 'Pending review',
-        reviewState: lifecycle.reviewState || (pendingReview ? 'pending' : 'closed'),
+        reviewState: pendingReview ? 'pending' : 'closed',
         pendingReview,
-        closed: lifecycle.closed ?? !pendingReview
+        closed: !pendingReview
       };
     }
 
@@ -226,7 +244,8 @@
     function renderTargetSync(artifact) {
       const sync = artifact.targetSync || artifact.lastDecision?.targetSync || {};
       const target = sync.targetReference || artifact.lastDecision?.targetReference || {};
-      const state = sync.syncState || (artifact.decisionRequired === false ? 'synchronized' : 'awaiting_review');
+      const lifecycle = getArtifactLifecycle(artifact);
+      const state = lifecycle.closed ? 'synchronized' : 'awaiting_review';
       const synced = state === 'synchronized';
       const targetUrl = sync.targetUrl || target.destinationUrl || artifact.lastDecision?.targetUrl || artifact.destinationUrl;
       return `<div class='sync-box ${synced ? 'synced' : 'pending'}'>
@@ -297,7 +316,7 @@
       const closed = filtered.filter(item => getArtifactLifecycle(item).closed);
       const totalActive = window.__automationArtifacts.filter(item => !getArtifactLifecycle(item).closed).length;
       const totalClosed = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
-      const synchronized = window.__automationArtifacts.filter(item => (item.targetSync || {}).syncState === 'synchronized').length;
+      const synchronized = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
 
       document.getElementById('artifactSummary').innerHTML = `
         <div class='summary-card'><strong>${totalActive}</strong><span class='muted'>needs action / pending</span></div>
