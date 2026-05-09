@@ -21,6 +21,9 @@
     .operational-note{border:1px solid var(--lsa-border);border-radius:10px;padding:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:13px;line-height:1.45;margin:8px 0 12px}
     .target-ref-grid{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:8px}
     .target-ref-cell{border:1px solid rgba(148,163,184,.35);border-radius:8px;padding:7px;background:rgba(255,255,255,.45)}
+    .queue-section{margin-top:10px}
+    .queue-section.is-muted{opacity:.7}
+    .view-explainer{font-size:12px;color:var(--lsa-text-muted);margin:4px 0 0}
     .target-ref-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.75;margin-bottom:2px}
     .technical-ref{display:block;font-size:10px;opacity:.68;margin-top:2px;word-break:break-all}
     .sync-box.synced{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
@@ -94,7 +97,7 @@
         </select>
       </label>
       <label>Operational view
-        <select id="reviewStateFilter" onchange="renderArtifacts(window.__automationArtifacts || [])">
+        <select id="reviewStateFilter" onchange="handleOperationalViewChange()">
           <option value="all">Active and closed</option>
           <option value="active">Active review queue only</option>
           <option value="closed">Closed decisions only</option>
@@ -103,10 +106,14 @@
     </div>
     <div class="operational-note"><strong>Operational separation:</strong> the active review queue is for decisions still requiring staff action; closed / synchronized decisions are completed outcomes retained for verification; run history shows workflow executions; the audit trail shows operator decisions.</div>
     <div id="artifactSummary" class="summary-grid"></div>
-    <div class="section-heading"><div><h3>Active review queue</h3><p class="muted">Decision surfaces still requiring operator review or revision.</p></div></div>
-    <div id="activeArtifactGrid" class="grid"></div>
-    <div class="section-heading"><div><h3>Closed / synchronized decisions</h3><p class="muted">Completed outcomes synchronized back to Inbox, Knowledge Base, Provider Management, or Provider Matching surfaces.</p></div></div>
-    <div id="closedArtifactGrid" class="grid"></div>
+    <div id="activeQueueSection" class="queue-section">
+      <div class="section-heading"><div><h3>Active review queue</h3><p class="muted">Decision surfaces still requiring operator review or revision.</p></div></div>
+      <div id="activeArtifactGrid" class="grid"></div>
+    </div>
+    <div id="closedQueueSection" class="queue-section">
+      <div class="section-heading"><div><h3>Closed / synchronized decisions</h3><p class="muted">Completed outcomes synchronized back to Inbox, Knowledge Base, Provider Management, or Provider Matching surfaces.</p></div></div>
+      <div id="closedArtifactGrid" class="grid"></div>
+    </div>
 
     <h2>Run History</h2>
     <p class="muted">Execution log for workflow runs. This is operational history, not the decision audit.</p>
@@ -200,19 +207,49 @@
       return labels[value] || String(value || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 
+    function titleCaseOperationalRef(value) {
+      return String(value || '')
+        .replace(/^(kb-record|kb-capture|provider-record|thread|duplicate):/i, '')
+        .split(/[\s_-]+/)
+        .filter(Boolean)
+        .map((part) => {
+          const lower = part.toLowerCase();
+          if (['kb', 'id', 'cefr', 'lsa'].includes(lower)) return lower.toUpperCase();
+          return part.charAt(0).toUpperCase() + part.slice(1);
+        })
+        .join(' ');
+    }
+
     function cleanDisplayLabel(value) {
       const text = String(value || '').trim();
       const known = {
         'manual-provider-document-check': 'Manual provider document check',
-        'manual-kb-formatting-check': 'Manual knowledge formatting check',
-        'manual-duplicate-check': 'Manual duplicate review check',
-        'manual-inbox-helper-check': 'Manual inbox helper check',
-        manual_service_intent_check: 'Manual service-intent check',
+        'manual-kb-formatting-check': 'Manual KB formatting check',
+        'manual-duplicate-check': 'Latest duplicate review candidate',
+        'manual-inbox-helper-check': 'Current inbox helper suggestion',
+        manual_service_intent_check: 'Manual service-intent review',
+        rerun_provider_matching: 'Manual provider matching rerun',
+        'pending-provider-record': 'Provider record pending final ID',
+        'uploaded-provider-document': 'Uploaded provider document',
+        'latest-duplicate-candidate': 'Latest duplicate candidate',
+        'current-inbox-thread': 'Current inbox thread',
+        'latest-message': 'Latest inbox message',
+        'matching-result-set': 'Provider matching result set',
         'provider record awaiting final id confirmation': 'Provider record pending final ID'
       };
       if (!text) return '';
       if (known[text]) return known[text];
-      return text.replace(/^(kb-record|kb-capture|provider-record|thread|duplicate):/i, '').split(/[\s_-]+/).filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+      return titleCaseOperationalRef(text);
+    }
+
+    function formatSyncState(value) {
+      const labels = {
+        awaiting_review: 'Awaiting review',
+        synchronized: 'Synchronized',
+        pending: 'Pending review',
+        closed: 'Closed'
+      };
+      return labels[value] || cleanDisplayLabel(value);
     }
 
     function renderTechnicalRef(label, raw) {
@@ -254,6 +291,14 @@
       renderArtifacts(window.__automationArtifacts || []);
     }
 
+    function handleOperationalViewChange() {
+      const status = document.getElementById('statusFilter');
+      const reviewState = document.getElementById('reviewStateFilter')?.value || 'all';
+      if (status && reviewState === 'active' && (status.value === 'closed' || FINAL_REVIEW_STATUSES.has(status.value))) status.value = 'all';
+      if (status && reviewState === 'closed' && ['pending_review', 'edit_requested', 'rerun_requested'].includes(status.value)) status.value = 'closed';
+      renderArtifacts(window.__automationArtifacts || []);
+    }
+
     function getArtifactLifecycle(artifact) {
       const lifecycle = artifact.lifecycle || {};
       const status = lifecycle.status || artifact.status || 'pending_review';
@@ -291,17 +336,17 @@
       const sync = artifact.targetSync || artifact.lastDecision?.targetSync || {};
       const target = sync.targetReference || artifact.lastDecision?.targetReference || {};
       const lifecycle = getArtifactLifecycle(artifact);
-      const state = lifecycle.closed ? 'synchronized' : 'awaiting_review';
+      const state = sync.syncState || (lifecycle.closed ? 'synchronized' : 'awaiting_review');
       const synced = state === 'synchronized';
       const targetUrl = sync.targetUrl || target.destinationUrl || artifact.lastDecision?.targetUrl || artifact.destinationUrl;
       return `<div class='sync-box ${synced ? 'synced' : 'pending'}'>
-        <strong>${escapeHtml(sync.syncLabel || (synced ? 'Target module synchronized' : 'Awaiting target-module sync'))}</strong><br/>
+        <strong>${escapeHtml(sync.syncLabel || (synced ? 'Target module synchronized' : 'Awaiting operator review'))}</strong><br/>
         ${escapeHtml(sync.syncConfirmation || '')}${sync.syncedAt ? ` • ${escapeHtml(formatTime(sync.syncedAt))}` : ''}
         <div class='target-ref-grid'>
           <div class='target-ref-cell'><span class='target-ref-label'>Destination record</span>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || 'Not assigned yet')}${renderTechnicalRef(sync.destinationDisplayLabel || target.destinationDisplayLabel, sync.destinationRecordId || target.destinationRecordId)}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Destination object</span>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || artifact.surface || '')}</div>
+          <div class='target-ref-cell'><span class='target-ref-label'>Destination object</span>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || artifact.surface || '')}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Panel / location</span>${escapeHtml(sync.destinationPanel || target.destinationPanel || artifact.surface || '')}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Target module</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(state)}</div>
+          <div class='target-ref-cell'><span class='target-ref-label'>Target module</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(formatSyncState(state))}</div>
         </div>
         <div class='decision-note'>${escapeHtml(sync.verificationHint || target.verificationHint || 'Verify the synchronized state in the target module.')}</div>
         ${targetUrl ? `<div style='margin-top:8px'><a class='action-link' href='${escapeHtml(targetUrl)}'>${escapeHtml(sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item')}</a></div>` : ''}
@@ -364,12 +409,19 @@
       const totalClosed = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
       const synchronized = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed && (item.targetSync?.syncState === 'synchronized' || item.lifecycle?.synchronized)).length;
 
+      const reviewStateFilter = document.getElementById('reviewStateFilter')?.value || 'all';
+      const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+      const activeSection = document.getElementById('activeQueueSection');
+      const closedSection = document.getElementById('closedQueueSection');
+      if (activeSection) activeSection.hidden = reviewStateFilter === 'closed';
+      if (closedSection) closedSection.hidden = reviewStateFilter === 'active';
+
       document.getElementById('artifactSummary').innerHTML = `
-        <div class='summary-card'><strong>${totalActive}</strong><span class='muted'>needs action / pending</span></div>
-        <div class='summary-card'><strong>${totalClosed}</strong><span class='muted'>closed decisions</span></div>
-        <div class='summary-card'><strong>${synchronized}</strong><span class='muted'>target sync confirmed</span></div>`;
-      document.getElementById('activeArtifactGrid').innerHTML = active.map(renderArtifactCard).join('') || `<div class='empty-state'>No active review items match this filter.</div>`;
-      document.getElementById('closedArtifactGrid').innerHTML = closed.map(renderArtifactCard).join('') || `<div class='empty-state'>No closed items match this filter. Closed decisions stay available here without cluttering the active queue.</div>`;
+        <div class='summary-card'><strong>${totalActive}</strong><span class='muted'>active review queue</span><div class='view-explainer'>Open staff decisions still requiring action.</div></div>
+        <div class='summary-card'><strong>${totalClosed}</strong><span class='muted'>closed decisions</span><div class='view-explainer'>Completed outcomes retained outside the active queue.</div></div>
+        <div class='summary-card'><strong>${synchronized}</strong><span class='muted'>target sync confirmed</span><div class='view-explainer'>Closed items reflected back to their destination modules.</div></div>`;
+      document.getElementById('activeArtifactGrid').innerHTML = active.map(renderArtifactCard).join('') || `<div class='empty-state'>No active review items match the current filters${statusFilter !== 'all' ? '; active filters exclude completed states automatically' : ''}.</div>`;
+      document.getElementById('closedArtifactGrid').innerHTML = closed.map(renderArtifactCard).join('') || `<div class='empty-state'>No closed decisions match the current filters. Use “All closed decisions” to see completed outcomes.</div>`;
     }
 
     function renderHistory(history) {
@@ -380,7 +432,7 @@
         return `<tr>
           <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>ID: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
