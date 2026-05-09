@@ -16,6 +16,45 @@
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   }
 
+  function titleCaseOperationalRef(value) {
+    return String(value || '')
+      .replace(/^(kb-record|kb-capture|provider-record|thread|duplicate):/i, '')
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => {
+        const lower = part.toLowerCase();
+        if (['kb', 'id', 'cefr', 'lsa'].includes(lower)) return lower.toUpperCase();
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      })
+      .join(' ');
+  }
+
+  function cleanDisplayLabel(value) {
+    const text = String(value || '').trim();
+    const known = {
+      'manual-provider-document-check': 'Manual provider document check',
+      'manual-kb-formatting-check': 'Manual KB formatting check',
+      'manual-duplicate-check': 'Latest duplicate review candidate',
+      'manual-inbox-helper-check': 'Current inbox helper suggestion',
+      manual_service_intent_check: 'Manual service-intent review',
+      rerun_provider_matching: 'Manual provider matching rerun',
+      'pending-provider-record': 'Provider record pending final ID',
+      'uploaded-provider-document': 'Uploaded provider document',
+      'latest-duplicate-candidate': 'Latest duplicate candidate',
+      'current-inbox-thread': 'Current inbox thread',
+      'latest-message': 'Latest inbox message',
+      'matching-result-set': 'Provider matching result set'
+    };
+    if (!text) return '';
+    if (known[text]) return known[text];
+    return titleCaseOperationalRef(text);
+  }
+
+  function formatSyncState(value) {
+    const labels = { awaiting_review: 'Awaiting review', synchronized: 'Synchronized' };
+    return labels[value] || cleanDisplayLabel(value);
+  }
+
   function getToken() {
     for (const storage of [window.localStorage, window.sessionStorage]) {
       if (!storage) continue;
@@ -50,16 +89,17 @@
         const syncState = item.syncState || (item.pendingReview ? 'awaiting_review' : 'synchronized');
         const stateClass = item.pendingReview ? 'pending' : 'closed';
         const target = item.targetReference || {};
-        const destinationRecord = item.destinationRecordId || target.destinationRecordId || 'Not assigned yet';
-        const destinationObject = item.destinationObjectName || target.destinationObjectName || item.surface || '';
+        const rawRecordId = item.destinationRecordId || target.destinationRecordId || '';
+        const destinationRecord = item.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(rawRecordId) || 'Not assigned yet';
+        const destinationObject = item.destinationObjectName || target.destinationObjectName || destinationRecord || item.surface || '';
         const destinationPanel = item.destinationPanel || target.destinationPanel || item.surface || '';
         const targetUrl = item.targetUrl || target.destinationUrl || '';
         const openLabel = item.openTargetLabel || target.openTargetLabel || 'Open target record';
         return `<div class="automation-sync-row">
           <span class="automation-sync-status ${stateClass}">${escapeHtml(item.statusLabel || item.status || '')}</span>
           <span><strong>${escapeHtml(item.title || item.surface || '')}</strong></span>
-          <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(syncState)} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
-          <span class="automation-sync-muted"><strong>Record:</strong> ${escapeHtml(destinationRecord)} • <strong>Object:</strong> ${escapeHtml(destinationObject)} • <strong>Panel:</strong> ${escapeHtml(destinationPanel)}</span>
+          <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(formatSyncState(syncState))} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
+          <span class="automation-sync-muted"><strong>Record:</strong> ${escapeHtml(destinationRecord)}${rawRecordId ? `<span class="automation-sync-muted"> (ID: ${escapeHtml(rawRecordId)})</span>` : ''} • <strong>Object:</strong> ${escapeHtml(destinationObject)} • <strong>Panel:</strong> ${escapeHtml(destinationPanel)}</span>
           ${item.syncConfirmation ? `<span class="automation-sync-muted">${escapeHtml(item.syncConfirmation)}</span>` : ''}
           ${item.verificationHint || target.verificationHint ? `<span class="automation-sync-muted">Verify here: ${escapeHtml(item.verificationHint || target.verificationHint)}</span>` : ''}
           ${targetUrl ? `<a href="${escapeHtml(targetUrl)}">${escapeHtml(openLabel)}</a>` : ''}
