@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Image, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { Screen } from '../components/Screen';
 import { ModeBadge } from '../components/ModeBadge';
 import { MobileAppMenu } from '../components/MobileAppMenu';
@@ -25,7 +25,7 @@ export function AppHomeScreen({ navigation }) {
       setMode(inboxResponse.runtimeMode || 'TEST');
       setConversationCount(Array.isArray(inboxResponse.conversations) ? inboxResponse.conversations.length : 0);
     } else {
-      setError('Inbox status could not be loaded. The menu is still available.');
+      setError('Inbox status could not be loaded. Module navigation is still available.');
     }
 
     if (brandingResult.status === 'fulfilled') {
@@ -45,35 +45,31 @@ export function AppHomeScreen({ navigation }) {
 
   return (
     <Screen padded={false}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.brandCard}>
-          <View style={styles.brandRow}>
-            {branding.logo_url ? <Image source={{ uri: api.resolveAssetUrl(branding.logo_url) }} style={styles.brandLogo} /> : null}
-            <View style={{ flex: 1 }}>
-              <Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL Internal OS'}</Text>
-              <Text style={styles.subtitle}>Mobile command shell for core operations</Text>
-            </View>
+      <View style={styles.statusStrip}>
+        <View style={styles.brandCluster}>
+          {branding.logo_url ? <Image source={{ uri: api.resolveAssetUrl(branding.logo_url) }} style={styles.brandLogo} /> : null}
+          <View style={styles.brandTextWrap}>
+            <Text style={styles.brandText}>{branding.brand_name || 'LSA GLOBAL'}</Text>
+            {loading ? <ActivityIndicator color={colors.primary} style={styles.loader} /> : (
+              <Text style={styles.statusLine}>{conversationCount ?? 0} active inbox thread{conversationCount === 1 ? '' : 's'}</Text>
+            )}
           </View>
-          <ModeBadge mode={mode} />
-          {loading ? <ActivityIndicator color={colors.primary} style={styles.loader} /> : (
-            <Text style={styles.statusLine}>{conversationCount ?? 0} active inbox thread{conversationCount === 1 ? '' : 's'} available.</Text>
-          )}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
         </View>
-        <MobileAppMenu navigation={navigation} mode={mode} />
-      </ScrollView>
+        <ModeBadge mode={mode} />
+      </View>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      <MobileAppMenu navigation={navigation} mode={mode} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.md, paddingBottom: spacing.xl },
-  brandCard: { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 18, padding: spacing.md, marginBottom: spacing.md },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
-  brandLogo: { width: 42, height: 42, borderRadius: 10, backgroundColor: colors.surfaceAlt },
-  brandText: { color: colors.text, fontWeight: '900', fontSize: 20 },
-  subtitle: { color: colors.textMuted, marginTop: 4 },
-  statusLine: { color: colors.text, marginTop: spacing.sm, fontWeight: '600' },
-  error: { color: '#fca5a5', marginTop: spacing.sm },
-  loader: { marginTop: spacing.sm, alignSelf: 'flex-start' }
+  statusStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, padding: spacing.md, paddingBottom: spacing.sm, backgroundColor: colors.bg },
+  brandCluster: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  brandLogo: { width: 32, height: 32, borderRadius: 8, backgroundColor: colors.surfaceAlt },
+  brandTextWrap: { flex: 1 },
+  brandText: { color: colors.text, fontWeight: '900', fontSize: 15 },
+  statusLine: { color: colors.textMuted, marginTop: 2, fontWeight: '700', fontSize: 12 },
+  error: { color: '#fca5a5', marginHorizontal: spacing.md, marginBottom: spacing.sm },
+  loader: { marginTop: 2, alignSelf: 'flex-start' }
 });

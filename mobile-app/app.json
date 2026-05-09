@@ -28,10 +28,21 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE"
+      ]
     },
     "extra": {
       "apiBaseUrl": ""
+    },
+    "ios": {
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow LSA GLOBAL Internal to take live photos for secure inbox attachments.",
+        "NSPhotoLibraryUsageDescription": "Allow LSA GLOBAL Internal to attach existing images if camera capture is unavailable."
+      }
     }
   }
 }

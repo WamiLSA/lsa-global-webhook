@@ -22,8 +22,8 @@ const protectedOptions = {
 
 function MenuButton({ navigation }) {
   return (
-    <Pressable onPress={() => navigation.navigate('Home')} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
-      <Text style={{ color: colors.text, fontWeight: '900', fontSize: 18 }}>☰</Text>
+    <Pressable onPress={() => navigation.navigate('Home')} style={{ paddingHorizontal: 8, paddingVertical: 4 }} accessibilityRole="button" accessibilityLabel="Open module menu">
+      <Text style={{ color: colors.text, fontWeight: '900', fontSize: 22 }}>☰</Text>
     </Pressable>
   );
 }
@@ -32,25 +32,25 @@ export function RootNavigator() {
   const { token } = useAuth();
 
   return (
-    <Stack.Navigator screenOptions={protectedOptions}>
+    <Stack.Navigator screenOptions={protectedOptions} initialRouteName={token ? 'Inbox' : 'Login'}>
       {!token ? (
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
       ) : (
         <>
           <Stack.Screen
-            name="Home"
-            component={AppHomeScreen}
-            options={({ navigation }) => ({ title: 'LSA Internal OS', headerRight: () => <MenuButton navigation={navigation} /> })}
-          />
-          <Stack.Screen
             name="Inbox"
             component={InboxScreen}
-            options={({ navigation }) => ({ title: 'Inbox / Communications', headerRight: () => <MenuButton navigation={navigation} /> })}
+            options={({ navigation }) => ({ title: 'Inbox', headerRight: () => <MenuButton navigation={navigation} /> })}
           />
           <Stack.Screen
             name="Conversation"
             component={ConversationScreen}
             options={({ navigation }) => ({ title: 'Thread', headerRight: () => <MenuButton navigation={navigation} /> })}
+          />
+          <Stack.Screen
+            name="Home"
+            component={AppHomeScreen}
+            options={{ title: 'Menu', presentation: 'modal' }}
           />
           <Stack.Screen
             name="Settings"
