@@ -18,9 +18,11 @@
     .summary-card{border:1px solid var(--lsa-border);border-radius:10px;padding:10px;background:var(--lsa-surface-muted,#f8fafc)}
     .summary-card strong{display:block;font-size:20px}
     .sync-box{border:1px solid var(--lsa-border);border-radius:8px;padding:8px;margin-top:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:12px;line-height:1.45}
+    .operational-note{border:1px solid var(--lsa-border);border-radius:10px;padding:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:13px;line-height:1.45;margin:8px 0 12px}
     .target-ref-grid{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:8px}
     .target-ref-cell{border:1px solid rgba(148,163,184,.35);border-radius:8px;padding:7px;background:rgba(255,255,255,.45)}
     .target-ref-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.04em;opacity:.75;margin-bottom:2px}
+    .technical-ref{display:block;font-size:10px;opacity:.68;margin-top:2px;word-break:break-all}
     .sync-box.synced{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
     .sync-box.pending{border-color:#bfdbfe;background:#eff6ff;color:#1e3a8a}
     .lifecycle-actions{border-top:1px dashed var(--lsa-border);margin-top:10px;padding-top:10px}
@@ -67,7 +69,7 @@
     <div class="section-heading">
       <div>
         <h2>Phase 2 Result Surfaces</h2>
-        <p class="muted">Active review work is separated from closed decisions, with lifecycle filters and target-module sync confirmation.</p>
+        <p class="muted">Active review work, closed decisions, run history, and audit evidence are separated so operators can scan lifecycle state quickly.</p>
       </div>
       <button onclick="load()">Refresh</button>
     </div>
@@ -75,39 +77,42 @@
       <label>Status filter
         <select id="statusFilter" onchange="handleStatusFilterChange()">
           <option value="all">All lifecycle states</option>
-          <option value="pending_review">pending_review</option>
-          <option value="edit_requested">edit_requested</option>
-          <option value="returned_to_capture">returned_to_capture</option>
-          <option value="rerun_requested">rerun_requested</option>
-          <option value="approved">approved</option>
-          <option value="confirmed">confirmed</option>
-          <option value="rejected">rejected</option>
-          <option value="published">published</option>
-          <option value="merged">merged</option>
-          <option value="dismissed">dismissed</option>
-          <option value="kept_separate">kept_separate</option>
-          <option value="manual_ownership">manual_ownership</option>
-          <option value="shortlisted">shortlisted</option>
-          <option value="closed">closed</option>
+          <option value="pending_review">Pending review</option>
+          <option value="edit_requested">Edit requested</option>
+          <option value="rerun_requested">Rerun requested</option>
+          <option value="approved">Approved</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="rejected">Rejected</option>
+          <option value="published">Published</option>
+          <option value="merged">Merged</option>
+          <option value="returned_to_capture">Returned to capture</option>
+          <option value="dismissed">Dismissed</option>
+          <option value="kept_separate">Kept separate</option>
+          <option value="manual_ownership">Manual ownership</option>
+          <option value="shortlisted">Shortlisted</option>
+          <option value="closed">All closed decisions</option>
         </select>
       </label>
-      <label>Work queue
+      <label>Operational view
         <select id="reviewStateFilter" onchange="renderArtifacts(window.__automationArtifacts || [])">
-          <option value="active">Active / pending only</option>
-          <option value="closed">Closed only</option>
-          <option value="all">All items</option>
+          <option value="all">Active and closed</option>
+          <option value="active">Active review queue only</option>
+          <option value="closed">Closed decisions only</option>
         </select>
       </label>
     </div>
+    <div class="operational-note"><strong>Operational separation:</strong> the active review queue is for decisions still requiring staff action; closed / synchronized decisions are completed outcomes retained for verification; run history shows workflow executions; the audit trail shows operator decisions.</div>
     <div id="artifactSummary" class="summary-grid"></div>
-    <h3>Active review queue</h3>
+    <div class="section-heading"><div><h3>Active review queue</h3><p class="muted">Decision surfaces still requiring operator review or revision.</p></div></div>
     <div id="activeArtifactGrid" class="grid"></div>
-    <h3>Closed / synchronized decisions</h3>
+    <div class="section-heading"><div><h3>Closed / synchronized decisions</h3><p class="muted">Completed outcomes synchronized back to Inbox, Knowledge Base, Provider Management, or Provider Matching surfaces.</p></div></div>
     <div id="closedArtifactGrid" class="grid"></div>
 
     <h2>Run History</h2>
+    <p class="muted">Execution log for workflow runs. This is operational history, not the decision audit.</p>
     <div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Target</th><th>Action</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
     <h2>Decision Audit Trail</h2>
+    <p class="muted">Immutable operator-decision evidence with status transitions and synchronized target references.</p>
     <div class="table-wrap"><table><thead><tr><th>Item / Workflow</th><th>Action</th><th>Status</th><th>Target module</th><th>Destination record</th><th>Operator</th><th>Time</th></tr></thead><tbody id="auditRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
@@ -124,6 +129,7 @@
       'merged',
       'published',
       'rejected',
+      'returned_to_capture',
       'shortlisted'
     ]);
 
@@ -174,6 +180,46 @@
       return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
     }
 
+    function formatStatusLabel(value) {
+      const labels = {
+        pending_review: 'Pending review',
+        edit_requested: 'Edit requested',
+        rerun_requested: 'Rerun requested',
+        approved: 'Approved',
+        confirmed: 'Confirmed',
+        rejected: 'Rejected',
+        published: 'Published',
+        merged: 'Merged',
+        returned_to_capture: 'Returned to capture',
+        dismissed: 'Dismissed',
+        kept_separate: 'Kept separate',
+        manual_ownership: 'Manual ownership',
+        shortlisted: 'Shortlisted',
+        closed: 'Closed'
+      };
+      return labels[value] || String(value || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    function cleanDisplayLabel(value) {
+      const text = String(value || '').trim();
+      const known = {
+        'manual-provider-document-check': 'Manual provider document check',
+        'manual-kb-formatting-check': 'Manual knowledge formatting check',
+        'manual-duplicate-check': 'Manual duplicate review check',
+        'manual-inbox-helper-check': 'Manual inbox helper check',
+        manual_service_intent_check: 'Manual service-intent check',
+        'provider record awaiting final id confirmation': 'Provider record pending final ID'
+      };
+      if (!text) return '';
+      if (known[text]) return known[text];
+      return text.replace(/^(kb-record|kb-capture|provider-record|thread|duplicate):/i, '').split(/[\s_-]+/).filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+    }
+
+    function renderTechnicalRef(label, raw) {
+      if (!raw || String(label || '') === String(raw || '')) return '';
+      return `<span class='technical-ref'>ID: ${escapeHtml(raw)}</span>`;
+    }
+
     function renderAction(artifact, compact = false) {
       if (!artifact) return compact ? '' : '<span class="muted">No result surface</span>';
       const label = escapeHtml(artifact.actionLabel || 'Open result');
@@ -214,7 +260,7 @@
       const pendingReview = !FINAL_REVIEW_STATUSES.has(status);
       return {
         status,
-        statusLabel: lifecycle.statusLabel || artifact.statusLabel || artifact.status || 'Pending review',
+        statusLabel: lifecycle.statusLabel || artifact.statusLabel || formatStatusLabel(artifact.status) || 'Pending review',
         reviewState: pendingReview ? 'pending' : 'closed',
         pendingReview,
         closed: !pendingReview
@@ -252,7 +298,7 @@
         <strong>${escapeHtml(sync.syncLabel || (synced ? 'Target module synchronized' : 'Awaiting target-module sync'))}</strong><br/>
         ${escapeHtml(sync.syncConfirmation || '')}${sync.syncedAt ? ` • ${escapeHtml(formatTime(sync.syncedAt))}` : ''}
         <div class='target-ref-grid'>
-          <div class='target-ref-cell'><span class='target-ref-label'>Destination record</span>${escapeHtml(sync.destinationRecordId || target.destinationRecordId || 'Not assigned yet')}</div>
+          <div class='target-ref-cell'><span class='target-ref-label'>Destination record</span>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || 'Not assigned yet')}${renderTechnicalRef(sync.destinationDisplayLabel || target.destinationDisplayLabel, sync.destinationRecordId || target.destinationRecordId)}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Destination object</span>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || artifact.surface || '')}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Panel / location</span>${escapeHtml(sync.destinationPanel || target.destinationPanel || artifact.surface || '')}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Target module</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(state)}</div>
@@ -268,7 +314,7 @@
       const sync = latest.targetSync || artifact.targetSync || {};
       const target = sync.targetReference || latest.targetReference || {};
       const record = sync.destinationRecordId || latest.destinationRecordId || target.destinationRecordId || '';
-      return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(latest.previousStatus)} to ${escapeHtml(latest.statusLabel || latest.nextStatus)}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}${record ? ` • Record: ${escapeHtml(record)}` : ''}${sync.syncedAt ? ` • Synced ${escapeHtml(formatTime(sync.syncedAt))}` : ''}.</div>`;
+      return `<div class='decision-note'>Last decision: ${escapeHtml(latest.label)} changed status from ${escapeHtml(formatStatusLabel(latest.previousStatus))} to ${escapeHtml(latest.statusLabel || formatStatusLabel(latest.nextStatus))}${latest.targetModule ? ` • Target: ${escapeHtml(latest.targetModule)}` : ''}${record ? ` • Record: ${escapeHtml(sync.destinationDisplayLabel || latest.destinationDisplayLabel || cleanDisplayLabel(record))}` : ''}${sync.syncedAt ? ` • Synced ${escapeHtml(formatTime(sync.syncedAt))}` : ''}.</div>`;
     }
 
     function renderArtifactCard(artifact) {
@@ -279,7 +325,7 @@
           <span class='pill'>${escapeHtml(artifact.module)}</span>
           <span class='pill'>${escapeHtml(artifact.surface)}</span>
           <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
-          <span class='pill'>${escapeHtml(lifecycle.reviewState)}</span>
+          <span class='pill'>${escapeHtml(lifecycle.closed ? 'Closed decision' : 'Active review')}</span>
         </div>
         <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
         <div class='decision'>${escapeHtml(artifact.decision)}</div>
@@ -299,7 +345,7 @@
     function artifactMatchesFilters(artifact) {
       const lifecycle = getArtifactLifecycle(artifact);
       const statusFilter = document.getElementById('statusFilter')?.value || 'all';
-      const reviewStateFilter = document.getElementById('reviewStateFilter')?.value || 'active';
+      const reviewStateFilter = document.getElementById('reviewStateFilter')?.value || 'all';
       if (statusFilter !== 'all') {
         if (statusFilter === 'closed' && !lifecycle.closed) return false;
         if (statusFilter !== 'closed' && lifecycle.status !== statusFilter) return false;
@@ -316,7 +362,7 @@
       const closed = filtered.filter(item => getArtifactLifecycle(item).closed);
       const totalActive = window.__automationArtifacts.filter(item => !getArtifactLifecycle(item).closed).length;
       const totalClosed = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
-      const synchronized = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed).length;
+      const synchronized = window.__automationArtifacts.filter(item => getArtifactLifecycle(item).closed && (item.targetSync?.syncState === 'synchronized' || item.lifecycle?.synchronized)).length;
 
       document.getElementById('artifactSummary').innerHTML = `
         <div class='summary-card'><strong>${totalActive}</strong><span class='muted'>needs action / pending</span></div>
@@ -334,7 +380,7 @@
         return `<tr>
           <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationRecordId || target.destinationRecordId || '')}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
@@ -350,7 +396,7 @@
           <td>${escapeHtml(entry.actionTaken || entry.label || entry.actionId || '')}</td>
           <td>${escapeHtml(entry.statusLabel || entry.nextStatus || '')}</td>
           <td>${escapeHtml(entry.targetModule || '')}<div class='muted'>${escapeHtml(target.destinationPanel || entry.destinationPanel || '')}</div></td>
-          <td>${escapeHtml(record)}${targetUrl ? `<div class='muted'><a href='${escapeHtml(targetUrl)}'>Open target record</a></div>` : ''}</td>
+          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>ID: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'><a href='${escapeHtml(targetUrl)}'>Open target record</a></div>` : ''}</td>
           <td>${escapeHtml(entry.operator || entry.decidedBy || '')}</td>
           <td>${escapeHtml(formatTime(entry.time || entry.decidedAt))}</td>
         </tr>`;
