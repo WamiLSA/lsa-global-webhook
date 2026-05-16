@@ -51,7 +51,7 @@
   }
 
   function formatSyncState(value) {
-    const labels = { awaiting_review: 'Pending operator review', synchronized: 'Synchronized to target module', pending: 'Pending review', closed: 'Closed decision' };
+    const labels = { awaiting_review: 'Pending staff review', synchronized: 'Synchronized to target module', pending: 'Pending staff review', closed: 'Closed decision' };
     return labels[value] || cleanDisplayLabel(value);
   }
 
@@ -80,11 +80,11 @@
     window.__automationModuleSyncItems = items;
     window.dispatchEvent(new CustomEvent('automation-module-sync:loaded', { detail: { moduleName, items } }));
     if (!items.length) {
-      mount.innerHTML = '<div class="automation-sync-empty">No Automation Hub decisions are currently synchronized with this module.</div>';
+      mount.innerHTML = '<div class="automation-sync-empty">No closed Automation Hub decisions are currently synchronized with this module.</div>';
       return;
     }
     mount.innerHTML = `<div class="automation-sync-card">
-      <div class="automation-sync-title">Automation Hub synchronized decisions</div>
+      <div class="automation-sync-title">Automation Hub synchronized decisions (non-active)</div>
       ${items.map((item) => {
         const syncState = item.syncState || (item.pendingReview ? 'awaiting_review' : 'synchronized');
         const stateClass = item.pendingReview ? 'pending' : 'closed';
@@ -98,8 +98,8 @@
         return `<div class="automation-sync-row">
           <span class="automation-sync-status ${stateClass}">${escapeHtml(item.statusLabel || item.status || '')}</span>
           <span><strong>${escapeHtml(item.title || item.surface || '')}</strong></span>
-          <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending review')} • ${escapeHtml(formatSyncState(syncState))} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
-          <span class="automation-sync-muted"><strong>Destination record:</strong> ${escapeHtml(destinationRecord)}${rawRecordId ? `<span class="automation-sync-muted"> (Technical ID: ${escapeHtml(rawRecordId)})</span>` : ''} • <strong>Destination object:</strong> ${escapeHtml(destinationObject)} • <strong>Panel / location:</strong> ${escapeHtml(destinationPanel)}</span>
+          <span class="automation-sync-muted">${escapeHtml(item.actionTaken || item.lastActionLabel || 'Pending staff review')} • ${escapeHtml(formatSyncState(syncState))} • ${escapeHtml(formatTime(item.updatedAt || item.syncedAt))}</span>
+          <span class="automation-sync-muted"><strong>Destination record:</strong> ${escapeHtml(destinationRecord)}${rawRecordId ? `<span class="automation-sync-muted"> (Internal technical reference: ${escapeHtml(rawRecordId)})</span>` : ''} • <strong>Destination object:</strong> ${escapeHtml(destinationObject)} • <strong>Panel / location:</strong> ${escapeHtml(destinationPanel)}</span>
           ${item.syncConfirmation ? `<span class="automation-sync-muted">${escapeHtml(item.syncConfirmation)}</span>` : ''}
           ${item.verificationHint || target.verificationHint ? `<span class="automation-sync-muted">Verify here: ${escapeHtml(item.verificationHint || target.verificationHint)}</span>` : ''}
           ${targetUrl ? `<a href="${escapeHtml(targetUrl)}">${escapeHtml(openLabel)}</a>` : ''}
