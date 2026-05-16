@@ -36,6 +36,29 @@ async function main() {
   assert.strictEqual(hub.listAuditLog().length, 1, 'decision audit trail should be preserved');
   assert.ok(hub.listNotifications().some((item) => /Automation decision recorded/.test(item.message)), 'decision should create an internal notification');
 
+  const reopenedProviderRuns = await hub.trigger('document_uploaded', {
+    module: 'providers',
+    providerId: 'provider-1',
+    documentId: 'document-2'
+  }, { source: 'provider-document-upload' });
+  assert.strictEqual(reopenedProviderRuns.length, 1, 'second provider document upload should create one pending workflow');
+  assert.strictEqual(hub.listTargetModuleState('Provider Management').length, 1, 'new pending item for same provider must not hide prior closed sync');
+  assert.strictEqual(
+    hub.listTargetModuleState('Provider Management')[0].artifactId,
+    automaticArtifact.id,
+    'default target-module state should keep the prior closed decision authoritative while same-target work is pending'
+  );
+  const sameProviderStates = hub
+    .listTargetModuleState('Provider Management', 50, { includeActive: true })
+    .filter((item) => item.refs?.providerId === 'provider-1');
+  assert.strictEqual(
+    sameProviderStates.length,
+    2,
+    'diagnostic module state should show both the closed sync and same-target pending item'
+  );
+  assert.ok(sameProviderStates.some((item) => item.reviewState === 'closed'), 'same-target diagnostics should include the closed sync');
+  assert.ok(sameProviderStates.some((item) => item.reviewState === 'pending'), 'same-target diagnostics should include the pending item');
+
   const lifecycle = hub.applyArtifactLifecycleAction(automaticArtifact.id, 'revise_item', { decidedBy: 'qa' });
   assert.strictEqual(lifecycle.ok, true);
   assert.strictEqual(lifecycle.artifact.lifecycle.reviewState, 'pending');
