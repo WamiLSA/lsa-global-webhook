@@ -9971,11 +9971,33 @@ app.post("/api/providers/match", async (req, res) => {
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
 
+    const matchingResultId = crypto.randomUUID();
+    const topMatch = ranked[0] || null;
+    try {
+      await automationHub.trigger("provider_matching_completed", {
+        matchingResultId,
+        providerId: topMatch?.provider_id || null,
+        requestType: criteria.request_type,
+        serviceIntent: criteria.service_type || criteria.request_type || "provider_matching",
+        matchCount: ranked.length,
+        topScore: topMatch?.score ?? null,
+        manualAction: "provider_matching_run"
+      }, {
+        manual: true,
+        initiatedBy: req.session?.username || "staff",
+        source: "provider-matching-engine"
+      });
+    } catch (automationError) {
+      console.warn("[automation] provider_matching_trigger_failed", { error: automationError.message || String(automationError) });
+    }
+
     return res.json({
       ok: true,
       summary: ranked.length
         ? `Found ${ranked.length} provider match(es) for staff review.`
         : "No strong provider matches found. Try broadening the criteria.",
+      matching_result_id: matchingResultId,
+      automation_review: "Provider matching completion was handed to Automation Hub as a manual staff-triggered review artifact.",
       criteria,
       matches: ranked,
       comparison: ranked.slice(0, 3).map(item => ({

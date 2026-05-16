@@ -280,9 +280,10 @@
       if (!panel) return;
       const phase2 = phaseState?.phase2 || {};
       const phase3 = phaseState?.phase3 || {};
-      const automaticCount = (phaseState?.workflowReadiness || []).filter(item => item.automaticTrigger).length;
+      const automaticCount = (phaseState?.workflowReadiness || []).filter(item => item.automaticTrigger && item.trulyLive).length;
+      const scaffoldCount = (phaseState?.workflowReadiness || []).filter(item => item.scaffoldOnly).length;
       panel.innerHTML = `<div class='row'><div><strong>${escapeHtml(phase2.phase || 'Automation Hub Phase 2')}: ${escapeHtml(formatMetadata(phase2.status || 'stable'))}</strong><div class='muted'>${escapeHtml(phase2.summary || 'Validated lifecycle behavior is stable.')}</div></div><span class='pill status-pill closed'>Official closeout ready</span></div>
-        <div class='row' style='margin-top:8px'><div><strong>${escapeHtml(phase3.phase || 'Automation Hub Phase 3')}: ${escapeHtml(formatMetadata(phase3.status || 'scaffolded'))}</strong><div class='muted'>${escapeHtml(phase3.objective || 'Operational automation groundwork is in progress.')}</div></div><span class='pill automation-origin'>${automaticCount} automatic trigger paths prepared</span></div>
+        <div class='row' style='margin-top:8px'><div><strong>${escapeHtml(phase3.phase || 'Automation Hub Phase 3')}: ${escapeHtml(formatMetadata(phase3.status || 'scaffolded'))}</strong><div class='muted'>${escapeHtml(phase3.objective || 'Operational automation groundwork is in progress.')}</div></div><span class='pill automation-origin'>${automaticCount} live automatic trigger paths</span><span class='pill'>${scaffoldCount} scaffold-only paths</span></div>
         <ul class='phase-list'>${(phase3.implementedScope || []).slice(0, 4).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
     }
 
@@ -332,6 +333,7 @@
           <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
           <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill automation-origin ${wf.trigger?.automatic ? '' : 'manual'}'>${escapeHtml(formatAutomationOrigin(wf.automationOrigin, wf.trigger?.automatic))}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span><span class='pill'>Phase ${escapeHtml(wf.phase || 2)}</span></div>
           <div class='muted'>Handoff: ${escapeHtml(formatMetadata(wf.handoffDepth))} • Review: ${escapeHtml(formatMetadata(wf.reviewRequirement))}</div>
+          <div class='muted'>Event source: ${escapeHtml(wf.liveEventSource || wf.trigger?.source || 'Not mapped')} • Hook: ${escapeHtml(formatMetadata(wf.eventHookStatus || 'scaffold_only'))} • Staff surface: ${escapeHtml(wf.staffReviewSurface || 'Review surface')}</div>
           <div class='muted'>Runs: ${escapeHtml(stats.runCount || 0)} • Last run: ${escapeHtml(formatTime(stats.lastRunAt))}</div>
           <div class='muted ${failed ? 'error-text' : ''}'>Last result: ${escapeHtml(stats.lastResult || stats.lastState || 'Never run')}</div>
           ${stats.lastArtifactTitle ? `<div class='status success'>Latest output: ${escapeHtml(stats.lastArtifactTitle)}</div>` : ''}
@@ -432,7 +434,8 @@
           <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
           <span class='pill'>${escapeHtml(lifecycle.closed ? 'Closed / synchronized (non-active)' : 'Active review queue')}</span>
         </div>
-        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • ${escapeHtml(formatAutomationOrigin(artifact.automationOrigin, artifact.automationOrigin === 'automatic_trigger'))} • Run ${escapeHtml(artifact.runId || '')}</div>
+        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • ${escapeHtml(formatAutomationOrigin(artifact.automationOrigin, artifact.automationOrigin === 'automatic_trigger'))} • ${escapeHtml(formatMetadata(artifact.automationExecutionState || 'event recorded'))} • ${escapeHtml(formatMetadata(artifact.staffReviewState || (lifecycle.closed ? 'staff review closed' : 'pending staff review')))} • Run ${escapeHtml(artifact.runId || '')}</div>
+        <div class='muted'>Live source: ${escapeHtml(artifact.liveEventSource || artifact.source || 'Not mapped')} • Staff review surface: ${escapeHtml(artifact.staffReviewSurface || artifact.surface || '')}</div>
         <div class='decision'>${escapeHtml(artifact.decision)}</div>
         ${lifecycle.pendingReview ? `<ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
         ${renderDecisionActions(artifact)}
