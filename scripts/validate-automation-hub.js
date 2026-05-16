@@ -32,9 +32,32 @@ async function main() {
   assert.strictEqual(decision.ok, true);
   assert.strictEqual(decision.artifact.lifecycle.reviewState, 'closed');
   assert.strictEqual(decision.artifact.lifecycle.synchronized, true);
-  assert.strictEqual(hub.listTargetModuleState('Provider Management').length, 1, 'closed decision should synchronize back to target module');
+  const closedProviderState = hub.listTargetModuleState('Provider Management');
+  assert.strictEqual(closedProviderState.length, 1, 'closed decision should synchronize back to target module');
+  assert.strictEqual(closedProviderState[0].artifactId, automaticArtifact.id, 'closed synchronized target row should point to the approved artifact');
   assert.strictEqual(hub.listAuditLog().length, 1, 'decision audit trail should be preserved');
   assert.ok(hub.listNotifications().some((item) => /Automation decision recorded/.test(item.message)), 'decision should create an internal notification');
+
+  const sameTargetRuns = await hub.trigger('document_uploaded', {
+    module: 'providers',
+    providerId: 'provider-1',
+    documentId: 'document-1'
+  }, { source: 'provider-document-upload' });
+  assert.strictEqual(sameTargetRuns.length, 1, 'same target document upload should create a new active review artifact');
+  const sameTargetArtifact = sameTargetRuns[0].artifact;
+  assert.notStrictEqual(sameTargetArtifact.id, automaticArtifact.id, 'same-key active artifact should be a new review item');
+
+  const defaultProviderStateAfterSameKeyActive = hub.listTargetModuleState('Provider Management');
+  assert.strictEqual(defaultProviderStateAfterSameKeyActive.length, 1, 'same-key active review item must not erase the closed synchronized target view');
+  assert.strictEqual(defaultProviderStateAfterSameKeyActive[0].artifactId, automaticArtifact.id, 'default target view should preserve the prior closed synchronized decision');
+  assert.strictEqual(defaultProviderStateAfterSameKeyActive[0].reviewState, 'closed');
+  assert.strictEqual(defaultProviderStateAfterSameKeyActive[0].syncState, 'synchronized');
+
+  const providerStateIncludingActive = hub.listTargetModuleState('Provider Management', 50, { includeActive: true });
+  assert.ok(providerStateIncludingActive.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'closed'), 'include-active diagnostics should retain the closed same-key target record');
+  assert.ok(providerStateIncludingActive.some((item) => item.artifactId === sameTargetArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show the new same-key pending target record');
+  assert.ok(hub.listArtifacts(100, { reviewState: 'pending' }).some((item) => item.id === sameTargetArtifact.id), 'new same-key artifact should remain visible in active review queues');
+  assert.strictEqual(hub.listAuditLog().length, 1, 'creating same-key pending review artifacts should not alter the decision audit trail');
 
   const lifecycle = hub.applyArtifactLifecycleAction(automaticArtifact.id, 'revise_item', { decidedBy: 'qa' });
   assert.strictEqual(lifecycle.ok, true);
