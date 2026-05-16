@@ -8475,7 +8475,11 @@ app.get("/kb", requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "kb.html"));
 });
 
-// ===== KB API: CATEGORIES =====
+// ===== AUTOMATION HUB API =====
+app.get("/api/automation/phase-state", requireAuth, async (req, res) => {
+  return res.json(automationHub.getPhaseState());
+});
+
 app.get("/api/automation/workflows", requireAuth, async (req, res) => {
   return res.json({ workflows: automationHub.listWorkflows() });
 });
@@ -8592,6 +8596,7 @@ app.post("/api/automation/run/:id", requireAuth, async (req, res) => {
   }
 });
 
+// ===== KB API: CATEGORIES =====
 app.get("/api/kb/categories", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -8925,6 +8930,22 @@ app.post("/api/kb/quick-capture", async (req, res) => {
 
     if (error) {
       return res.status(500).json({ error });
+    }
+
+    const quickCaptureRow = Array.isArray(data) ? data[0] : null;
+    if (quickCaptureRow?.id) {
+      try {
+        await automationHub.trigger("new_quick_capture", {
+          captureId: quickCaptureRow.id,
+          sourceType: quickCaptureRow.source_type || source_type || "manual",
+          title: quickCaptureRow.title || title || null,
+          status: quickCaptureRow.status || status || "pending"
+        }, {
+          source: "kb-quick-capture-create"
+        });
+      } catch (automationError) {
+        console.warn("[automation] quick_capture_trigger_failed", { error: automationError.message || String(automationError) });
+      }
     }
 
     return res.json({ ok: true, data });
@@ -10182,6 +10203,22 @@ app.post("/api/kb-capture", async (req, res) => {
 
     if (error) {
       return res.status(500).json({ error });
+    }
+
+    const captureRow = Array.isArray(data) ? data[0] : null;
+    if (captureRow?.id) {
+      try {
+        await automationHub.trigger("new_captured_knowledge", {
+          captureId: captureRow.id,
+          title: captureRow.title || title || null,
+          sourceChannel: captureRow.source_channel || source_channel || "manual",
+          status: captureRow.status || status || "pending"
+        }, {
+          source: "kb-capture-assistant-create"
+        });
+      } catch (automationError) {
+        console.warn("[automation] kb_capture_trigger_failed", { error: automationError.message || String(automationError) });
+      }
     }
 
     return res.json({ ok: true, data });

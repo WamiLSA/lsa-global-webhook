@@ -23,6 +23,10 @@
     .summary-card strong{display:block;font-size:20px}
     .sync-box{border:1px solid var(--lsa-border);border-radius:8px;padding:8px;margin-top:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:12px;line-height:1.45}
     .operational-note{border:1px solid var(--lsa-border);border-radius:10px;padding:10px;background:var(--lsa-surface-muted,#f8fafc);font-size:13px;line-height:1.45;margin:8px 0 12px}
+    .phase-panel{border:1px solid #bfdbfe;border-radius:12px;padding:12px;background:linear-gradient(0deg, rgba(37,99,235,.05), rgba(37,99,235,.05)), var(--lsa-surface);margin:10px 0 14px}
+    .phase-list{margin:8px 0 0 18px;padding:0;font-size:12px;color:var(--lsa-text-muted);line-height:1.45}
+    .automation-origin{font-weight:700;color:#1e40af;background:#dbeafe;border-color:#bfdbfe}
+    .automation-origin.manual{color:#7c2d12;background:#fef3c7;border-color:#fde68a}
     .target-ref-grid{display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:8px}
     .target-ref-cell{border:1px solid rgba(148,163,184,.35);border-radius:8px;padding:7px;background:rgba(255,255,255,.45)}
     .queue-section{margin-top:10px}
@@ -71,15 +75,16 @@
 <body data-page="automation">
   <div id="topNavMount"></div>
   <div class="wrap">
-    <h1>Automation Hub (Phase 2)</h1>
-    <p class="muted">Controlled workflow execution with run history, internal notifications, and actionable review surfaces for LSA GLOBAL Internal OS.</p>
+    <h1>Automation Hub</h1>
+    <p class="muted">Phase 2 is stable. Phase 3 groundwork now separates automatic operational triggers from staff-review decisions across inbox, knowledge, and provider workflows.</p>
     <div id="pageStatus" class="status" hidden></div>
+    <div id="phaseStatePanel" class="phase-panel">Loading Automation Hub phase state…</div>
     <div id="workflowGrid" class="grid"></div>
 
     <div class="section-heading">
       <div>
-        <h2>Phase 2 Result Surfaces</h2>
-        <p class="muted">Active review work, closed decisions, run history, and audit evidence are separated so operators can scan lifecycle state quickly.</p>
+        <h2>Stable Review Surfaces</h2>
+        <p class="muted">Active staff-review work, closed/synchronized decisions, run history, and audit evidence are separated so staff can scan lifecycle state quickly.</p>
       </div>
       <button onclick="load()">Refresh</button>
     </div>
@@ -88,8 +93,8 @@
         <select id="statusFilter" onchange="handleStatusFilterChange()">
           <option value="all">All lifecycle states</option>
           <option value="pending_review">Pending review</option>
-          <option value="edit_requested">Edit requested</option>
-          <option value="rerun_requested">Rerun requested</option>
+          <option value="edit_requested">Staff edit needed</option>
+          <option value="rerun_requested">Automation rerun needed</option>
           <option value="approved">Approved</option>
           <option value="confirmed">Confirmed</option>
           <option value="rejected">Rejected</option>
@@ -111,10 +116,10 @@
         </select>
       </label>
     </div>
-    <div class="operational-note"><strong>Operational separation:</strong> pending review, edit requested, and rerun requested items remain active; dismissed, synchronized, and other closed decisions are completed outcomes retained for verification; run history shows workflow executions; the audit trail shows operator decisions.</div>
+    <div class="operational-note"><strong>Operational separation:</strong> pending review, staff edit needed, and automation rerun needed remain active; dismissed, synchronized, and other closed decisions are completed outcomes retained for verification. Run history shows what happened automatically or manually; the audit trail shows staff decisions.</div>
     <div id="artifactSummary" class="summary-grid"></div>
     <div id="activeQueueSection" class="queue-section">
-      <div class="section-heading"><div><h3>Active review queue</h3><p class="muted">Decision surfaces still requiring operator review, staff edits, or a requested rerun.</p></div></div>
+      <div class="section-heading"><div><h3>Active review queue</h3><p class="muted">Decision surfaces still requiring staff review, staff edits, or an automation rerun.</p></div></div>
       <div id="activeDuplicateNote"></div>
       <div id="activeArtifactGrid" class="grid"></div>
     </div>
@@ -127,7 +132,7 @@
     <p class="muted">Execution log for workflow runs. This is operational history, not the decision audit.</p>
     <div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Trigger</th><th>Mode</th><th>Time</th><th>Result</th><th>Target</th><th>Action</th><th>Error</th></tr></thead><tbody id="historyRows"></tbody></table></div>
     <h2>Decision Audit Trail</h2>
-    <p class="muted">Immutable operator-decision evidence with status transitions and synchronized target references.</p>
+    <p class="muted">Immutable staff-decision evidence with status transitions, lifecycle corrections, and synchronized target references.</p>
     <div class="table-wrap"><table><thead><tr><th>Item / Workflow</th><th>Action</th><th>Status</th><th>Target module</th><th>Destination record</th><th>Operator</th><th>Time</th></tr></thead><tbody id="auditRows"></tbody></table></div>
     <h2>Internal Notifications</h2><div id="notify"></div>
   </div>
@@ -198,8 +203,8 @@
     function formatStatusLabel(value) {
       const labels = {
         pending_review: 'Pending review',
-        edit_requested: 'Edit requested',
-        rerun_requested: 'Rerun requested',
+        edit_requested: 'Staff edit needed',
+        rerun_requested: 'Automation rerun needed',
         approved: 'Approved',
         confirmed: 'Confirmed',
         rejected: 'Rejected',
@@ -252,17 +257,38 @@
 
     function formatSyncState(value) {
       const labels = {
-        awaiting_review: 'Pending operator review',
+        awaiting_review: 'Pending staff review',
         synchronized: 'Synchronized to target module',
-        pending: 'Pending review',
+        pending: 'Pending staff review',
         closed: 'Closed decision'
       };
       return labels[value] || cleanDisplayLabel(value);
     }
 
+    function formatAutomationOrigin(value, automatic) {
+      if (value === 'operator_triggered' || automatic === false) return 'Manual staff trigger';
+      if (value === 'automatic_trigger' || automatic === true) return 'Automatic trigger';
+      return cleanDisplayLabel(value || 'Assisted workflow');
+    }
+
+    function formatMetadata(value) {
+      return cleanDisplayLabel(value || 'Not specified');
+    }
+
+    function renderPhaseState(phaseState) {
+      const panel = document.getElementById('phaseStatePanel');
+      if (!panel) return;
+      const phase2 = phaseState?.phase2 || {};
+      const phase3 = phaseState?.phase3 || {};
+      const automaticCount = (phaseState?.workflowReadiness || []).filter(item => item.automaticTrigger).length;
+      panel.innerHTML = `<div class='row'><div><strong>${escapeHtml(phase2.phase || 'Automation Hub Phase 2')}: ${escapeHtml(formatMetadata(phase2.status || 'stable'))}</strong><div class='muted'>${escapeHtml(phase2.summary || 'Validated lifecycle behavior is stable.')}</div></div><span class='pill status-pill closed'>Official closeout ready</span></div>
+        <div class='row' style='margin-top:8px'><div><strong>${escapeHtml(phase3.phase || 'Automation Hub Phase 3')}: ${escapeHtml(formatMetadata(phase3.status || 'scaffolded'))}</strong><div class='muted'>${escapeHtml(phase3.objective || 'Operational automation groundwork is in progress.')}</div></div><span class='pill automation-origin'>${automaticCount} automatic trigger paths prepared</span></div>
+        <ul class='phase-list'>${(phase3.implementedScope || []).slice(0, 4).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+    }
+
     function renderTechnicalRef(label, raw) {
       if (!raw || String(label || '') === String(raw || '')) return '';
-      return `<span class='technical-ref'>Technical ID: ${escapeHtml(raw)}</span>`;
+      return `<span class='technical-ref'>Internal technical reference: ${escapeHtml(raw)}</span>`;
     }
 
     function getQueueIdentity(artifact) {
@@ -304,7 +330,8 @@
         const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactTitle ? 'Open result' : 'Open result' } : null;
         return `<div class='card'>
           <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
-          <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span></div>
+          <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill automation-origin ${wf.trigger?.automatic ? '' : 'manual'}'>${escapeHtml(formatAutomationOrigin(wf.automationOrigin, wf.trigger?.automatic))}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span><span class='pill'>Phase ${escapeHtml(wf.phase || 2)}</span></div>
+          <div class='muted'>Handoff: ${escapeHtml(formatMetadata(wf.handoffDepth))} • Review: ${escapeHtml(formatMetadata(wf.reviewRequirement))}</div>
           <div class='muted'>Runs: ${escapeHtml(stats.runCount || 0)} • Last run: ${escapeHtml(formatTime(stats.lastRunAt))}</div>
           <div class='muted ${failed ? 'error-text' : ''}'>Last result: ${escapeHtml(stats.lastResult || stats.lastState || 'Never run')}</div>
           ${stats.lastArtifactTitle ? `<div class='status success'>Latest output: ${escapeHtml(stats.lastArtifactTitle)}</div>` : ''}
@@ -348,21 +375,21 @@
     function renderDecisionActions(artifact) {
       const actions = artifact.decisionActions || [];
       const lifecycle = getArtifactLifecycle(artifact);
-      if (!lifecycle.pendingReview) return `<div class='decision-actions'><h3>Closed decision</h3><div class='closed-banner'>No operator action is pending on this card. Latest status: ${escapeHtml(lifecycle.statusLabel)}.</div></div>`;
+      if (!lifecycle.pendingReview) return `<div class='decision-actions'><h3>Closed decision</h3><div class='closed-banner'>No staff action is pending on this card. Latest status: ${escapeHtml(lifecycle.statusLabel)}. This card is retained as evidence, not active queue work.</div></div>`;
       if (!actions.length) return '';
       const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('');
       const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
       return `<div class='decision-actions'>
-        <h3>Operator decision required</h3>
-        <div class='active-banner'>This card is active because it is pending review, needs staff edits, or needs a rerun. Target module${targetModules.includes(',') ? 's' : ''}: ${escapeHtml(targetModules || artifact.module || 'Automation Hub')}.</div>
+        <h3>Staff review required</h3>
+        <div class='active-banner'>This card is active because it is pending staff review, needs staff edits, or needs an automation rerun. Target module${targetModules.includes(',') ? 's' : ''}: ${escapeHtml(targetModules || artifact.module || 'Automation Hub')}.</div>
         <div class='decision-action-list'>${buttons}</div>
       </div>`;
     }
 
     function renderLifecycleActions(artifact) {
       const actions = artifact.lifecycleActions || [];
-      if (!actions.length) return `<div class='muted'>Lifecycle correction: no reopen or revise action is available for this final state.</div>`;
-      return `<div class='lifecycle-actions'><strong>Fix this closed decision</strong><div class='decision-note'>Use only if staff made a correction after closure. The audit trail remains intact.</div><div class='decision-action-list'>${actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordLifecycleAction("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('')}</div></div>`;
+      if (!actions.length) return `<div class='muted'>Lifecycle correction: no reopen or revision action is available for this final state.</div>`;
+      return `<div class='lifecycle-actions'><strong>Lifecycle correction</strong><div class='decision-note'>Use only when staff intentionally reopens or revises a completed decision. The audit trail remains intact.</div><div class='decision-action-list'>${actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordLifecycleAction("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('')}</div></div>`;
     }
 
     function renderTargetSync(artifact) {
@@ -373,13 +400,13 @@
       const synced = state === 'synchronized';
       const targetUrl = sync.targetUrl || target.destinationUrl || artifact.lastDecision?.targetUrl || artifact.destinationUrl;
       return `<div class='sync-box ${synced ? 'synced' : 'pending'}'>
-        <strong>${escapeHtml(sync.syncLabel || (synced ? 'Synchronized to target module' : 'Pending operator review'))}</strong><br/>
+        <strong>${escapeHtml(sync.syncLabel || (synced ? 'Synchronized to target module' : 'Pending staff review'))}</strong><br/>
         ${escapeHtml(sync.syncConfirmation || '')}${sync.syncedAt ? ` • ${escapeHtml(formatTime(sync.syncedAt))}` : ''}
         <div class='target-ref-grid'>
           <div class='target-ref-cell'><span class='target-ref-label'>Destination record (where this decision lands)</span>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || 'Not assigned yet')}${renderTechnicalRef(sync.destinationDisplayLabel || target.destinationDisplayLabel, sync.destinationRecordId || target.destinationRecordId)}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Destination object (record type)</span>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || artifact.surface || '')}</div>
           <div class='target-ref-cell'><span class='target-ref-label'>Panel / location</span>${escapeHtml(sync.destinationPanel || target.destinationPanel || artifact.surface || '')}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Target module (owner)</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(formatSyncState(state))}</div>
+          <div class='target-ref-cell'><span class='target-ref-label'>Target module / sync state</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(formatSyncState(state))}</div>
         </div>
         <div class='decision-note'>${escapeHtml(sync.verificationHint || target.verificationHint || 'Verify the synchronized state in the target module.')}</div>
         ${targetUrl ? `<div style='margin-top:8px'><a class='action-link' href='${escapeHtml(targetUrl)}'>${escapeHtml(sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item')}</a></div>` : ''}
@@ -403,9 +430,9 @@
           <span class='pill'>${escapeHtml(artifact.module)}</span>
           <span class='pill'>${escapeHtml(artifact.surface)}</span>
           <span class='pill'>${escapeHtml((artifact.mode || '').toUpperCase())} mode</span>
-          <span class='pill'>${escapeHtml(lifecycle.closed ? 'Closed / synchronized' : 'Active queue item')}</span>
+          <span class='pill'>${escapeHtml(lifecycle.closed ? 'Closed / synchronized (non-active)' : 'Active review queue')}</span>
         </div>
-        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • Run ${escapeHtml(artifact.runId || '')}</div>
+        <div class='muted'>Created ${escapeHtml(formatTime(artifact.createdAt))} • Updated ${escapeHtml(formatTime(artifact.updatedAt))} • ${escapeHtml(formatAutomationOrigin(artifact.automationOrigin, artifact.automationOrigin === 'automatic_trigger'))} • Run ${escapeHtml(artifact.runId || '')}</div>
         <div class='decision'>${escapeHtml(artifact.decision)}</div>
         ${lifecycle.pendingReview ? `<ul class='checklist'>${(artifact.checklist || []).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
         ${renderDecisionActions(artifact)}
@@ -455,7 +482,7 @@
         <div class='summary-card'><strong>${totalClosed}</strong><span class='muted'>closed decisions</span><div class='view-explainer'>Completed outcomes retained outside the active queue.</div></div>
         <div class='summary-card'><strong>${synchronized}</strong><span class='muted'>target sync confirmed</span><div class='view-explainer'>Closed items reflected back to their destination modules.</div></div>`;
       const duplicateNote = document.getElementById('activeDuplicateNote');
-      if (duplicateNote) duplicateNote.innerHTML = olderActive.length ? `<div class='queue-duplicates-note'><strong>${olderActive.length} older active branch${olderActive.length === 1 ? '' : 'es'} folded.</strong> The queue shows the latest active branch for each destination record so operators do not see duplicate-looking work. Audit history, run history, and closed synchronized cards are unchanged.</div>` : '';
+      if (duplicateNote) duplicateNote.innerHTML = olderActive.length ? `<div class='queue-duplicates-note'><strong>${olderActive.length} older active branch${olderActive.length === 1 ? '' : 'es'} folded.</strong> The queue shows the latest active branch for each destination record so staff do not see duplicate-looking work. Audit history, run history, and closed synchronized cards are unchanged.</div>` : '';
       document.getElementById('activeArtifactGrid').innerHTML = active.map(renderArtifactCard).join('') || `<div class='empty-state'>No active review items match the current filters${statusFilter !== 'all' ? '; active filters exclude completed states automatically' : ''}.</div>`;
       document.getElementById('closedArtifactGrid').innerHTML = closed.map(renderArtifactCard).join('') || `<div class='empty-state'>No closed decisions match the current filters. Use “All closed decisions” to see completed outcomes.</div>`;
     }
@@ -466,9 +493,9 @@
         const target = sync.targetReference || i.decision?.targetReference || {};
         const targetUrl = sync.targetUrl || target.destinationUrl || i.decision?.targetUrl || i.artifact?.destinationUrl;
         return `<tr>
-          <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}</td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
+          <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}<div class='muted'>${escapeHtml(formatAutomationOrigin(i.automationOrigin, i.automationOrigin === 'automatic_trigger'))}</div></td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Technical ID: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
@@ -484,11 +511,11 @@
           <td>${escapeHtml(entry.actionTaken || entry.label || entry.actionId || '')}</td>
           <td>${escapeHtml(entry.statusLabel || entry.nextStatus || '')}</td>
           <td>${escapeHtml(entry.targetModule || '')}<div class='muted'>${escapeHtml(target.destinationPanel || entry.destinationPanel || '')}</div></td>
-          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Technical ID: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'><a href='${escapeHtml(targetUrl)}'>Open target record</a></div>` : ''}</td>
+          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'><a href='${escapeHtml(targetUrl)}'>Open target record</a></div>` : ''}</td>
           <td>${escapeHtml(entry.operator || entry.decidedBy || '')}</td>
           <td>${escapeHtml(formatTime(entry.time || entry.decidedAt))}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan='7' class='muted'>No operator decisions have been recorded yet.</td></tr>`;
+      }).join('') || `<tr><td colspan='7' class='muted'>No staff decisions have been recorded yet.</td></tr>`;
     }
 
     function renderNotifications(notifications) {
@@ -557,13 +584,15 @@
 
     async function load(){
       try {
-        const [w,h,n,a,audit]=await Promise.all([
+        const [phase,w,h,n,a,audit]=await Promise.all([
+          getJson('/api/automation/phase-state'),
           getJson('/api/automation/workflows'),
           getJson('/api/automation/history'),
           getJson('/api/automation/notifications'),
           getJson('/api/automation/artifacts'),
           getJson('/api/automation/audit')
         ]);
+        renderPhaseState(phase);
         renderWorkflows(w.workflows || []);
         renderArtifacts(a.artifacts || []);
         renderHistory(h.history || []);
