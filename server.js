@@ -8503,7 +8503,7 @@ app.get("/api/automation/audit", requireAuth, async (req, res) => {
 });
 
 app.get("/api/automation/module-state", requireAuth, async (req, res) => {
-  return res.json({ moduleState: automationHub.listTargetModuleState(req.query.module || "", Number(req.query.limit || 50)) });
+  return res.json({ moduleState: automationHub.listTargetModuleState(req.query.module || "", Number(req.query.limit || 50), { includeActive: req.query.includeActive === "1" || req.query.includeActive === "true" }) });
 });
 
 app.get("/api/automation/artifacts", requireAuth, async (req, res) => {
