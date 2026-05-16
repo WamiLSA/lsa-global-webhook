@@ -619,6 +619,15 @@
     let editingArticleId = null;
     let editingCaptureId = null;
 
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     function showReviewSection(section) {
       ["quick", "assisted", "articles"].forEach(name => {
         document.getElementById(`section${name.charAt(0).toUpperCase()}${name.slice(1)}`).hidden = name !== section;
@@ -656,6 +665,26 @@
       const data = await res.json();
       articles = Array.isArray(data) ? data : [];
       renderArticles();
+    }
+
+
+    function getKnowledgeAutomationSyncItems(captureId) {
+      const items = Array.isArray(window.__automationModuleSyncItems) ? window.__automationModuleSyncItems : [];
+      return items.filter(item => {
+        const refs = item.refs || {};
+        const target = item.targetReference || {};
+        const destination = String(target.destinationRecordId || item.destinationRecordId || "");
+        return String(refs.captureId || "") === String(captureId) || destination === `kb-capture:${captureId}` || destination === `kb-record:${captureId}`;
+      });
+    }
+
+    function renderKnowledgeAutomationSyncBadges(captureId) {
+      const items = getKnowledgeAutomationSyncItems(captureId);
+      if (!items.length) return "";
+      return `<div class="small" style="margin-top:8px;border-left:4px solid #16a34a;padding-left:8px;">
+        <strong>Automation Hub synchronized decision</strong><br/>
+        ${items.map(item => `${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(item.destinationPanel || item.surface || "Knowledge Base")}${item.targetUrl ? ` • <a href="${escapeHtml(item.targetUrl)}">open synchronized item</a>` : ""}`).join("<br/>")}
+      </div>`;
     }
 
     function renderArticles() {
@@ -957,6 +986,7 @@
           <div class="small">Reference: ${item.source_reference || ""}</div>
           <div class="answer">${item.raw_answer || ""}</div>
           <div class="small">${item.notes || ""}</div>
+          ${renderKnowledgeAutomationSyncBadges(item.id)}
           <div class="actions">
             <button class="kb-secondary-button" onclick="editCapture(${item.id})">Edit</button>
             <button onclick="quickConvertToKB(${item.id})">Send to KB</button>
@@ -1242,6 +1272,11 @@
       await Promise.all([loadCaptures(), loadCategories(), loadArticles()]);
       showReviewSection("articles");
     }
+
+    window.addEventListener("automation-module-sync:loaded", () => {
+      renderCaptures();
+      renderArticles();
+    });
 
     loadCategories();
     loadArticles();

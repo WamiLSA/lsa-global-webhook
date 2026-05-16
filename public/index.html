@@ -826,6 +826,26 @@
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
     }
+
+    function getCurrentThreadAutomationSyncItems() {
+      const items = Array.isArray(window.__automationModuleSyncItems) ? window.__automationModuleSyncItems : [];
+      return items.filter(item => {
+        const refs = item.refs || {};
+        const target = item.targetReference || {};
+        const record = refs.threadId || refs.messageId || target.destinationRecordId || item.destinationRecordId || "";
+        return currentWaId && String(record) === String(currentWaId);
+      });
+    }
+
+    function renderCurrentThreadAutomationSync() {
+      const items = getCurrentThreadAutomationSyncItems();
+      if (!items.length) return "";
+      return `<div class="card" style="margin-bottom:10px;border-left:4px solid #16a34a;">
+        <div class="title">Automation Hub decision for this thread</div>
+        ${items.map(item => `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(item.destinationPanel || item.surface || "Thread Suggestion / Routing Panel")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">open synchronized item</a>` : ""}</div>`).join("")}
+      </div>`;
+    }
+
     function parseMessageDate(value) {
       if (!value) return null;
       const date = new Date(value);
@@ -1286,10 +1306,10 @@
       });
 
       const container = document.getElementById("messages");
-      container.innerHTML = "";
+      container.innerHTML = renderCurrentThreadAutomationSync();
 
       if (!Array.isArray(messages) || messages.length === 0) {
-        container.innerHTML = "<div class='small'>No messages yet.</div>";
+        container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages yet.</div>";
         document.getElementById("labelSelect").value = "";
         currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
         syncThreadHeaderActions();
@@ -1552,6 +1572,10 @@
         setInboxView("active");
       }
     }
+
+    window.addEventListener("automation-module-sync:loaded", () => {
+      if (currentWaId) loadConversation(currentWaId, currentContactName, null, null, currentChannel, currentThreadMeta);
+    });
 
     const initialView = new URLSearchParams(window.location.search).get("view");
     if (initialView === "archived") {
