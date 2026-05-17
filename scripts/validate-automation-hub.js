@@ -116,6 +116,15 @@ async function main() {
   assert.strictEqual(lifecycle.artifact.targetSync.syncState, 'awaiting_review');
   assertExactClickThrough(lifecycle.artifact.targetSync, { targetModule: 'Provider Management', destinationRecordId: 'provider-1', destinationObjectType: 'Provider Management record', destinationPanel: 'Provider review and official provider records', syncState: 'awaiting_review' }, 'lifecycle correction');
   assert.strictEqual(hub.listAuditLog().length, 2, 'lifecycle correction should add audit evidence without removing the original decision');
+  const defaultProviderStateAfterLifecycle = hub.listTargetModuleState('Provider Management');
+  assert.strictEqual(defaultProviderStateAfterLifecycle.length, 1, 'lifecycle correction must not erase the prior closed synchronized target view');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].artifactId, automaticArtifact.id, 'default target view should keep the corrected artifact previous closed decision');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].reviewState, 'closed');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].syncState, 'synchronized');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].actionTaken, 'Approve into provider record', 'default target view should preserve the closed decision action label');
+  const providerStateIncludingLifecycle = hub.listTargetModuleState('Provider Management', 50, { includeActive: true });
+  assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'closed' && item.syncState === 'synchronized'), 'include-active diagnostics should retain same-artifact closed lifecycle evidence');
+  assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show same-artifact lifecycle correction as active review evidence');
 
   const eventMatrix = [
     {
