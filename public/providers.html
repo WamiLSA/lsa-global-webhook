@@ -378,7 +378,7 @@
         <div class="title">Automation-applied decisions</div>
         ${items.map(item => {
           const target = item.targetReference || {};
-          return `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(target.destinationPanel || item.destinationPanel || item.surface || "Provider Management")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">open synchronized item</a>` : ""}</div>`;
+          return `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(target.destinationPanel || item.destinationPanel || item.surface || "Provider Management")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">${escapeHtml(item.openTargetLabel || target.openTargetLabel || item.openTargetPayload?.openTargetLabel || "Open automation target")}</a>` : ""}</div>`;
         }).join("")}
       </div>`;
     }

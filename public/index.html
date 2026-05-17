@@ -842,7 +842,7 @@
       if (!items.length) return "";
       return `<div class="card" style="margin-bottom:10px;border-left:4px solid #16a34a;">
         <div class="title">Automation Hub decision for this thread</div>
-        ${items.map(item => `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(item.destinationPanel || item.surface || "Thread Suggestion / Routing Panel")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">open synchronized item</a>` : ""}</div>`).join("")}
+        ${items.map(item => `<div class="small">${escapeHtml(item.statusLabel || item.status || "Synchronized")} • ${escapeHtml(item.actionTaken || item.lastActionLabel || "Automation Hub decision")} • ${escapeHtml(item.destinationPanel || item.surface || "Thread Suggestion / Routing Panel")} ${item.targetUrl ? `• <a href="${escapeHtml(item.targetUrl)}">${escapeHtml(item.openTargetLabel || item.targetReference?.openTargetLabel || item.openTargetPayload?.openTargetLabel || "Open automation target")}</a>` : ""}</div>`).join("")}
       </div>`;
     }
 

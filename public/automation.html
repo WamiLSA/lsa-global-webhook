@@ -391,7 +391,7 @@
 
     function renderAction(artifact, compact = false) {
       if (!artifact) return compact ? '' : '<span class="muted">No review surface</span>';
-      const label = escapeHtml(artifact.actionLabel || 'Open review surface');
+      const label = escapeHtml(artifact.actionLabel || artifact.targetSync?.openTargetLabel || artifact.openTargetPayload?.openTargetLabel || 'Open automation item');
       const payload = artifact.targetSync?.openTargetPayload || artifact.openTargetPayload || {};
       return `<button class="primary-action" data-target-payload='${encodeJsonForAttribute(payload)}' onclick='openArtifact("${escapeHtml(artifact.id)}", this)'>${label}</button>`;
     }
@@ -401,7 +401,7 @@
       grid.innerHTML = workflows.map((wf) => {
         const stats = wf.stats || {};
         const failed = stats.lastState === 'failed';
-        const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactTitle ? 'Open review surface' : 'Open review surface' } : null;
+        const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactActionLabel, targetSync: stats.lastArtifactTargetSync, openTargetPayload: stats.lastArtifactOpenTargetPayload } : null;
         return `<div class='card'>
           <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
           <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill automation-origin ${wf.trigger?.automatic ? '' : 'manual'}'>${escapeHtml(formatAutomationOrigin(wf.automationOrigin, wf.trigger?.automatic))}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span><span class='pill'>Phase ${escapeHtml(wf.phase || 2)}</span></div>
@@ -485,7 +485,7 @@
           </div>
         </div>
         <div class='decision-note'>${escapeHtml(sync.verificationHint || target.verificationHint || 'Verify the synchronized state in the target module.')}</div>
-        ${targetUrl ? `<div class='button-row'>${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item', sync.openTargetPayload || {})}</div>` : ''}
+        ${targetUrl ? `<div class='button-row'>${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || sync.openTargetPayload?.openTargetLabel || 'Open automation target', sync.openTargetPayload || {})}</div>` : ''}
       </div>`;
     }
 
@@ -567,7 +567,7 @@
         return `<tr>
           <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}<div class='muted'>${escapeHtml(formatAutomationOrigin(i.automationOrigin, i.automationOrigin === 'automatic_trigger'))}</div></td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • ${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open target record', sync.openTargetPayload || {})}` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • ${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || sync.openTargetPayload?.openTargetLabel || 'Open automation target', sync.openTargetPayload || {})}` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
@@ -583,7 +583,7 @@
           <td>${escapeHtml(entry.actionTaken || entry.label || entry.actionId || '')}</td>
           <td>${escapeHtml(entry.statusLabel || entry.nextStatus || '')}</td>
           <td>${escapeHtml(entry.targetModule || '')}<div class='muted'>${escapeHtml(target.destinationPanel || entry.destinationPanel || '')}</div></td>
-          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'>${renderTargetLink(targetUrl, 'Open target record', entry.targetSync?.openTargetPayload || {})}</div>` : ''}</td>
+          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'>${renderTargetLink(targetUrl, entry.targetSync?.openTargetLabel || target.openTargetLabel || entry.targetSync?.openTargetPayload?.openTargetLabel || 'Open automation target', entry.targetSync?.openTargetPayload || {})}</div>` : ''}</td>
           <td>${escapeHtml(entry.operator || entry.decidedBy || '')}</td>
           <td>${escapeHtml(formatTime(entry.time || entry.decidedAt))}</td>
         </tr>`;
@@ -604,9 +604,9 @@
       document.getElementById('notify').innerHTML = (notifications || []).map((x) => {
         const notificationType = x.details?.notificationType || x.notificationType || 'automation_notice';
         const targetSync = x.details?.targetSync || {};
-        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open review surface', targetSync, openTargetPayload: x.details?.openTargetPayload } : null;
+        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || targetSync.openTargetLabel || x.details?.openTargetPayload?.openTargetLabel || 'Open automation item', targetSync, openTargetPayload: x.details?.openTargetPayload } : null;
         const targetUrl = targetSync.targetUrl || x.details?.destinationUrl;
-        const targetAction = buildTargetOpenAction(targetSync, targetUrl, targetSync.openTargetLabel || 'Open target module');
+        const targetAction = buildTargetOpenAction(targetSync, targetUrl, targetSync.openTargetLabel || x.details?.openTargetPayload?.openTargetLabel || 'Open automation target');
         const repeat = Number(x.repeatCount || 1);
         const actions = targetAction ? [targetAction] : (artifact ? [{ kind: 'artifact', artifact, compact: true, precision: 1 }] : []);
         return `<div class='card notification-card ${escapeHtml(notificationType)}'>
