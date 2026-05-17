@@ -55,6 +55,10 @@
     .decision-actions h3{font-size:13px;margin:0 0 6px}
     .decision-action-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     .decision-note{font-size:12px;color:var(--lsa-text-muted);line-height:1.35;margin-top:6px}
+    .notification-card{border-left:4px solid #64748b}
+    .notification-card.decision_recorded{border-left-color:#16a34a}
+    .notification-card.automation_completed{border-left-color:#2563eb}
+    .notification-card.lifecycle_updated{border-left-color:#f59e0b}
     .secondary-action{background:var(--lsa-surface-muted,#f8fafc)}
     .artifact-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
     .decision{font-size:13px;line-height:1.4;margin:8px 0}
@@ -317,10 +321,26 @@
       return '';
     }
 
+    function encodeJsonForAttribute(value) {
+      return escapeHtml(JSON.stringify(value || {}));
+    }
+
+    function renderTargetLink(targetUrl, label, payload = {}, className = 'action-link') {
+      if (!targetUrl) return '';
+      return `<a class='${escapeHtml(className)}' href='${escapeHtml(targetUrl)}' data-target-payload='${encodeJsonForAttribute(payload)}' onclick='rememberTargetPayload(event)'>${escapeHtml(label || payload.openTargetLabel || 'Open target module')}</a>`;
+    }
+
+    function rememberTargetPayload(event) {
+      const raw = event.currentTarget?.getAttribute('data-target-payload');
+      if (!raw) return;
+      try { window.sessionStorage.setItem('lsaAutomationOpenTargetPayload', raw); } catch (error) {}
+    }
+
     function renderAction(artifact, compact = false) {
       if (!artifact) return compact ? '' : '<span class="muted">No result surface</span>';
       const label = escapeHtml(artifact.actionLabel || 'Open result');
-      return `<button class="primary-action" onclick='openArtifact("${escapeHtml(artifact.id)}")'>${label}</button>`;
+      const payload = artifact.targetSync?.openTargetPayload || artifact.openTargetPayload || {};
+      return `<button class="primary-action" data-target-payload='${encodeJsonForAttribute(payload)}' onclick='openArtifact("${escapeHtml(artifact.id)}", this)'>${label}</button>`;
     }
 
     function renderWorkflows(workflows) {
@@ -411,7 +431,7 @@
           <div class='target-ref-cell'><span class='target-ref-label'>Target module / sync state</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(formatSyncState(state))}</div>
         </div>
         <div class='decision-note'>${escapeHtml(sync.verificationHint || target.verificationHint || 'Verify the synchronized state in the target module.')}</div>
-        ${targetUrl ? `<div style='margin-top:8px'><a class='action-link' href='${escapeHtml(targetUrl)}'>${escapeHtml(sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item')}</a></div>` : ''}
+        ${targetUrl ? `<div style='margin-top:8px'>${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item', sync.openTargetPayload || {})}</div>` : ''}
       </div>`;
     }
 
@@ -444,8 +464,8 @@
         ${lifecycle.closed ? renderLifecycleActions(artifact) : ''}
         <div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>
           ${renderAction(artifact)}
-          <a class='action-link' href='${escapeHtml(artifact.destinationUrl || '/automation')}'>Open target module</a>
-          ${(artifact.targetSync?.targetUrl || artifact.lastDecision?.targetUrl) ? `<a class='action-link' href='${escapeHtml(artifact.targetSync?.targetUrl || artifact.lastDecision.targetUrl)}'>${escapeHtml(artifact.targetSync?.openTargetLabel || artifact.targetSync?.targetReference?.openTargetLabel || 'Open decision target')}</a>` : ''}
+          ${renderTargetLink(artifact.destinationUrl || '/automation', 'Open target module', artifact.targetSync?.openTargetPayload || {})}
+          ${(artifact.targetSync?.targetUrl || artifact.lastDecision?.targetUrl) ? renderTargetLink(artifact.targetSync?.targetUrl || artifact.lastDecision.targetUrl, artifact.targetSync?.openTargetLabel || artifact.targetSync?.targetReference?.openTargetLabel || 'Open decision target', artifact.targetSync?.openTargetPayload || artifact.lastDecision?.targetSync?.openTargetPayload || {}) : ''}
         </div>
       </div>`;
     }
@@ -498,7 +518,7 @@
         return `<tr>
           <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}<div class='muted'>${escapeHtml(formatAutomationOrigin(i.automationOrigin, i.automationOrigin === 'automatic_trigger'))}</div></td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • <a href='${escapeHtml(targetUrl)}'>open</a>` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • ${renderTargetLink(targetUrl, 'open', sync.openTargetPayload || {})}` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
@@ -514,20 +534,35 @@
           <td>${escapeHtml(entry.actionTaken || entry.label || entry.actionId || '')}</td>
           <td>${escapeHtml(entry.statusLabel || entry.nextStatus || '')}</td>
           <td>${escapeHtml(entry.targetModule || '')}<div class='muted'>${escapeHtml(target.destinationPanel || entry.destinationPanel || '')}</div></td>
-          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'><a href='${escapeHtml(targetUrl)}'>Open target record</a></div>` : ''}</td>
+          <td>${escapeHtml(entry.destinationDisplayLabel || entry.targetSync?.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(record))}${record ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(record)}</span>` : ''}${targetUrl ? `<div class='muted'>${renderTargetLink(targetUrl, 'Open target record', entry.targetSync?.openTargetPayload || {})}</div>` : ''}</td>
           <td>${escapeHtml(entry.operator || entry.decidedBy || '')}</td>
           <td>${escapeHtml(formatTime(entry.time || entry.decidedAt))}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='7' class='muted'>No staff decisions have been recorded yet.</td></tr>`;
     }
 
+    function renderNotificationType(value) {
+      const labels = {
+        automation_completed: 'Automation completed',
+        automation_failed: 'Automation failed',
+        decision_recorded: 'Decision recorded',
+        lifecycle_updated: 'Lifecycle updated'
+      };
+      return labels[value] || cleanDisplayLabel(value || 'Notification');
+    }
+
     function renderNotifications(notifications) {
       document.getElementById('notify').innerHTML = (notifications || []).map((x) => {
-        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open result' } : null;
-        return `<div class='card'>
-          ${escapeHtml(x.message)}
-          <div class='muted'>${escapeHtml(formatTime(x.createdAt))}${x.details?.surface ? ` • ${escapeHtml(x.details.surface)}` : ''}</div>
-          ${artifact ? `<div style='margin-top:8px'>${renderAction(artifact)}</div>` : ''}
+        const notificationType = x.details?.notificationType || x.notificationType || 'automation_notice';
+        const targetSync = x.details?.targetSync || {};
+        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open result', targetSync, openTargetPayload: x.details?.openTargetPayload } : null;
+        const targetUrl = targetSync.targetUrl || x.details?.destinationUrl;
+        const repeat = Number(x.repeatCount || 1);
+        return `<div class='card notification-card ${escapeHtml(notificationType)}'>
+          <div class='row'><strong>${escapeHtml(renderNotificationType(notificationType))}</strong>${repeat > 1 ? `<span class='pill'>Grouped ${repeat} similar notices</span>` : ''}</div>
+          <div>${escapeHtml(x.message)}</div>
+          <div class='muted'>Latest: ${escapeHtml(formatTime(x.createdAt))}${x.details?.surface ? ` • ${escapeHtml(x.details.surface)}` : ''}${targetSync.destinationDisplayLabel ? ` • Target: ${escapeHtml(targetSync.destinationDisplayLabel)}` : ''}</div>
+          <div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap'>${artifact ? renderAction(artifact) : ''}${targetUrl ? renderTargetLink(targetUrl, targetSync.openTargetLabel || 'Open target module', targetSync.openTargetPayload || x.details?.openTargetPayload || {}) : ''}</div>
         </div>`;
       }).join('') || `<div class='muted'>No internal notifications yet.</div>`;
     }
@@ -569,7 +604,11 @@
       }
     }
 
-    async function openArtifact(id) {
+    async function openArtifact(id, buttonEl = null) {
+      if (buttonEl) {
+        const raw = buttonEl.getAttribute('data-target-payload');
+        if (raw) { try { window.sessionStorage.setItem('lsaAutomationOpenTargetPayload', raw); } catch (error) {} }
+      }
       const el = document.getElementById(`artifact-${id}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
