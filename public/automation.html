@@ -11,7 +11,13 @@
     .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
     .card { background:var(--lsa-surface); border:1px solid var(--lsa-border); border-radius:10px; padding:12px; }
     .surface-card { border-left:4px solid #2563eb; }
-    .surface-card.closed-card { border-left-color:#16a34a; opacity:.88; background:linear-gradient(0deg, rgba(22,163,74,.04), rgba(22,163,74,.04)), var(--lsa-surface); }
+    .surface-card.closed-card { border-left-color:#16a34a; opacity:.94; background:linear-gradient(0deg, rgba(22,163,74,.035), rgba(22,163,74,.035)), var(--lsa-surface); }
+    .closed-card .decision{font-size:12px;margin:6px 0;color:var(--lsa-text-muted)}
+    .closed-card .artifact-meta{margin:6px 0}
+    .closed-card .sync-box{margin-top:8px}
+    .closed-summary{border:1px solid #bbf7d0;background:#f0fdf4;color:#14532d;border-radius:10px;padding:9px;margin:8px 0;font-size:12px;line-height:1.4}
+    .target-hierarchy{display:grid;gap:8px;margin-top:8px}
+    .target-hierarchy-primary{border:1px solid rgba(22,163,74,.35);border-radius:9px;padding:8px;background:rgba(240,253,244,.72)}
     .surface-card.active-branch-card { border-left-color:#f59e0b; }
     .queue-duplicates-note{border:1px solid #fde68a;background:#fffbeb;color:#92400e;border-radius:10px;padding:10px;margin:8px 0 12px;font-size:13px;line-height:1.45}
     .closed-banner{border:1px solid #bbf7d0;background:#f0fdf4;color:#14532d;border-radius:8px;padding:8px;margin:8px 0;font-size:12px;line-height:1.35}
@@ -36,7 +42,7 @@
     .technical-ref{display:block;font-size:10px;opacity:.68;margin-top:2px;word-break:break-all}
     .sync-box.synced{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
     .sync-box.pending{border-color:#bfdbfe;background:#eff6ff;color:#1e3a8a}
-    .lifecycle-actions{border-top:1px dashed var(--lsa-border);margin-top:10px;padding-top:10px}
+    .lifecycle-actions{border-top:1px dashed var(--lsa-border);margin-top:12px;padding-top:10px;background:var(--lsa-surface-muted,#f8fafc);border-radius:8px;padding-left:8px;padding-right:8px;padding-bottom:8px}
     .empty-state{border:1px dashed var(--lsa-border);border-radius:10px;padding:16px;color:var(--lsa-text-muted);background:var(--lsa-surface)}
     .muted{color:var(--lsa-text-muted);font-size:12px}
     .status{font-size:12px;margin-top:8px;padding:8px;border-radius:8px;background:var(--lsa-surface-muted,#f1f5f9)}
@@ -55,10 +61,12 @@
     .decision-actions h3{font-size:13px;margin:0 0 6px}
     .decision-action-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     .decision-note{font-size:12px;color:var(--lsa-text-muted);line-height:1.35;margin-top:6px}
-    .notification-card{border-left:4px solid #64748b}
-    .notification-card.decision_recorded{border-left-color:#16a34a}
-    .notification-card.automation_completed{border-left-color:#2563eb}
-    .notification-card.lifecycle_updated{border-left-color:#f59e0b}
+    .notification-card{border-left:5px solid #64748b;margin-bottom:8px}
+    .notification-card.decision_recorded{border-left-color:#16a34a;background:linear-gradient(0deg, rgba(22,163,74,.04), rgba(22,163,74,.04)), var(--lsa-surface)}
+    .notification-card.automation_completed{border-left-color:#2563eb;background:linear-gradient(0deg, rgba(37,99,235,.04), rgba(37,99,235,.04)), var(--lsa-surface)}
+    .notification-card.lifecycle_updated{border-left-color:#f59e0b;background:linear-gradient(0deg, rgba(245,158,11,.06), rgba(245,158,11,.06)), var(--lsa-surface)}
+    .notification-type-pill{font-weight:700;text-transform:uppercase;letter-spacing:.035em;font-size:11px}
+    .button-row{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
     .secondary-action{background:var(--lsa-surface-muted,#f8fafc)}
     .artifact-meta{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
     .decision{font-size:13px;line-height:1.4;margin:8px 0}
@@ -330,6 +338,51 @@
       return `<a class='${escapeHtml(className)}' href='${escapeHtml(targetUrl)}' data-target-payload='${encodeJsonForAttribute(payload)}' onclick='rememberTargetPayload(event)'>${escapeHtml(label || payload.openTargetLabel || 'Open target module')}</a>`;
     }
 
+    function getTargetActionKey(action = {}) {
+      const payload = action.payload || {};
+      return [
+        action.kind || 'link',
+        action.href || '',
+        payload.targetModule || '',
+        payload.destinationRecordId || '',
+        payload.destinationObjectType || '',
+        payload.panelLocation || '',
+        payload.syncState || ''
+      ].join('|');
+    }
+
+    function preferTargetAction(current = {}, candidate = {}) {
+      const currentScore = Number(current.precision || 0) + (current.primary ? 10 : 0);
+      const candidateScore = Number(candidate.precision || 0) + (candidate.primary ? 10 : 0);
+      return candidateScore >= currentScore ? candidate : current;
+    }
+
+    function renderActionButtons(actions = []) {
+      const deduped = new Map();
+      for (const action of actions.filter(Boolean)) {
+        const key = getTargetActionKey(action);
+        deduped.set(key, deduped.has(key) ? preferTargetAction(deduped.get(key), action) : action);
+      }
+      return [...deduped.values()].map((action) => {
+        if (action.kind === 'artifact') return renderAction(action.artifact, action.compact);
+        return renderTargetLink(action.href, action.label, action.payload || {}, action.className || 'action-link');
+      }).join('');
+    }
+
+    function buildTargetOpenAction(sync = {}, fallbackUrl = '', fallbackLabel = '') {
+      const target = sync.targetReference || {};
+      const href = sync.targetUrl || target.destinationUrl || fallbackUrl;
+      if (!href) return null;
+      return {
+        kind: 'target',
+        href,
+        label: sync.openTargetLabel || target.openTargetLabel || fallbackLabel || 'Open target module',
+        payload: sync.openTargetPayload || {},
+        precision: 5,
+        primary: true
+      };
+    }
+
     function rememberTargetPayload(event) {
       const raw = event.currentTarget?.getAttribute('data-target-payload');
       if (!raw) return;
@@ -337,8 +390,8 @@
     }
 
     function renderAction(artifact, compact = false) {
-      if (!artifact) return compact ? '' : '<span class="muted">No result surface</span>';
-      const label = escapeHtml(artifact.actionLabel || 'Open result');
+      if (!artifact) return compact ? '' : '<span class="muted">No review surface</span>';
+      const label = escapeHtml(artifact.actionLabel || 'Open review surface');
       const payload = artifact.targetSync?.openTargetPayload || artifact.openTargetPayload || {};
       return `<button class="primary-action" data-target-payload='${encodeJsonForAttribute(payload)}' onclick='openArtifact("${escapeHtml(artifact.id)}", this)'>${label}</button>`;
     }
@@ -348,7 +401,7 @@
       grid.innerHTML = workflows.map((wf) => {
         const stats = wf.stats || {};
         const failed = stats.lastState === 'failed';
-        const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactTitle ? 'Open result' : 'Open result' } : null;
+        const lastArtifact = stats.lastArtifactId ? { id: stats.lastArtifactId, actionLabel: stats.lastArtifactTitle ? 'Open review surface' : 'Open review surface' } : null;
         return `<div class='card'>
           <div class='row'><strong>${escapeHtml(wf.name)}</strong><label><input type='checkbox' ${wf.active ? 'checked' : ''} onchange='setState("${escapeHtml(wf.id)}",this.checked)'/> Active</label></div>
           <div><span class='pill'>Trigger: ${escapeHtml(wf.trigger?.type || 'unknown')}</span><span class='pill automation-origin ${wf.trigger?.automatic ? '' : 'manual'}'>${escapeHtml(formatAutomationOrigin(wf.automationOrigin, wf.trigger?.automatic))}</span><span class='pill'>Mode: ${escapeHtml(wf.executionMode || 'manual')}</span><span class='pill'>Phase ${escapeHtml(wf.phase || 2)}</span></div>
@@ -397,7 +450,7 @@
     function renderDecisionActions(artifact) {
       const actions = artifact.decisionActions || [];
       const lifecycle = getArtifactLifecycle(artifact);
-      if (!lifecycle.pendingReview) return `<div class='decision-actions'><h3>Closed decision</h3><div class='closed-banner'>No staff action is pending on this card. Latest status: ${escapeHtml(lifecycle.statusLabel)}. This card is retained as evidence, not active queue work.</div></div>`;
+      if (!lifecycle.pendingReview) return `<div class='closed-summary'><strong>Closed decision summary</strong><br/>No staff action is pending. Latest status: ${escapeHtml(lifecycle.statusLabel)}. This card is retained as synchronized evidence, not active queue work.</div>`;
       if (!actions.length) return '';
       const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('');
       const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
@@ -424,14 +477,15 @@
       return `<div class='sync-box ${synced ? 'synced' : 'pending'}'>
         <strong>${escapeHtml(sync.syncLabel || (synced ? 'Synchronized to target module' : 'Pending staff review'))}</strong><br/>
         ${escapeHtml(sync.syncConfirmation || '')}${sync.syncedAt ? ` • ${escapeHtml(formatTime(sync.syncedAt))}` : ''}
-        <div class='target-ref-grid'>
-          <div class='target-ref-cell'><span class='target-ref-label'>Destination record (where this decision lands)</span>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || 'Not assigned yet')}${renderTechnicalRef(sync.destinationDisplayLabel || target.destinationDisplayLabel, sync.destinationRecordId || target.destinationRecordId)}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Destination object (record type)</span>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || artifact.surface || '')}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Panel / location</span>${escapeHtml(sync.destinationPanel || target.destinationPanel || artifact.surface || '')}</div>
-          <div class='target-ref-cell'><span class='target-ref-label'>Target module / sync state</span>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')} • ${escapeHtml(formatSyncState(state))}</div>
+        <div class='target-hierarchy'>
+          <div class='target-hierarchy-primary'><span class='target-ref-label'>Synchronized target module</span><strong>${escapeHtml(sync.targetModule || artifact.lastDecision?.targetModule || artifact.module || '')}</strong> • ${escapeHtml(formatSyncState(state))}</div>
+          <div class='target-ref-grid'>
+            <div class='target-ref-cell'><span class='target-ref-label'>Destination record / object</span>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || 'Not assigned yet')}${renderTechnicalRef(sync.destinationDisplayLabel || target.destinationDisplayLabel, sync.destinationRecordId || target.destinationRecordId)}<div class='muted'>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || artifact.surface || '')}</div></div>
+            <div class='target-ref-cell'><span class='target-ref-label'>Panel / location</span>${escapeHtml(sync.destinationPanel || target.destinationPanel || artifact.surface || '')}</div>
+          </div>
         </div>
         <div class='decision-note'>${escapeHtml(sync.verificationHint || target.verificationHint || 'Verify the synchronized state in the target module.')}</div>
-        ${targetUrl ? `<div style='margin-top:8px'>${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item', sync.openTargetPayload || {})}</div>` : ''}
+        ${targetUrl ? `<div class='button-row'>${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open synchronized item', sync.openTargetPayload || {})}</div>` : ''}
       </div>`;
     }
 
@@ -462,11 +516,6 @@
         ${renderDecisionHistory(artifact)}
         ${renderTargetSync(artifact)}
         ${lifecycle.closed ? renderLifecycleActions(artifact) : ''}
-        <div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>
-          ${renderAction(artifact)}
-          ${renderTargetLink(artifact.destinationUrl || '/automation', 'Open target module', artifact.targetSync?.openTargetPayload || {})}
-          ${(artifact.targetSync?.targetUrl || artifact.lastDecision?.targetUrl) ? renderTargetLink(artifact.targetSync?.targetUrl || artifact.lastDecision.targetUrl, artifact.targetSync?.openTargetLabel || artifact.targetSync?.targetReference?.openTargetLabel || 'Open decision target', artifact.targetSync?.openTargetPayload || artifact.lastDecision?.targetSync?.openTargetPayload || {}) : ''}
-        </div>
       </div>`;
     }
 
@@ -518,7 +567,7 @@
         return `<tr>
           <td>${escapeHtml(i.workflowName)}</td><td>${escapeHtml(i.triggerType)}<div class='muted'>${escapeHtml(formatAutomationOrigin(i.automationOrigin, i.automationOrigin === 'automatic_trigger'))}</div></td><td>${escapeHtml(i.executionMode || '')}</td><td>${escapeHtml(formatTime(i.startedAt))}</td>
           <td class='${i.success ? 'success-text' : 'error-text'}'>${escapeHtml(i.result || (i.success ? 'Success' : 'Failed'))}</td>
-          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • ${renderTargetLink(targetUrl, 'open', sync.openTargetPayload || {})}` : ''}</div></td>
+          <td>${escapeHtml(sync.destinationObjectName || target.destinationObjectName || '')}<div class='muted'>${escapeHtml(sync.destinationDisplayLabel || target.destinationDisplayLabel || cleanDisplayLabel(sync.destinationRecordId || target.destinationRecordId) || '')}${(sync.destinationRecordId || target.destinationRecordId) ? `<span class='technical-ref'>Internal technical reference: ${escapeHtml(sync.destinationRecordId || target.destinationRecordId)}</span>` : ''}${targetUrl ? ` • ${renderTargetLink(targetUrl, sync.openTargetLabel || target.openTargetLabel || 'Open target record', sync.openTargetPayload || {})}` : ''}</div></td>
           <td>${renderAction(i.artifact, true)}</td><td>${escapeHtml(i.error || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan='8' class='muted'>No runs recorded yet.</td></tr>`;
@@ -555,14 +604,16 @@
       document.getElementById('notify').innerHTML = (notifications || []).map((x) => {
         const notificationType = x.details?.notificationType || x.notificationType || 'automation_notice';
         const targetSync = x.details?.targetSync || {};
-        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open result', targetSync, openTargetPayload: x.details?.openTargetPayload } : null;
+        const artifact = x.details?.artifactId ? { id: x.details.artifactId, actionLabel: x.details.actionLabel || 'Open review surface', targetSync, openTargetPayload: x.details?.openTargetPayload } : null;
         const targetUrl = targetSync.targetUrl || x.details?.destinationUrl;
+        const targetAction = buildTargetOpenAction(targetSync, targetUrl, targetSync.openTargetLabel || 'Open target module');
         const repeat = Number(x.repeatCount || 1);
+        const actions = targetAction ? [targetAction] : (artifact ? [{ kind: 'artifact', artifact, compact: true, precision: 1 }] : []);
         return `<div class='card notification-card ${escapeHtml(notificationType)}'>
-          <div class='row'><strong>${escapeHtml(renderNotificationType(notificationType))}</strong>${repeat > 1 ? `<span class='pill'>Grouped ${repeat} similar notices</span>` : ''}</div>
-          <div>${escapeHtml(x.message)}</div>
-          <div class='muted'>Latest: ${escapeHtml(formatTime(x.createdAt))}${x.details?.surface ? ` • ${escapeHtml(x.details.surface)}` : ''}${targetSync.destinationDisplayLabel ? ` • Target: ${escapeHtml(targetSync.destinationDisplayLabel)}` : ''}</div>
-          <div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap'>${artifact ? renderAction(artifact) : ''}${targetUrl ? renderTargetLink(targetUrl, targetSync.openTargetLabel || 'Open target module', targetSync.openTargetPayload || x.details?.openTargetPayload || {}) : ''}</div>
+          <div class='row'><span class='pill notification-type-pill'>${escapeHtml(renderNotificationType(notificationType))}</span>${repeat > 1 ? `<span class='pill'>Grouped ${repeat} similar notices</span>` : ''}</div>
+          <div><strong>${escapeHtml(x.message)}</strong></div>
+          <div class='muted'>Latest first: ${escapeHtml(formatTime(x.createdAt))}${x.details?.surface ? ` • Surface: ${escapeHtml(x.details.surface)}` : ''}${targetSync.destinationDisplayLabel ? ` • Target: ${escapeHtml(targetSync.destinationDisplayLabel)}` : ''}</div>
+          ${actions.length ? `<div class='button-row'>${renderActionButtons(actions)}</div>` : ''}
         </div>`;
       }).join('') || `<div class='muted'>No internal notifications yet.</div>`;
     }
