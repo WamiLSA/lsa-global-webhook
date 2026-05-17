@@ -21,7 +21,19 @@ function assertStableTargetPayload(sync, label) {
   assert.strictEqual(payload.destinationObjectType, sync.destinationObjectType, `${label} payload object type should match target sync`);
   assert.strictEqual(payload.panelLocation, sync.destinationPanel, `${label} payload panel/location should match target sync`);
   assert.strictEqual(payload.syncState, sync.syncState, `${label} payload sync state should match target sync`);
+  assert.strictEqual(payload.reviewState, sync.reviewState, `${label} payload review state should match target sync`);
+  assert.strictEqual(payload.destinationUrl, sync.targetUrl, `${label} payload destination URL should match the click-through URL`);
   assert.ok(sync.targetUrl || payload.destinationUrl, `${label} should include a destination URL`);
+}
+
+function assertExactClickThrough(sync, expected, label) {
+  assertStableTargetPayload(sync, label);
+  assert.strictEqual(sync.targetModule, expected.targetModule, `${label} should open the exact target module`);
+  assert.strictEqual(sync.destinationRecordId, expected.destinationRecordId, `${label} should open the exact destination record id`);
+  assert.strictEqual(sync.destinationObjectType, expected.destinationObjectType, `${label} should open the exact object type`);
+  assert.strictEqual(sync.destinationPanel, expected.destinationPanel, `${label} should open the exact panel/location`);
+  assert.strictEqual(sync.syncState, expected.syncState, `${label} should preserve the exact sync state`);
+  assert.strictEqual(sync.openTargetPayload.openTargetLabel, sync.openTargetLabel, `${label} visible action label should match target sync metadata`);
 }
 
 function assertLiveArtifact(artifact, expected) {
@@ -33,7 +45,7 @@ function assertLiveArtifact(artifact, expected) {
   assert.strictEqual(artifact.handoffDepth, expected.handoffDepth, `${expected.triggerType} should preserve handoff intent`);
   assert.strictEqual(artifact.staffReviewState, 'pending_staff_review', `${expected.triggerType} should require staff review`);
   assert.strictEqual(artifact.targetSync.syncState, 'awaiting_review', `${expected.triggerType} should wait for staff review before sync`);
-  assertStableTargetPayload(artifact.targetSync, expected.triggerType);
+  assertExactClickThrough(artifact.targetSync, expected.clickTarget, expected.triggerType);
 }
 
 async function main() {
@@ -53,7 +65,7 @@ async function main() {
   const automaticArtifact = hub.listArtifacts()[0];
   assert.strictEqual(automaticArtifact.reviewState, 'pending');
   assert.strictEqual(automaticArtifact.targetSync.syncState, 'awaiting_review');
-  assertStableTargetPayload(automaticArtifact.targetSync, 'provider document upload artifact');
+  assertExactClickThrough(automaticArtifact.targetSync, { targetModule: 'Provider Management', destinationRecordId: 'provider-1', destinationObjectType: 'Provider Management record', destinationPanel: 'Provider review and official provider records', syncState: 'awaiting_review' }, 'provider document upload artifact');
   assert.strictEqual(hub.listTargetModuleState('Provider Management').length, 0, 'pending review items must not appear as closed synchronized module decisions');
   assert.strictEqual(hub.listTargetModuleState('Provider Management', 50, { includeActive: true }).length, 1, 'diagnostic module state can include active pending items when explicitly requested');
 
@@ -68,7 +80,7 @@ async function main() {
   assert.strictEqual(decision.ok, true);
   assert.strictEqual(decision.artifact.lifecycle.reviewState, 'closed');
   assert.strictEqual(decision.artifact.lifecycle.synchronized, true);
-  assertStableTargetPayload(decision.artifact.targetSync, 'closed provider decision');
+  assertExactClickThrough(decision.artifact.targetSync, { targetModule: 'Provider Management', destinationRecordId: 'provider-1', destinationObjectType: 'Provider Management record', destinationPanel: 'Provider review and official provider records', syncState: 'synchronized' }, 'closed provider decision');
   const closedProviderState = hub.listTargetModuleState('Provider Management');
   assert.strictEqual(closedProviderState.length, 1, 'closed decision should synchronize back to target module');
   assert.strictEqual(closedProviderState[0].artifactId, automaticArtifact.id, 'closed synchronized target row should point to the approved artifact');
@@ -102,7 +114,7 @@ async function main() {
   assert.strictEqual(lifecycle.ok, true);
   assert.strictEqual(lifecycle.artifact.lifecycle.reviewState, 'pending');
   assert.strictEqual(lifecycle.artifact.targetSync.syncState, 'awaiting_review');
-  assertStableTargetPayload(lifecycle.artifact.targetSync, 'lifecycle correction');
+  assertExactClickThrough(lifecycle.artifact.targetSync, { targetModule: 'Provider Management', destinationRecordId: 'provider-1', destinationObjectType: 'Provider Management record', destinationPanel: 'Provider review and official provider records', syncState: 'awaiting_review' }, 'lifecycle correction');
   assert.strictEqual(hub.listAuditLog().length, 2, 'lifecycle correction should add audit evidence without removing the original decision');
 
   const eventMatrix = [
@@ -114,7 +126,8 @@ async function main() {
       triggerOwnership: 'automatic_knowledge_workflow',
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_kb_publication',
-      handoffDepth: 'capture_to_kb_suggestion_panel'
+      handoffDepth: 'capture_to_kb_suggestion_panel',
+      clickTarget: { targetModule: 'Knowledge Base Manager', destinationRecordId: 'kb-capture:capture-1', destinationObjectType: 'Knowledge capture item', destinationPanel: 'Quick Capture and KB suggestion panel', syncState: 'awaiting_review' }
     },
     {
       triggerType: 'duplicate_detected',
@@ -124,7 +137,8 @@ async function main() {
       triggerOwnership: 'automatic_provider_workflow',
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_merge_or_separate_decision',
-      handoffDepth: 'duplicate_signal_to_provider_queue'
+      handoffDepth: 'duplicate_signal_to_provider_queue',
+      clickTarget: { targetModule: 'Provider Management', destinationRecordId: 'duplicate-1', destinationObjectType: 'Provider Management duplicate state', destinationPanel: 'Duplicate Review Queue and Provider Capture Assistant', syncState: 'awaiting_review' }
     },
     {
       triggerType: 'new_inbox_message',
@@ -134,7 +148,8 @@ async function main() {
       triggerOwnership: 'automatic_inbox_workflow',
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_client_facing_use',
-      handoffDepth: 'inbox_message_to_thread_suggestion_panel'
+      handoffDepth: 'inbox_message_to_thread_suggestion_panel',
+      clickTarget: { targetModule: 'Inbox', destinationRecordId: 'thread-1', destinationObjectType: 'Inbox thread/panel state', destinationPanel: 'Thread Suggestion / Routing Panel', syncState: 'awaiting_review' }
     },
     {
       triggerType: 'new_quick_capture',
@@ -144,7 +159,8 @@ async function main() {
       triggerOwnership: 'automatic_knowledge_workflow',
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_kb_publication',
-      handoffDepth: 'quick_capture_to_kb_suggestion_panel'
+      handoffDepth: 'quick_capture_to_kb_suggestion_panel',
+      clickTarget: { targetModule: 'Knowledge Base Manager', destinationRecordId: 'kb-capture:quick-1', destinationObjectType: 'Knowledge capture item', destinationPanel: 'Quick Capture and KB suggestion panel', syncState: 'awaiting_review' }
     },
     {
       triggerType: 'provider_matching_completed',
@@ -155,7 +171,8 @@ async function main() {
       triggerOwnership: 'operator_triggered',
       automationReadiness: 'manual_staff_trigger_live',
       reviewRequirement: 'staff_required_for_matching_decision',
-      handoffDepth: 'matching_request_to_results_panel'
+      handoffDepth: 'matching_request_to_results_panel',
+      clickTarget: { targetModule: 'Provider Matching Engine', destinationRecordId: 'match-1', destinationObjectType: 'Provider matching/provider target state', destinationPanel: 'Provider Matching Engine results', syncState: 'awaiting_review' }
     }
   ];
 
@@ -183,7 +200,12 @@ async function main() {
 
   const notices = hub.listNotifications(100);
   assert.ok(notices.every((item) => item.details?.notificationType), 'notifications should expose clear notification types');
-  assert.ok(notices.every((item) => !item.details?.artifactId || item.details?.targetSync || item.details?.destinationRecordId || item.details?.openTargetPayload), 'artifact notifications should reference the correct artifact/result target');
+  assert.ok(notices.every((item) => !item.details?.artifactId || item.details?.targetSync || item.details?.destinationRecordId || item.details?.openTargetPayload), 'artifact notifications should reference the correct artifact review-surface target');
+
+  const automationHtml = require('fs').readFileSync(require('path').join(__dirname, '../public/automation.html'), 'utf8');
+  assert.ok(automationHtml.includes('function renderActionButtons'), 'UI should centralize visible action deduplication');
+  assert.ok(automationHtml.includes('buildTargetOpenAction(targetSync'), 'notifications should prefer the precise target-module action over duplicate review-surface buttons');
+  assert.ok(!automationHtml.includes("renderTargetLink(targetUrl, 'open'"), 'visible target links should use precise operator-facing labels, not generic open/result wording');
 
   const phase = hub.getPhaseState();
   assert.strictEqual(phase.phase3.status, 'operational_hardening');
