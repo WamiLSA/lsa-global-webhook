@@ -1,6 +1,30 @@
 const assert = require('assert');
 const { createAutomationHub } = require('../lib/automation-hub');
 
+
+const STABLE_OPERATOR_OPEN_LABELS = new Set([
+  'Open review draft',
+  'Open provider review panel',
+  'Open published KB item',
+  'Open KB draft',
+  'Open inbox helper panel',
+  'Open thread panel',
+  'Open duplicate review item',
+  'Open matching results',
+  'Open target record',
+  'Open results'
+]);
+
+function assertStableOperatorLabel(label, context) {
+  assert.ok(STABLE_OPERATOR_OPEN_LABELS.has(label), `${context} should use a stable operator destination label; received "${label}"`);
+}
+
+function assertStableOperatorLabelsForArtifact(artifact, context) {
+  assertStableOperatorLabel(artifact.actionLabel, `${context} artifact action`);
+  assertStableOperatorLabel(artifact.targetSync.openTargetLabel, `${context} target sync action`);
+  assertStableOperatorLabel(artifact.targetSync.openTargetPayload.openTargetLabel, `${context} target payload action`);
+}
+
 const REQUIRED_TARGET_FIELDS = [
   'targetModule',
   'destinationRecordId',
@@ -34,6 +58,7 @@ function assertExactClickThrough(sync, expected, label) {
   assert.strictEqual(sync.destinationPanel, expected.destinationPanel, `${label} should open the exact panel/location`);
   assert.strictEqual(sync.syncState, expected.syncState, `${label} should preserve the exact sync state`);
   assert.strictEqual(sync.openTargetPayload.openTargetLabel, sync.openTargetLabel, `${label} visible action label should match target sync metadata`);
+  assertStableOperatorLabel(sync.openTargetLabel, `${label} visible target action`);
 }
 
 function assertLiveArtifact(artifact, expected) {
@@ -127,7 +152,7 @@ async function main() {
   assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show same-artifact lifecycle correction as active review evidence');
   const lifecycleCorrectionRow = providerStateIncludingLifecycle.find((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review');
   assert.strictEqual(lifecycleCorrectionRow.openTargetLabel, 'Open provider review panel', 'lifecycle correction should keep a precise open-review action label');
-  assert.strictEqual(defaultProviderStateAfterLifecycle[0].openTargetLabel, 'Open provider record', 'preserved synchronized evidence should keep the precise open-provider action label');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].openTargetLabel, 'Open target record', 'preserved synchronized evidence should keep the precise open-target action label');
 
   const originalRunHistory = hub.listHistory(20).find((item) => item.runId === automaticArtifact.runId);
   assert.ok(originalRunHistory, 'original automation run history should remain available after lifecycle correction');
@@ -204,11 +229,25 @@ async function main() {
     }
   ];
 
+  const scenarioArtifacts = [];
   for (const expected of eventMatrix) {
     const runs = await hub.trigger(expected.triggerType, expected.payload, expected.meta || {});
     assert.strictEqual(runs.length, 1, `${expected.triggerType} should fire exactly one workflow`);
     assertLiveArtifact(runs[0].artifact, expected);
+    assertStableOperatorLabelsForArtifact(runs[0].artifact, expected.triggerType);
+    scenarioArtifacts.push({ triggerType: expected.triggerType, artifact: runs[0].artifact });
   }
+
+  const duplicateScenario = scenarioArtifacts.find((item) => item.triggerType === 'duplicate_detected').artifact;
+  assert.strictEqual(duplicateScenario.actionLabel, 'Open duplicate review item', 'duplicate active card action should use the stable duplicate-review item label');
+  const duplicateDecision = hub.applyArtifactDecision(duplicateScenario.id, 'keep_separate', { decidedBy: 'qa' });
+  assert.strictEqual(duplicateDecision.ok, true);
+  assert.strictEqual(duplicateDecision.artifact.targetSync.openTargetLabel, 'Open duplicate review item', 'closed duplicate state should retain the stable duplicate-review item label');
+
+  const matchingScenario = scenarioArtifacts.find((item) => item.triggerType === 'provider_matching_completed').artifact;
+  const matchingDecision = hub.applyArtifactDecision(matchingScenario.id, 'confirm_candidate', { decidedBy: 'qa' });
+  assert.strictEqual(matchingDecision.ok, true);
+  assert.strictEqual(matchingDecision.artifact.targetSync.openTargetLabel, 'Open target record', 'confirmed provider match should use the stable target-record label');
 
   const activeItems = hub.listArtifacts(100, { reviewState: 'pending' });
   assert.ok(activeItems.every((item) => ['pending_review', 'edit_requested', 'rerun_requested'].includes(item.status)), 'active review items should only use pending/edit/rerun states');
@@ -222,12 +261,17 @@ async function main() {
 
   const allArtifacts = hub.listArtifacts(100);
   assert.ok(allArtifacts.every((item) => item.targetSync && item.targetSync.openTargetPayload), 'all visible workflow cards should have stable target payloads');
-  allArtifacts.forEach((item) => assertStableTargetPayload(item.targetSync, `artifact ${item.id}`));
+  allArtifacts.forEach((item) => {
+    assertStableTargetPayload(item.targetSync, `artifact ${item.id}`);
+    assertStableOperatorLabelsForArtifact(item, `artifact ${item.id}`);
+  });
   const closed = allArtifacts.filter((item) => item.lifecycle.closed);
   assert.ok(closed.every((item) => item.targetSync.syncState === 'synchronized'), 'closed cards should have synchronized target references');
 
   const notices = hub.listNotifications(100);
   assert.ok(notices.every((item) => item.details?.notificationType), 'notifications should expose clear notification types');
+  assert.ok(notices.every((item) => !item.details?.actionLabel || STABLE_OPERATOR_OPEN_LABELS.has(item.details.actionLabel)), 'notification review-surface actions should use stable operator labels');
+  assert.ok(notices.every((item) => !item.details?.targetSync?.openTargetLabel || STABLE_OPERATOR_OPEN_LABELS.has(item.details.targetSync.openTargetLabel)), 'notification target actions should use stable operator labels');
   assert.ok(notices.every((item) => !item.details?.artifactId || item.details?.targetSync || item.details?.destinationRecordId || item.details?.openTargetPayload), 'artifact notifications should reference the correct artifact review-surface target');
 
   const automationHtml = require('fs').readFileSync(require('path').join(__dirname, '../public/automation.html'), 'utf8');
