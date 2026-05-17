@@ -1,6 +1,41 @@
 const assert = require('assert');
 const { createAutomationHub } = require('../lib/automation-hub');
 
+const REQUIRED_TARGET_FIELDS = [
+  'targetModule',
+  'destinationRecordId',
+  'destinationObjectType',
+  'panelLocation',
+  'syncState'
+];
+
+function assertStableTargetPayload(sync, label) {
+  assert.ok(sync, `${label} should include target sync evidence`);
+  const payload = sync.openTargetPayload;
+  assert.ok(payload, `${label} should include a stable openTargetPayload`);
+  for (const field of REQUIRED_TARGET_FIELDS) {
+    assert.ok(payload[field], `${label} openTargetPayload.${field} should be present`);
+  }
+  assert.strictEqual(payload.targetModule, sync.targetModule, `${label} payload target module should match target sync`);
+  assert.strictEqual(payload.destinationRecordId, sync.destinationRecordId, `${label} payload destination record should match target sync`);
+  assert.strictEqual(payload.destinationObjectType, sync.destinationObjectType, `${label} payload object type should match target sync`);
+  assert.strictEqual(payload.panelLocation, sync.destinationPanel, `${label} payload panel/location should match target sync`);
+  assert.strictEqual(payload.syncState, sync.syncState, `${label} payload sync state should match target sync`);
+  assert.ok(sync.targetUrl || payload.destinationUrl, `${label} should include a destination URL`);
+}
+
+function assertLiveArtifact(artifact, expected) {
+  assert.strictEqual(artifact.type, expected.type, `${expected.triggerType} should create the expected review artifact`);
+  assert.strictEqual(artifact.automationOrigin, expected.origin, `${expected.triggerType} should preserve execution source`);
+  assert.strictEqual(artifact.triggerOwnership, expected.triggerOwnership, `${expected.triggerType} should preserve trigger ownership`);
+  assert.strictEqual(artifact.automationReadiness, expected.automationReadiness, `${expected.triggerType} should preserve automation readiness`);
+  assert.strictEqual(artifact.reviewRequirement, expected.reviewRequirement, `${expected.triggerType} should preserve staff review requirement`);
+  assert.strictEqual(artifact.handoffDepth, expected.handoffDepth, `${expected.triggerType} should preserve handoff intent`);
+  assert.strictEqual(artifact.staffReviewState, 'pending_staff_review', `${expected.triggerType} should require staff review`);
+  assert.strictEqual(artifact.targetSync.syncState, 'awaiting_review', `${expected.triggerType} should wait for staff review before sync`);
+  assertStableTargetPayload(artifact.targetSync, expected.triggerType);
+}
+
 async function main() {
   const hub = createAutomationHub({ getSystemMode: () => 'test' });
 
@@ -18,6 +53,7 @@ async function main() {
   const automaticArtifact = hub.listArtifacts()[0];
   assert.strictEqual(automaticArtifact.reviewState, 'pending');
   assert.strictEqual(automaticArtifact.targetSync.syncState, 'awaiting_review');
+  assertStableTargetPayload(automaticArtifact.targetSync, 'provider document upload artifact');
   assert.strictEqual(hub.listTargetModuleState('Provider Management').length, 0, 'pending review items must not appear as closed synchronized module decisions');
   assert.strictEqual(hub.listTargetModuleState('Provider Management', 50, { includeActive: true }).length, 1, 'diagnostic module state can include active pending items when explicitly requested');
 
@@ -32,11 +68,13 @@ async function main() {
   assert.strictEqual(decision.ok, true);
   assert.strictEqual(decision.artifact.lifecycle.reviewState, 'closed');
   assert.strictEqual(decision.artifact.lifecycle.synchronized, true);
+  assertStableTargetPayload(decision.artifact.targetSync, 'closed provider decision');
   const closedProviderState = hub.listTargetModuleState('Provider Management');
   assert.strictEqual(closedProviderState.length, 1, 'closed decision should synchronize back to target module');
   assert.strictEqual(closedProviderState[0].artifactId, automaticArtifact.id, 'closed synchronized target row should point to the approved artifact');
+  assertStableTargetPayload(closedProviderState[0], 'closed provider target state');
   assert.strictEqual(hub.listAuditLog().length, 1, 'decision audit trail should be preserved');
-  assert.ok(hub.listNotifications().some((item) => /Automation decision recorded/.test(item.message)), 'decision should create an internal notification');
+  assert.ok(hub.listNotifications().some((item) => /Automation decision recorded/.test(item.message) && item.details?.notificationType === 'decision_recorded'), 'decision should create a typed internal notification');
 
   const sameTargetRuns = await hub.trigger('document_uploaded', {
     module: 'providers',
@@ -57,36 +95,105 @@ async function main() {
   assert.ok(providerStateIncludingActive.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'closed'), 'include-active diagnostics should retain the closed same-key target record');
   assert.ok(providerStateIncludingActive.some((item) => item.artifactId === sameTargetArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show the new same-key pending target record');
   assert.ok(hub.listArtifacts(100, { reviewState: 'pending' }).some((item) => item.id === sameTargetArtifact.id), 'new same-key artifact should remain visible in active review queues');
+  assert.strictEqual(hub.listArtifacts(100, { reviewState: 'pending' }).some((item) => item.id === automaticArtifact.id), false, 'closed items must not appear in active review by default');
   assert.strictEqual(hub.listAuditLog().length, 1, 'creating same-key pending review artifacts should not alter the decision audit trail');
 
   const lifecycle = hub.applyArtifactLifecycleAction(automaticArtifact.id, 'revise_item', { decidedBy: 'qa' });
   assert.strictEqual(lifecycle.ok, true);
   assert.strictEqual(lifecycle.artifact.lifecycle.reviewState, 'pending');
   assert.strictEqual(lifecycle.artifact.targetSync.syncState, 'awaiting_review');
+  assertStableTargetPayload(lifecycle.artifact.targetSync, 'lifecycle correction');
   assert.strictEqual(hub.listAuditLog().length, 2, 'lifecycle correction should add audit evidence without removing the original decision');
 
   const eventMatrix = [
-    ['new_captured_knowledge', { captureId: 'capture-1' }, 'automatic_trigger'],
-    ['duplicate_detected', { duplicateScore: 0.98, duplicateId: 'duplicate-1' }, 'automatic_trigger'],
-    ['new_inbox_message', { serviceIntent: 'certified_translation', threadId: 'thread-1', messageId: 'message-1' }, 'automatic_trigger'],
-    ['new_quick_capture', { captureId: 'quick-1' }, 'automatic_trigger'],
-    ['provider_matching_completed', { matchingResultId: 'match-1' }, 'operator_triggered', { manual: true, initiatedBy: 'staff' }]
+    {
+      triggerType: 'new_captured_knowledge',
+      payload: { captureId: 'capture-1' },
+      origin: 'automatic_trigger',
+      type: 'kb_formatting_review',
+      triggerOwnership: 'automatic_knowledge_workflow',
+      automationReadiness: 'automatic_trigger_staff_review',
+      reviewRequirement: 'staff_required_before_kb_publication',
+      handoffDepth: 'capture_to_kb_suggestion_panel'
+    },
+    {
+      triggerType: 'duplicate_detected',
+      payload: { duplicateScore: 0.98, duplicateId: 'duplicate-1' },
+      origin: 'automatic_trigger',
+      type: 'duplicate_review_queue',
+      triggerOwnership: 'automatic_provider_workflow',
+      automationReadiness: 'automatic_trigger_staff_review',
+      reviewRequirement: 'staff_required_before_merge_or_separate_decision',
+      handoffDepth: 'duplicate_signal_to_provider_queue'
+    },
+    {
+      triggerType: 'new_inbox_message',
+      payload: { serviceIntent: 'certified_translation', threadId: 'thread-1', messageId: 'message-1' },
+      origin: 'automatic_trigger',
+      type: 'inbox_helper_panel',
+      triggerOwnership: 'automatic_inbox_workflow',
+      automationReadiness: 'automatic_trigger_staff_review',
+      reviewRequirement: 'staff_required_before_client_facing_use',
+      handoffDepth: 'inbox_message_to_thread_suggestion_panel'
+    },
+    {
+      triggerType: 'new_quick_capture',
+      payload: { captureId: 'quick-1' },
+      origin: 'automatic_trigger',
+      type: 'kb_formatting_review',
+      triggerOwnership: 'automatic_knowledge_workflow',
+      automationReadiness: 'automatic_trigger_staff_review',
+      reviewRequirement: 'staff_required_before_kb_publication',
+      handoffDepth: 'quick_capture_to_kb_suggestion_panel'
+    },
+    {
+      triggerType: 'provider_matching_completed',
+      payload: { matchingResultId: 'match-1' },
+      meta: { manual: true, initiatedBy: 'staff' },
+      origin: 'operator_triggered',
+      type: 'provider_matching_results',
+      triggerOwnership: 'operator_triggered',
+      automationReadiness: 'manual_staff_trigger_live',
+      reviewRequirement: 'staff_required_for_matching_decision',
+      handoffDepth: 'matching_request_to_results_panel'
+    }
   ];
 
-  for (const [triggerType, payload, expectedOrigin, meta = {}] of eventMatrix) {
-    const runs = await hub.trigger(triggerType, payload, meta);
-    assert.strictEqual(runs.length, 1, `${triggerType} should fire exactly one workflow`);
-    assert.strictEqual(runs[0].automationOrigin, expectedOrigin, `${triggerType} should report the correct execution origin`);
+  for (const expected of eventMatrix) {
+    const runs = await hub.trigger(expected.triggerType, expected.payload, expected.meta || {});
+    assert.strictEqual(runs.length, 1, `${expected.triggerType} should fire exactly one workflow`);
+    assertLiveArtifact(runs[0].artifact, expected);
   }
 
+  const activeItems = hub.listArtifacts(100, { reviewState: 'pending' });
+  assert.ok(activeItems.every((item) => ['pending_review', 'edit_requested', 'rerun_requested'].includes(item.status)), 'active review items should only use pending/edit/rerun states');
+  assert.ok(activeItems.every((item) => item.lifecycle.reviewState === 'pending'), 'active review items should not include closed lifecycle state');
+
+  const workflows = hub.listWorkflows();
+  assert.strictEqual(workflows.filter((wf) => wf.trigger.automatic && wf.eventHookStatus === 'live').length, 5, 'automatic trigger paths should remain automatic and live');
+  assert.strictEqual(workflows.filter((wf) => !wf.trigger.automatic && wf.eventHookStatus === 'live_manual_staff_trigger').length, 1, 'manual staff path should remain manual');
+  assert.ok(workflows.filter((wf) => wf.trigger.automatic).every((wf) => wf.executionMode === 'assisted'), 'automatic paths should stay assisted staff-review paths');
+  assert.ok(workflows.filter((wf) => !wf.trigger.automatic).every((wf) => wf.executionMode === 'manual'), 'manual staff paths should stay manual');
+
+  const allArtifacts = hub.listArtifacts(100);
+  assert.ok(allArtifacts.every((item) => item.targetSync && item.targetSync.openTargetPayload), 'all visible workflow cards should have stable target payloads');
+  allArtifacts.forEach((item) => assertStableTargetPayload(item.targetSync, `artifact ${item.id}`));
+  const closed = allArtifacts.filter((item) => item.lifecycle.closed);
+  assert.ok(closed.every((item) => item.targetSync.syncState === 'synchronized'), 'closed cards should have synchronized target references');
+
+  const notices = hub.listNotifications(100);
+  assert.ok(notices.every((item) => item.details?.notificationType), 'notifications should expose clear notification types');
+  assert.ok(notices.every((item) => !item.details?.artifactId || item.details?.targetSync || item.details?.destinationRecordId || item.details?.openTargetPayload), 'artifact notifications should reference the correct artifact/result target');
+
   const phase = hub.getPhaseState();
+  assert.strictEqual(phase.phase3.status, 'operational_hardening');
   assert.strictEqual(phase.workflowReadiness.filter((item) => item.automaticEventLive).length, 5);
   assert.strictEqual(phase.workflowReadiness.filter((item) => item.manualStaffTriggerLive).length, 1);
   assert.strictEqual(phase.workflowReadiness.filter((item) => item.scaffoldOnly).length, 0);
 }
 
 main()
-  .then(() => console.log('Automation Hub validation passed'))
+  .then(() => console.log('Automation Hub Phase 3 operational validation passed'))
   .catch((error) => {
     console.error(error);
     process.exit(1);
