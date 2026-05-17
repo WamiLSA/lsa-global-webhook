@@ -125,6 +125,25 @@ async function main() {
   const providerStateIncludingLifecycle = hub.listTargetModuleState('Provider Management', 50, { includeActive: true });
   assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'closed' && item.syncState === 'synchronized'), 'include-active diagnostics should retain same-artifact closed lifecycle evidence');
   assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show same-artifact lifecycle correction as active review evidence');
+  const lifecycleCorrectionRow = providerStateIncludingLifecycle.find((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review');
+  assert.strictEqual(lifecycleCorrectionRow.openTargetLabel, 'Open provider review panel', 'lifecycle correction should keep a precise open-review action label');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].openTargetLabel, 'Open provider record', 'preserved synchronized evidence should keep the precise open-provider action label');
+
+  const originalRunHistory = hub.listHistory(20).find((item) => item.runId === automaticArtifact.runId);
+  assert.ok(originalRunHistory, 'original automation run history should remain available after lifecycle correction');
+  assert.strictEqual(originalRunHistory.decision.actionTaken, 'Approve into provider record', 'lifecycle correction must not replace the original run decision evidence');
+  assert.strictEqual(originalRunHistory.decision.targetSync.syncState, 'synchronized', 'original run history should keep the synchronized target evidence');
+  assert.strictEqual(originalRunHistory.decision.targetSync.reviewState, 'closed', 'original run history should keep the closed review evidence');
+  assert.ok(/Approve into provider record/.test(originalRunHistory.result), 'original run result should remain stable after lifecycle correction');
+  assert.ok(!/Revise provider update/.test(originalRunHistory.result), 'lifecycle correction should not rewrite the original run result');
+  assert.ok((originalRunHistory.lifecycleCorrections || []).some((item) => item.actionTaken === 'Revise provider update' && item.targetSync.syncState === 'awaiting_review'), 'run history should append lifecycle correction evidence separately');
+  assert.ok((originalRunHistory.actionResults || []).some((item) => item.action === 'record_lifecycle_correction' && item.destinationRecordId === 'provider-1'), 'run history action results should record the lifecycle correction without downgrading the decision');
+  const lifecycleNotice = hub.listNotifications(100).find((item) => item.details?.notificationType === 'lifecycle_updated' && item.details?.artifactId === automaticArtifact.id);
+  assert.ok(lifecycleNotice, 'lifecycle correction should create a separate typed internal notification');
+  assert.strictEqual(lifecycleNotice.details.targetSync.syncState, 'awaiting_review', 'lifecycle notification should truthfully point to the active correction state');
+  const decisionNotice = hub.listNotifications(100).find((item) => item.details?.notificationType === 'decision_recorded' && item.details?.artifactId === automaticArtifact.id);
+  assert.ok(decisionNotice, 'original decision notification should remain available separately');
+  assert.strictEqual(decisionNotice.details.targetSync.syncState, 'synchronized', 'decision notification should keep synchronized closed evidence');
 
   const eventMatrix = [
     {
