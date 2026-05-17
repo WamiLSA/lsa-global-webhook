@@ -11,8 +11,8 @@ const STABLE_OPERATOR_OPEN_LABELS = new Set([
   'Open thread panel',
   'Open duplicate review item',
   'Open matching results',
-  'Open target record',
-  'Open results'
+  'Open provider record',
+  'Open confirmed provider target'
 ]);
 
 function assertStableOperatorLabel(label, context) {
@@ -20,9 +20,23 @@ function assertStableOperatorLabel(label, context) {
 }
 
 function assertStableOperatorLabelsForArtifact(artifact, context) {
+  assertNoForbiddenOperatorLabels([artifact.actionLabel, artifact.targetSync.openTargetLabel, artifact.targetSync.openTargetPayload.openTargetLabel], context);
   assertStableOperatorLabel(artifact.actionLabel, `${context} artifact action`);
   assertStableOperatorLabel(artifact.targetSync.openTargetLabel, `${context} target sync action`);
   assertStableOperatorLabel(artifact.targetSync.openTargetPayload.openTargetLabel, `${context} target payload action`);
+}
+
+const FORBIDDEN_GENERIC_OPERATOR_LABELS = [
+  'Open result',
+  'Open results',
+  'Open queue',
+  'Open review surface'
+];
+
+function assertNoForbiddenOperatorLabels(labels, context) {
+  for (const label of labels.filter(Boolean)) {
+    assert.ok(!FORBIDDEN_GENERIC_OPERATOR_LABELS.includes(label), `${context} must not expose generic operator label "${label}"`);
+  }
 }
 
 const REQUIRED_TARGET_FIELDS = [
@@ -58,6 +72,7 @@ function assertExactClickThrough(sync, expected, label) {
   assert.strictEqual(sync.destinationPanel, expected.destinationPanel, `${label} should open the exact panel/location`);
   assert.strictEqual(sync.syncState, expected.syncState, `${label} should preserve the exact sync state`);
   assert.strictEqual(sync.openTargetPayload.openTargetLabel, sync.openTargetLabel, `${label} visible action label should match target sync metadata`);
+  assertNoForbiddenOperatorLabels([sync.openTargetLabel, sync.openTargetPayload.openTargetLabel], label);
   assertStableOperatorLabel(sync.openTargetLabel, `${label} visible target action`);
 }
 
@@ -100,6 +115,10 @@ async function main() {
   assert.strictEqual(manualRun.run.automationExecutionState, 'manual_staff_event_fired');
   assert.strictEqual(manualRun.run.artifact.automationOrigin, 'operator_triggered');
   assert.strictEqual(manualRun.run.artifact.automationExecutionState, 'manual_staff_event_fired');
+  const providerWorkflowAfterManualRun = hub.listWorkflows().find((wf) => wf.id === 'wf-provider-doc-extractor');
+  assert.strictEqual(providerWorkflowAfterManualRun.stats.lastArtifactActionLabel, 'Open review draft', 'top workflow card should use the latest artifact precise review-draft label');
+  assert.strictEqual(providerWorkflowAfterManualRun.stats.lastArtifactTargetSync.openTargetLabel, 'Open provider review panel', 'top workflow card payload should preserve the precise provider-review-panel target label');
+  assertStableTargetPayload(providerWorkflowAfterManualRun.stats.lastArtifactTargetSync, 'top workflow provider latest output');
 
   const decision = hub.applyArtifactDecision(automaticArtifact.id, 'approve_into_provider_record', { decidedBy: 'qa' });
   assert.strictEqual(decision.ok, true);
@@ -152,7 +171,7 @@ async function main() {
   assert.ok(providerStateIncludingLifecycle.some((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review'), 'include-active diagnostics should show same-artifact lifecycle correction as active review evidence');
   const lifecycleCorrectionRow = providerStateIncludingLifecycle.find((item) => item.artifactId === automaticArtifact.id && item.reviewState === 'pending' && item.syncState === 'awaiting_review');
   assert.strictEqual(lifecycleCorrectionRow.openTargetLabel, 'Open provider review panel', 'lifecycle correction should keep a precise open-review action label');
-  assert.strictEqual(defaultProviderStateAfterLifecycle[0].openTargetLabel, 'Open target record', 'preserved synchronized evidence should keep the precise open-target action label');
+  assert.strictEqual(defaultProviderStateAfterLifecycle[0].openTargetLabel, 'Open provider record', 'preserved synchronized evidence should keep the precise open-target action label');
 
   const originalRunHistory = hub.listHistory(20).find((item) => item.runId === automaticArtifact.runId);
   assert.ok(originalRunHistory, 'original automation run history should remain available after lifecycle correction');
@@ -180,6 +199,7 @@ async function main() {
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_kb_publication',
       handoffDepth: 'capture_to_kb_suggestion_panel',
+      openTargetLabel: 'Open KB draft',
       clickTarget: { targetModule: 'Knowledge Base Manager', destinationRecordId: 'kb-capture:capture-1', destinationObjectType: 'Knowledge capture item', destinationPanel: 'Quick Capture and KB suggestion panel', syncState: 'awaiting_review' }
     },
     {
@@ -191,6 +211,7 @@ async function main() {
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_merge_or_separate_decision',
       handoffDepth: 'duplicate_signal_to_provider_queue',
+      openTargetLabel: 'Open duplicate review item',
       clickTarget: { targetModule: 'Provider Management', destinationRecordId: 'duplicate-1', destinationObjectType: 'Provider Management duplicate state', destinationPanel: 'Duplicate Review Queue and Provider Capture Assistant', syncState: 'awaiting_review' }
     },
     {
@@ -202,6 +223,7 @@ async function main() {
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_client_facing_use',
       handoffDepth: 'inbox_message_to_thread_suggestion_panel',
+      openTargetLabel: 'Open thread panel',
       clickTarget: { targetModule: 'Inbox', destinationRecordId: 'thread-1', destinationObjectType: 'Inbox thread/panel state', destinationPanel: 'Thread Suggestion / Routing Panel', syncState: 'awaiting_review' }
     },
     {
@@ -213,6 +235,7 @@ async function main() {
       automationReadiness: 'automatic_trigger_staff_review',
       reviewRequirement: 'staff_required_before_kb_publication',
       handoffDepth: 'quick_capture_to_kb_suggestion_panel',
+      openTargetLabel: 'Open KB draft',
       clickTarget: { targetModule: 'Knowledge Base Manager', destinationRecordId: 'kb-capture:quick-1', destinationObjectType: 'Knowledge capture item', destinationPanel: 'Quick Capture and KB suggestion panel', syncState: 'awaiting_review' }
     },
     {
@@ -225,6 +248,7 @@ async function main() {
       automationReadiness: 'manual_staff_trigger_live',
       reviewRequirement: 'staff_required_for_matching_decision',
       handoffDepth: 'matching_request_to_results_panel',
+      openTargetLabel: 'Open matching results',
       clickTarget: { targetModule: 'Provider Matching Engine', destinationRecordId: 'match-1', destinationObjectType: 'Provider matching/provider target state', destinationPanel: 'Provider Matching Engine results', syncState: 'awaiting_review' }
     }
   ];
@@ -235,19 +259,28 @@ async function main() {
     assert.strictEqual(runs.length, 1, `${expected.triggerType} should fire exactly one workflow`);
     assertLiveArtifact(runs[0].artifact, expected);
     assertStableOperatorLabelsForArtifact(runs[0].artifact, expected.triggerType);
+    assert.strictEqual(runs[0].artifact.targetSync.openTargetLabel, expected.openTargetLabel, `${expected.triggerType} should expose the exact visible target label for its destination`);
     scenarioArtifacts.push({ triggerType: expected.triggerType, artifact: runs[0].artifact });
   }
+
+  const kbScenario = scenarioArtifacts.find((item) => item.triggerType === 'new_captured_knowledge').artifact;
+  const kbDecision = hub.applyArtifactDecision(kbScenario.id, 'approve_to_kb', { decidedBy: 'qa' });
+  assert.strictEqual(kbDecision.ok, true);
+  assert.strictEqual(kbDecision.artifact.targetSync.openTargetLabel, 'Open published KB item', 'published KB decisions should use the precise published-item label');
+  assert.ok(kbDecision.artifact.lifecycleActions.some((action) => action.label === 'Revise published KB draft'), 'published KB lifecycle correction should remain distinct from normal closed-decision actions');
 
   const duplicateScenario = scenarioArtifacts.find((item) => item.triggerType === 'duplicate_detected').artifact;
   assert.strictEqual(duplicateScenario.actionLabel, 'Open duplicate review item', 'duplicate active card action should use the stable duplicate-review item label');
   const duplicateDecision = hub.applyArtifactDecision(duplicateScenario.id, 'keep_separate', { decidedBy: 'qa' });
   assert.strictEqual(duplicateDecision.ok, true);
   assert.strictEqual(duplicateDecision.artifact.targetSync.openTargetLabel, 'Open duplicate review item', 'closed duplicate state should retain the stable duplicate-review item label');
+  assert.ok(duplicateDecision.artifact.lifecycleActions.some((action) => action.label === 'Recheck duplicate decision'), 'duplicate lifecycle correction should remain distinct from normal duplicate actions');
 
   const matchingScenario = scenarioArtifacts.find((item) => item.triggerType === 'provider_matching_completed').artifact;
   const matchingDecision = hub.applyArtifactDecision(matchingScenario.id, 'confirm_candidate', { decidedBy: 'qa' });
   assert.strictEqual(matchingDecision.ok, true);
-  assert.strictEqual(matchingDecision.artifact.targetSync.openTargetLabel, 'Open target record', 'confirmed provider match should use the stable target-record label');
+  assert.strictEqual(matchingDecision.artifact.targetSync.openTargetLabel, 'Open confirmed provider target', 'confirmed provider match should use the precise confirmed-provider-target label');
+  assert.ok(matchingDecision.artifact.lifecycleActions.some((action) => action.label === 'Revise matching criteria'), 'matching lifecycle correction should remain distinct from normal matching-result actions');
 
   const activeItems = hub.listArtifacts(100, { reviewState: 'pending' });
   assert.ok(activeItems.every((item) => ['pending_review', 'edit_requested', 'rerun_requested'].includes(item.status)), 'active review items should only use pending/edit/rerun states');
@@ -258,6 +291,11 @@ async function main() {
   assert.strictEqual(workflows.filter((wf) => !wf.trigger.automatic && wf.eventHookStatus === 'live_manual_staff_trigger').length, 1, 'manual staff path should remain manual');
   assert.ok(workflows.filter((wf) => wf.trigger.automatic).every((wf) => wf.executionMode === 'assisted'), 'automatic paths should stay assisted staff-review paths');
   assert.ok(workflows.filter((wf) => !wf.trigger.automatic).every((wf) => wf.executionMode === 'manual'), 'manual staff paths should stay manual');
+  workflows.filter((wf) => wf.stats.lastArtifactId).forEach((wf) => {
+    assertStableOperatorLabel(wf.stats.lastArtifactActionLabel, `${wf.id} top workflow card latest-output action`);
+    assertNoForbiddenOperatorLabels([wf.stats.lastArtifactActionLabel, wf.stats.lastArtifactTargetSync?.openTargetLabel], `${wf.id} top workflow card`);
+    assertStableTargetPayload(wf.stats.lastArtifactTargetSync, `${wf.id} top workflow card target`);
+  });
 
   const allArtifacts = hub.listArtifacts(100);
   assert.ok(allArtifacts.every((item) => item.targetSync && item.targetSync.openTargetPayload), 'all visible workflow cards should have stable target payloads');
@@ -265,11 +303,16 @@ async function main() {
     assertStableTargetPayload(item.targetSync, `artifact ${item.id}`);
     assertStableOperatorLabelsForArtifact(item, `artifact ${item.id}`);
   });
+  const lifecycleLabels = new Set(allArtifacts.flatMap((item) => (item.lifecycleActions || []).map((action) => action.label)));
+  ['Reopen staff review', 'Revise provider update', 'Revise published KB draft', 'Revise matching criteria', 'Recheck duplicate decision'].forEach((label) => {
+    if (lifecycleLabels.has(label)) assert.ok(!FORBIDDEN_GENERIC_OPERATOR_LABELS.includes(label), `${label} should remain a distinct lifecycle correction label`);
+  });
   const closed = allArtifacts.filter((item) => item.lifecycle.closed);
   assert.ok(closed.every((item) => item.targetSync.syncState === 'synchronized'), 'closed cards should have synchronized target references');
 
   const notices = hub.listNotifications(100);
   assert.ok(notices.every((item) => item.details?.notificationType), 'notifications should expose clear notification types');
+  notices.forEach((item) => assertNoForbiddenOperatorLabels([item.details?.actionLabel, item.details?.targetSync?.openTargetLabel, item.details?.openTargetPayload?.openTargetLabel], `notification ${item.id || item.message}`));
   assert.ok(notices.every((item) => !item.details?.actionLabel || STABLE_OPERATOR_OPEN_LABELS.has(item.details.actionLabel)), 'notification review-surface actions should use stable operator labels');
   assert.ok(notices.every((item) => !item.details?.targetSync?.openTargetLabel || STABLE_OPERATOR_OPEN_LABELS.has(item.details.targetSync.openTargetLabel)), 'notification target actions should use stable operator labels');
   assert.ok(notices.every((item) => !item.details?.artifactId || item.details?.targetSync || item.details?.destinationRecordId || item.details?.openTargetPayload), 'artifact notifications should reference the correct artifact review-surface target');
@@ -278,6 +321,9 @@ async function main() {
   assert.ok(automationHtml.includes('function renderActionButtons'), 'UI should centralize visible action deduplication');
   assert.ok(automationHtml.includes('buildTargetOpenAction(targetSync'), 'notifications should prefer the precise target-module action over duplicate review-surface buttons');
   assert.ok(!automationHtml.includes("renderTargetLink(targetUrl, 'open'"), 'visible target links should use precise operator-facing labels, not generic open/result wording');
+  FORBIDDEN_GENERIC_OPERATOR_LABELS.forEach((label) => {
+    assert.ok(!automationHtml.includes(`'${label}'`) && !automationHtml.includes(`>${label}<`), `Automation Hub UI must not hard-code generic visible label ${label}`);
+  });
 
   const phase = hub.getPhaseState();
   assert.strictEqual(phase.phase3.status, 'operational_hardening');
