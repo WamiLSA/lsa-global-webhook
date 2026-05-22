@@ -345,6 +345,14 @@ async function main() {
     assert.ok(!automationHtml.includes(`'${label}'`) && !automationHtml.includes(`>${label}<`), `Automation Hub UI must not hard-code generic visible label ${label}`);
   });
 
+
+  assert.ok(automationHtml.includes('id="buildInfo"'), 'Automation Hub should render a visible internal build marker container');
+  assert.ok(automationHtml.includes("getJson('/api/internal/build-info')"), 'Automation Hub should request build marker diagnostics from the API');
+
+  const serverJs = require('fs').readFileSync(require('path').join(__dirname, '../server.js'), 'utf8');
+  assert.ok(serverJs.includes('app.get("/api/internal/build-info"'), 'server should expose internal build-info diagnostics endpoint');
+  assert.ok(serverJs.includes('res.set("Cache-Control", "no-store, max-age=0")'), 'automation page should disable stale cache reuse for admin verification surfaces');
+
   const phase = hub.getPhaseState();
   assert.strictEqual(phase.phase3.status, 'operational_hardening');
   assert.strictEqual(phase.workflowReadiness.filter((item) => item.automaticEventLive).length, 5);

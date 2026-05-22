@@ -91,6 +91,7 @@
     <p class="muted">Phase 2 is stable. Phase 3 groundwork now separates automatic operational triggers from staff-review decisions across inbox, knowledge, and provider workflows.</p>
     <div id="pageStatus" class="status" hidden></div>
     <div id="phaseStatePanel" class="phase-panel">Loading Automation Hub phase state…</div>
+    <div id="buildInfo" class="muted" style="margin-top:8px">Build marker: loading…</div>
     <div id="workflowGrid" class="grid"></div>
 
     <div class="section-heading">
@@ -170,6 +171,11 @@
       return String(value ?? '').replace(/[&<>"']/g, (char) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
       }[char]));
+    }
+
+    function formatBuildMarker(info = {}) {
+      const shortSha = info.commitShortSha || (info.commitSha ? String(info.commitSha).slice(0, 8) : "unknown");
+      return `Build marker • env: ${escapeHtml(info.environment || "unknown")} • branch: ${escapeHtml(info.branch || "unknown")} • commit: ${escapeHtml(shortSha)} • version: ${escapeHtml(info.version || "unknown")} • built: ${escapeHtml(formatTime(info.buildTimestamp) || "unknown")}`;
     }
 
     function getStoredBearerToken() {
@@ -722,13 +728,14 @@
 
     async function load(){
       try {
-        const [phase,w,h,n,a,audit]=await Promise.all([
+        const [phase,w,h,n,a,audit,buildInfo]=await Promise.all([
           getJson('/api/automation/phase-state'),
           getJson('/api/automation/workflows'),
           getJson('/api/automation/history'),
           getJson('/api/automation/notifications'),
           getJson('/api/automation/artifacts'),
-          getJson('/api/automation/audit')
+          getJson('/api/automation/audit'),
+          getJson('/api/internal/build-info')
         ]);
         renderPhaseState(phase);
         renderWorkflows(w.workflows || []);
@@ -736,6 +743,8 @@
         renderHistory(h.history || []);
         renderAudit(audit.audit || []);
         renderNotifications(n.notifications || []);
+        const buildMarker = document.getElementById('buildInfo');
+        if (buildMarker) buildMarker.innerHTML = formatBuildMarker(buildInfo || {});
       } catch (error) {
         setPageStatus(error.status === 401 ? 'Automation Hub is not authorized. Please log in again, then retry Run now.' : error.message, 'error');
       }
