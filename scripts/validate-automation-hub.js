@@ -337,6 +337,9 @@ async function main() {
   const automationHtml = require('fs').readFileSync(require('path').join(__dirname, '../public/automation.html'), 'utf8');
   assert.ok(automationHtml.includes('function renderActionButtons'), 'UI should centralize visible action deduplication');
   assert.ok(automationHtml.includes('buildTargetOpenAction(targetSync'), 'notifications should prefer the precise target-module action over duplicate review-surface buttons');
+  assert.ok(automationHtml.includes('Source: ${i.workflowName || i.workflowId || \'workflow\'}'), 'run history rows should expose source workflow lineage metadata');
+  assert.ok(automationHtml.includes('Type: ${escapeHtml(lineageType)}'), 'audit trail rows should expose decision lineage type metadata');
+  assert.ok(automationHtml.includes('related decisions for'), 'notification cards should visually group repeated notices by effective target');
   assert.ok(!automationHtml.includes("renderTargetLink(targetUrl, 'open'"), 'visible target links should use precise operator-facing labels, not generic open/result wording');
   FORBIDDEN_GENERIC_OPERATOR_LABELS.forEach((label) => {
     assert.ok(!automationHtml.includes(`'${label}'`) && !automationHtml.includes(`>${label}<`), `Automation Hub UI must not hard-code generic visible label ${label}`);
