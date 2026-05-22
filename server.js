@@ -45,6 +45,11 @@ const SUPABASE_KEY =
   process.env.SUPABASE_ANON_KEY?.trim();
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const APP_ENV = String(process.env.APP_ENV || "live").toLowerCase();
+const APP_VERSION = require("./package.json").version;
+const BUILD_STARTED_AT = new Date().toISOString();
+const BUILD_COMMIT_SHA = process.env.RENDER_GIT_COMMIT || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || process.env.COMMIT_SHA || "unknown";
+const BUILD_BRANCH = process.env.RENDER_GIT_BRANCH || process.env.VERCEL_GIT_COMMIT_REF || process.env.GIT_BRANCH || process.env.BRANCH_NAME || "unknown";
+const BUILD_TIMESTAMP = process.env.BUILD_TIMESTAMP || process.env.RENDER_DEPLOYED_AT || process.env.VERCEL_DEPLOYMENT_CREATED_AT || BUILD_STARTED_AT;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "LSA_GLOBAL_TOKEN";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -8385,7 +8390,22 @@ app.get("/reports", requireAuth, (req, res) => {
 });
 
 app.get("/automation", requireAuth, (req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0");
+  res.set("Pragma", "no-cache");
   res.sendFile(path.join(__dirname, "public", "automation.html"));
+});
+
+app.get("/api/internal/build-info", requireAuth, (req, res) => {
+  return res.json({
+    ok: true,
+    version: APP_VERSION,
+    environment: APP_ENV,
+    commitSha: BUILD_COMMIT_SHA,
+    commitShortSha: BUILD_COMMIT_SHA === "unknown" ? "unknown" : String(BUILD_COMMIT_SHA).slice(0, 8),
+    branch: BUILD_BRANCH,
+    buildTimestamp: BUILD_TIMESTAMP,
+    serverStartedAt: BUILD_STARTED_AT
+  });
 });
 
 app.get("/api/reports/overview", requireAuth, async (req, res) => {
