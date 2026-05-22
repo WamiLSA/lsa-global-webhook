@@ -7,6 +7,7 @@
     "start": "node server.js",
     "validate:audio": "node scripts/validate-audio-assets.js",
     "validate:mobile-branding": "node scripts/validate-mobile-branding.js",
+    "validate:inbox-ui": "node scripts/validate-inbox-ui.js",
     "validate:automation-hub": "node scripts/validate-automation-hub.js",
     "validate:automation-phase3": "node scripts/validate-automation-hub.js"
   },

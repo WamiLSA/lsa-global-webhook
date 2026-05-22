@@ -1,0 +1,13 @@
+const fs=require('fs');
+const assert=require('assert');
+const web=fs.readFileSync('public/index.html','utf8');
+const mobile=fs.readFileSync('mobile-app/src/screens/ConversationScreen.js','utf8');
+assert(web.includes('function renderAttachmentCard'), 'attachment card renderer missing');
+assert(web.includes('attachment-grid'), 'attachment grid css missing');
+assert(web.includes('formatFileSize'), 'file size formatter missing');
+assert(!web.includes('<div>${escapeHtml(threadIdText || "")}</div>'), 'raw thread id row still present');
+assert(/overflow-wrap:\s*anywhere/.test(web), 'message overflow wrapping not enforced');
+assert(mobile.includes('attachmentCard'), 'mobile attachment card styles missing');
+assert(mobile.includes('formatFileSize'), 'mobile attachment size formatter missing');
+assert(mobile.includes('flexShrink: 1'), 'mobile long message wrapping guard missing');
+console.log('validate-inbox-ui: PASS');

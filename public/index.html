@@ -82,6 +82,7 @@
       border-radius: 12px;
       white-space: pre-wrap;
       word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .msg-time {
       margin-top: 7px;
@@ -391,14 +392,26 @@
       background: var(--lsa-surface-muted);
       font-size: 12px;
     }
-    .attachment {
+    .attachment-grid {
       margin-top: 8px;
-      width: min(320px, 100%);
+      width: min(420px, 100%);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+    }
+    .attachment {
+      width: 100%;
       border-radius: 12px;
       overflow: hidden;
       border: 1px solid var(--lsa-border);
       background: var(--lsa-surface);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+    }
+    .attachment:hover {
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--lsa-blue) 24%, var(--lsa-border));
+      box-shadow: 0 6px 12px rgba(15, 23, 42, 0.12);
     }
     .attachment-media {
       display: block;
@@ -461,6 +474,10 @@
       background: var(--lsa-bg);
       font-size: 12px;
       white-space: nowrap;
+    }
+    @media (max-width: 760px) {
+      .msg { max-width: 92%; }
+      .attachment-grid { width: 100%; grid-template-columns: 1fr; }
     }
     .caption {
       margin-top: 6px;
@@ -943,8 +960,20 @@
       if (kind === "video") return "VIDEO";
       return (mimeType || ext || "FILE").replace(/[^a-z0-9/+.-]/gi, "").slice(0, 16).toUpperCase();
     }
+    function formatFileSize(bytes) {
+      const size = Number(bytes);
+      if (!Number.isFinite(size) || size <= 0) return "";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = size;
+      let unitIndex = 0;
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+      }
+      return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+    }
 
-    function renderAttachmentCard({ url, fileName, kind, mimeType, ext }) {
+    function renderAttachmentCard({ url, fileName, kind, mimeType, ext, fileSize }) {
       const iconByKind = {
         pdf: "📄",
         document: "🗂️",
@@ -955,6 +984,7 @@
       };
 
       const badge = getAttachmentBadge(kind, mimeType, ext);
+      const sizeLabel = formatFileSize(fileSize);
 
       return `
         <div class="attachment">
@@ -962,7 +992,7 @@
             <div class="attachment-icon">${iconByKind[kind] || iconByKind.file}</div>
             <div class="attachment-meta">
               <div class="attachment-title" title="${fileName}">${fileName}</div>
-              <div class="attachment-subtitle">${badge}</div>
+              <div class="attachment-subtitle">${badge}${sizeLabel ? ` · ${sizeLabel}` : ""}</div>
             </div>
             <a class="attachment-link" href="${url}" target="_blank" rel="noopener noreferrer" download>Open</a>
           </div>
@@ -977,10 +1007,11 @@
       const safeMimeType = escapeHtml(msg.mime_type || "");
       const ext = extensionFromFileName(msg.file_name || "");
       const kind = getAttachmentKind(msg);
+      const fileSize = msg.file_size || msg.media_size_bytes || msg.bytes;
 
       if (kind === "image") {
         return `
-          <div class="attachment">
+          <div class="attachment-grid"><div class="attachment">
             <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">
               <img class="attachment-media" src="${safeUrl}" alt="${safeName}" loading="lazy" />
             </a>
@@ -988,17 +1019,17 @@
               <div class="attachment-icon">🖼️</div>
               <div class="attachment-meta">
                 <div class="attachment-title" title="${safeName}">${safeName}</div>
-                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}${formatFileSize(fileSize) ? ` · ${formatFileSize(fileSize)}` : ""}</div>
               </div>
               <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">View</a>
             </div>
-          </div>
+          </div></div>
         `;
       }
 
       if (kind === "video") {
         return `
-          <div class="attachment">
+          <div class="attachment-grid"><div class="attachment">
             <video class="attachment-media" controls preload="metadata">
               <source src="${safeUrl}" type="${safeMimeType}" />
             </video>
@@ -1006,17 +1037,17 @@
               <div class="attachment-icon">🎬</div>
               <div class="attachment-meta">
                 <div class="attachment-title" title="${safeName}">${safeName}</div>
-                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}${formatFileSize(fileSize) ? ` · ${formatFileSize(fileSize)}` : ""}</div>
               </div>
               <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
-          </div>
+          </div></div>
         `;
       }
 
       if (kind === "audio") {
         return `
-          <div class="attachment">
+          <div class="attachment-grid"><div class="attachment">
             <audio controls preload="metadata">
               <source src="${safeUrl}" type="${safeMimeType}" />
             </audio>
@@ -1024,21 +1055,22 @@
               <div class="attachment-icon">🎵</div>
               <div class="attachment-meta">
                 <div class="attachment-title" title="${safeName}">${safeName}</div>
-                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}</div>
+                <div class="attachment-subtitle">${getAttachmentBadge(kind, safeMimeType, ext)}${formatFileSize(fileSize) ? ` · ${formatFileSize(fileSize)}` : ""}</div>
               </div>
               <a class="attachment-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
-          </div>
+          </div></div>
         `;
       }
 
-      return renderAttachmentCard({
+      return `<div class="attachment-grid">${renderAttachmentCard({
         url: safeUrl,
         fileName: safeName,
         kind,
         mimeType: safeMimeType,
-        ext
-      });
+        ext,
+        fileSize
+      })}</div>`;
     }
 
     function renderMessageBody(msg) {
@@ -1208,7 +1240,7 @@
             <div class="thread-name-row"><strong>${escapeHtml(displayName)}</strong>${iconHtml}</div>
             <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(settings.thread_list?.recency_display === "exact" ? (parseMessageDate(activityTime)?.toLocaleString() || "—") : formatThreadRecency(activityTime))}</span>
           </div>
-          <div>${escapeHtml(threadIdText || "")}</div>
+          ${threadIdText ? `<div class="small">${escapeHtml(threadIdText)}</div>` : ""}
           ${showPreview ? `<div class="small thread-preview">${escapeHtml(preview)}</div>` : `<div class="small thread-preview">Preview hidden by Communications Settings</div>`}
           ${showActivity ? `<div class="thread-activity">${escapeHtml(formatLastActivity(activityTime, thread.last_direction || thread.direction))}</div>` : ""}
           <div class="thread-controls">

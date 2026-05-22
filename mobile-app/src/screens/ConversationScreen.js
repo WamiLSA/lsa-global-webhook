@@ -54,7 +54,19 @@ function getMessageDisplay(item = {}) {
   const staffReply = firstTextValue(item.staffReplyText, item.staff_reply_text, item.staffReply, item.staff_reply, direction === 'outgoing' ? item.body : '');
   const customerTranslation = firstTextValue(item.customerTranslation, item.customer_translation, item.sentReplyText, item.sent_reply_text);
   const attachmentUrl = firstTextValue(item.attachmentUrl, item.attachment_url, item.mediaUrl, item.media_url);
-  return { direction, originalText, staffTranslation, staffReply, customerTranslation, attachmentUrl };
+  const attachmentMimeType = firstTextValue(item.mimeType, item.mime_type);
+  const attachmentName = firstTextValue(item.fileName, item.file_name) || 'attachment';
+  const attachmentSize = Number(item.fileSize || item.file_size || item.media_size_bytes || 0);
+  return { direction, originalText, staffTranslation, staffReply, customerTranslation, attachmentUrl, attachmentMimeType, attachmentName, attachmentSize };
+}
+function isImageMimeType(mimeType = '') { return String(mimeType).toLowerCase().startsWith('image/'); }
+function formatFileSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = size; let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) { value /= 1024; idx += 1; }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[idx]}`;
 }
 
 function extensionFromMimeType(mimeType = '') {
@@ -206,7 +218,14 @@ export function ConversationScreen({ route }) {
                   {display.staffReply && display.staffReply !== display.originalText ? <Text style={styles.translation}>Staff Reply: {display.staffReply}</Text> : null}
                   {display.staffTranslation && display.staffTranslation !== display.originalText ? <Text style={styles.translation}>Staff Translation: {display.staffTranslation}</Text> : null}
                   {display.customerTranslation && display.customerTranslation !== display.originalText ? <Text style={styles.translation}>Sent to Customer: {display.customerTranslation}</Text> : null}
-                  {display.attachmentUrl ? <Pressable onPress={() => Linking.openURL(api.resolveAssetUrl(display.attachmentUrl))}><Text style={styles.attachment}>Attachment: Open file</Text></Pressable> : null}
+                  {display.attachmentUrl ? <View style={styles.attachmentCard}>
+                    {isImageMimeType(display.attachmentMimeType) ? <Image source={{ uri: api.resolveAssetUrl(display.attachmentUrl) }} style={styles.attachmentThumb} /> : <Text style={styles.attachmentIcon}>📎</Text>}
+                    <View style={styles.attachmentMeta}>
+                      <Text numberOfLines={1} style={styles.attachmentName}>{display.attachmentName}</Text>
+                      <Text style={styles.attachmentInfo}>{(display.attachmentMimeType || 'FILE').toUpperCase()}{display.attachmentSize ? ` · ${formatFileSize(display.attachmentSize)}` : ''}</Text>
+                    </View>
+                    <Pressable onPress={() => Linking.openURL(api.resolveAssetUrl(display.attachmentUrl))}><Text style={styles.attachment}>Open</Text></Pressable>
+                  </View> : null}
                   <Text style={styles.ts}>{item.createdAt || item.timestamp || ''}</Text>
                 </View>
               );
@@ -251,10 +270,16 @@ const styles = StyleSheet.create({
   incoming: { backgroundColor: '#1e293b', alignSelf: 'flex-start', borderTopLeftRadius: 6 },
   outgoing: { backgroundColor: '#1d4ed8', alignSelf: 'flex-end', borderTopRightRadius: 6 },
   sender: { color: '#bfdbfe', fontSize: 10, fontWeight: '900', marginBottom: 5, textTransform: 'uppercase' },
-  original: { color: '#fff', lineHeight: 20 },
+  original: { color: '#fff', lineHeight: 20, flexShrink: 1 },
   missing: { color: '#fecaca', fontStyle: 'italic' },
   translation: { color: '#cbd5e1', marginTop: 4, fontSize: 12, lineHeight: 17 },
-  attachment: { color: '#facc15', marginTop: 6, fontWeight: '800' },
+  attachmentCard: { marginTop: 8, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(15,23,42,.22)', padding: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  attachmentThumb: { width: 42, height: 42, borderRadius: 8, backgroundColor: colors.surfaceAlt },
+  attachmentIcon: { fontSize: 24 },
+  attachmentMeta: { flex: 1, minWidth: 0 },
+  attachmentName: { color: '#fff', fontWeight: '700' },
+  attachmentInfo: { color: '#cbd5e1', fontSize: 11, marginTop: 2 },
+  attachment: { color: '#facc15', fontWeight: '800' },
   ts: { color: '#94a3b8', fontSize: 10, marginTop: 6 },
   composer: { borderTopColor: colors.border, borderTopWidth: 1, paddingTop: spacing.sm, backgroundColor: colors.bg },
   pendingAttachment: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: 14, padding: spacing.sm, marginBottom: spacing.sm },
