@@ -164,6 +164,7 @@
       'returned_to_capture',
       'shortlisted'
     ]);
+    const pendingActionRequests = new Set();
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -452,7 +453,7 @@
       const lifecycle = getArtifactLifecycle(artifact);
       if (!lifecycle.pendingReview) return `<div class='closed-summary'><strong>Closed decision summary</strong><br/>No staff action is pending. Latest status: ${escapeHtml(lifecycle.statusLabel)}. This card is retained as synchronized evidence, not active queue work.</div>`;
       if (!actions.length) return '';
-      const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('');
+      const buttons = actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordArtifactDecision("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}", this)'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('');
       const targetModules = [...new Set(actions.map(action => action.targetModule).filter(Boolean))].join(', ');
       return `<div class='decision-actions'>
         <h3>Staff review required</h3>
@@ -464,7 +465,7 @@
     function renderLifecycleActions(artifact) {
       const actions = artifact.lifecycleActions || [];
       if (!actions.length) return `<div class='muted'>Lifecycle correction: no reopen or revision action is available for this final state.</div>`;
-      return `<div class='lifecycle-actions'><strong>Lifecycle correction</strong><div class='decision-note'>Use only when staff intentionally reopens or revises a completed decision. The audit trail remains intact.</div><div class='decision-action-list'>${actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordLifecycleAction("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}")'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('')}</div></div>`;
+      return `<div class='lifecycle-actions'><strong>Lifecycle correction</strong><div class='decision-note'>Use only when staff intentionally reopens or revises a completed decision. The audit trail remains intact.</div><div class='decision-action-list'>${actions.map((action) => `<button class='secondary-action' title='${escapeHtml(action.description || '')}' onclick='recordLifecycleAction("${escapeHtml(artifact.id)}","${escapeHtml(action.id)}", this)'>${escapeHtml(action.label)} <span class='muted'>sets ${escapeHtml(action.statusLabel || action.nextStatus || '')}</span></button>`).join('')}</div></div>`;
     }
 
     function renderTargetSync(artifact) {
@@ -619,38 +620,63 @@
     }
 
 
-    async function recordArtifactDecision(id, actionId) {
+    function buildClientActionKey(artifact, actionId) {
+      const sync = artifact?.targetSync || {};
+      const target = sync.targetReference || {};
+      const lifecycle = getArtifactLifecycle(artifact || {});
+      return [artifact?.id || '', actionId, sync.targetModule || artifact?.module || '', sync.destinationRecordId || target.destinationRecordId || '', lifecycle.reviewState, sync.syncState || (lifecycle.closed ? 'synchronized' : 'awaiting_review')].join('|');
+    }
+
+    async function recordArtifactDecision(id, actionId, buttonEl = null) {
       setPageStatus('', 'info');
+      const artifact = (window.__automationArtifacts || []).find((item) => item.id === id);
+      const actionKey = buildClientActionKey(artifact, actionId);
+      if (pendingActionRequests.has(actionKey)) return;
+      pendingActionRequests.add(actionKey);
+      const originalText = buttonEl?.textContent || '';
+      if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = 'Processing…'; }
       try {
         const result = await getJson('/api/automation/artifacts/' + encodeURIComponent(id) + '/actions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actionId })
+          body: JSON.stringify({ actionId, actionKey })
         });
         const decision = result.decision;
-        setPageStatus(`Decision recorded: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
+        if (result.duplicateSubmissionSuppressed) setPageStatus('Duplicate action submission was safely ignored; no state was changed.', 'success');
+        else setPageStatus(`Decision recorded: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
       } catch (error) {
         const authHint = error.status === 401 || error.status === 403 ? ' Please confirm your account has Automation Hub decision permissions.' : '';
         setPageStatus(`${error.message}${authHint}`, 'error');
       } finally {
+        pendingActionRequests.delete(actionKey);
+        if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = originalText; }
         await load();
       }
     }
 
-    async function recordLifecycleAction(id, actionId) {
+    async function recordLifecycleAction(id, actionId, buttonEl = null) {
       setPageStatus('', 'info');
+      const artifact = (window.__automationArtifacts || []).find((item) => item.id === id);
+      const actionKey = buildClientActionKey(artifact, actionId);
+      if (pendingActionRequests.has(actionKey)) return;
+      pendingActionRequests.add(actionKey);
+      const originalText = buttonEl?.textContent || '';
+      if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = 'Processing…'; }
       try {
         const result = await getJson('/api/automation/artifacts/' + encodeURIComponent(id) + '/lifecycle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ actionId })
+          body: JSON.stringify({ actionId, actionKey })
         });
         const decision = result.decision;
-        setPageStatus(`Lifecycle updated: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
+        if (result.duplicateSubmissionSuppressed) setPageStatus('Duplicate lifecycle submission was safely ignored; no state was changed.', 'success');
+        else setPageStatus(`Lifecycle updated: ${decision.label}. Status is now ${decision.statusLabel || decision.nextStatus}.`, 'success');
       } catch (error) {
         const authHint = error.status === 401 || error.status === 403 ? ' Please confirm your account has Automation Hub decision permissions.' : '';
         setPageStatus(`${error.message}${authHint}`, 'error');
       } finally {
+        pendingActionRequests.delete(actionKey);
+        if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = originalText; }
         await load();
       }
     }

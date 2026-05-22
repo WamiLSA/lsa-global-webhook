@@ -188,6 +188,18 @@ async function main() {
   const decisionNotice = hub.listNotifications(100).find((item) => item.details?.notificationType === 'decision_recorded' && item.details?.artifactId === automaticArtifact.id);
   assert.ok(decisionNotice, 'original decision notification should remain available separately');
   assert.strictEqual(decisionNotice.details.targetSync.syncState, 'synchronized', 'decision notification should keep synchronized closed evidence');
+  const duplicateKey = `${sameTargetArtifact.id}|approve_into_provider_record|Provider Management|provider-1|pending|awaiting_review`;
+  const doubleClickApproveOnce = hub.applyArtifactDecision(sameTargetArtifact.id, 'approve_into_provider_record', { decidedBy: 'qa', actionKey: duplicateKey });
+  assert.strictEqual(doubleClickApproveOnce.ok, true, 'first click should apply normally');
+  const approveAuditAfterFirst = hub.listAuditLog().length;
+  const approveNotificationsAfterFirst = hub.listNotifications(200).length;
+  const doubleClickApproveTwice = hub.applyArtifactDecision(sameTargetArtifact.id, 'approve_into_provider_record', { decidedBy: 'qa', actionKey: duplicateKey });
+  assert.strictEqual(doubleClickApproveTwice.ok, true, 'duplicate submission should no-op successfully');
+  assert.strictEqual(doubleClickApproveTwice.duplicateSubmissionSuppressed, true, 'duplicate submission should be explicitly marked as suppressed');
+  assert.strictEqual(hub.listAuditLog().length, approveAuditAfterFirst, 'duplicate approve should not create duplicate audit entries');
+  assert.strictEqual(hub.listNotifications(200).length, approveNotificationsAfterFirst, 'duplicate approve should not create duplicate notifications');
+  const decidedArtifact = hub.getArtifact(sameTargetArtifact.id);
+  assert.strictEqual((decidedArtifact.decisionHistory || []).filter((entry) => entry.actionId === 'approve_into_provider_record').length, 1, 'duplicate approve should not duplicate decision history on the artifact');
 
   const eventMatrix = [
     {
@@ -264,10 +276,15 @@ async function main() {
   }
 
   const kbScenario = scenarioArtifacts.find((item) => item.triggerType === 'new_captured_knowledge').artifact;
-  const kbDecision = hub.applyArtifactDecision(kbScenario.id, 'approve_to_kb', { decidedBy: 'qa' });
+  const kbDecision = hub.applyArtifactDecision(kbScenario.id, 'approve_to_kb', { decidedBy: 'qa', actionKey: `${kbScenario.id}|approve_to_kb|Knowledge Base Manager|kb-capture:capture-1|pending|awaiting_review` });
   assert.strictEqual(kbDecision.ok, true);
   assert.strictEqual(kbDecision.artifact.targetSync.openTargetLabel, 'Open published KB item', 'published KB decisions should use the precise published-item label');
   assert.ok(kbDecision.artifact.lifecycleActions.some((action) => action.label === 'Revise published KB draft'), 'published KB lifecycle correction should remain distinct from normal closed-decision actions');
+  const kbDuplicate = hub.applyArtifactDecision(kbScenario.id, 'approve_to_kb', { decidedBy: 'qa', actionKey: `${kbScenario.id}|approve_to_kb|Knowledge Base Manager|kb-capture:capture-1|pending|awaiting_review` });
+  assert.strictEqual(kbDuplicate.duplicateSubmissionSuppressed, true, 'double-click publish should be suppressed');
+  const kbInvalidRepeat = hub.applyArtifactDecision(kbScenario.id, 'approve_to_kb', { decidedBy: 'qa' });
+  assert.strictEqual(kbInvalidRepeat.ok, false, 'repeating a closed decision without lifecycle correction should be blocked');
+  assert.strictEqual(kbInvalidRepeat.status, 409, 'closed decision repeat should be rejected with transition guard');
 
   const duplicateScenario = scenarioArtifacts.find((item) => item.triggerType === 'duplicate_detected').artifact;
   assert.strictEqual(duplicateScenario.actionLabel, 'Open duplicate review item', 'duplicate active card action should use the stable duplicate-review item label');
