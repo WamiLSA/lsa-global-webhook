@@ -1202,7 +1202,6 @@
         : (viewAtRequest === "archived" ? "/api/conversations/archived" : "/api/conversations");
       const container = document.getElementById("threads");
       let res;
-      const outgoingBody = body;
       let payload;
       try {
         res = await fetch(endpoint);
