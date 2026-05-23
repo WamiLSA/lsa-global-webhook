@@ -3,6 +3,7 @@ const assert = require('assert');
 
 const web = fs.readFileSync('public/index.html', 'utf8');
 const mobile = fs.readFileSync('mobile-app/src/screens/ConversationScreen.js', 'utf8');
+const server = fs.readFileSync('server.js', 'utf8');
 
 const requiredFunctions = ['function loadThreads()', 'function loadConversation(', 'async function sendReply()'];
 requiredFunctions.forEach((fn) => assert(web.includes(fn), `${fn} missing`));
@@ -65,3 +66,12 @@ assert(web.includes("staleRequestDetected"), 'stale request tracking flag missin
 assert(web.includes("render exception:"), 'render exceptions are not surfaced to error renderer');
 assert(web.includes('inboxDebug('), 'debug diagnostics hook missing for selection/render pipeline');
 assert(!web.includes('console.log("[inbox-frontend] thread messages fetched"'), 'production console logging for conversation fetch should stay behind debug hook');
+
+
+assert(web.includes('/api/inbox/conversation?'), 'selected conversation endpoint route missing from frontend loader');
+assert(server.includes('app.get("/api/inbox/conversation"'), 'selected conversation backend endpoint missing');
+assert(server.includes('[inbox-api] selected conversation load started'), 'selected conversation backend start log missing');
+assert(server.includes('[inbox-api] selected conversation lookup result'), 'selected conversation backend lookup log missing');
+assert(web.includes('renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "stale request dropped"'), 'stale request visible error fallback missing');
+assert(web.includes('load-messages-loading-cleared'), 'loading-cleared diagnostic log missing');
+assert(web.includes('payload.rows'), 'message normalization rows fallback missing');
