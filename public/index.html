@@ -642,7 +642,6 @@
     let optimisticMessagesByThread = new Map();
     let messageReplyContext = null;
     let conversationRequestSeq = 0;
-    let messageReplyContext = null;
     let threadSearchQuery = "";
     const threadUiState = {
       starredByThread: {},
@@ -660,7 +659,6 @@
     let communicationsSettings = null;
     let currentThreadMeta = null;
     let previousUnreadTotal = null;
-    let messageReplyContext = null;
 
     
     const DEFAULT_COMMUNICATIONS_SETTINGS = {
@@ -1355,7 +1353,7 @@
     function clearReplyContext() {
       messageReplyContext = null;
     }
-    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null) {
+    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null, options = {}) {
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
@@ -1394,7 +1392,6 @@
       }
       if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
         document.getElementById("chatActivity").textContent = "Thread loading failed";
         return;
@@ -1408,7 +1405,11 @@
       container.innerHTML = renderCurrentThreadAutomationSync();
       container.onscroll = () => { const distance = container.scrollHeight - container.scrollTop - container.clientHeight; isUserNearBottom = distance < 120; };
 
-      if (!Array.isArray(messages) || messages.length === 0) {
+      const serverMessages = Array.isArray(messages) ? messages : [];
+      const optimisticMessages = channelAtRequest === "whatsapp" ? (optimisticMessagesByThread.get(wa_id) || []) : [];
+      messages = [...serverMessages, ...optimisticMessages];
+
+      if (messages.length === 0) {
         container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages yet.</div>";
         document.getElementById("labelSelect").value = "";
         currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
@@ -1517,17 +1518,25 @@
       if (messageReplyContext && !contextAtSend) {
         clearReplyContext();
       }
+
+      const optimisticId = `optimistic-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (channelAtSend === "whatsapp" && currentWaId === threadIdAtSend) {
+        const list = optimisticMessagesByThread.get(threadIdAtSend) || [];
+        list.push({ id: optimisticId, body, direction: "out", created_at: new Date().toISOString(), status: "pending" });
+        optimisticMessagesByThread.set(threadIdAtSend, list);
+      }
+
       let res;
       if (channelAtSend === "mail") {
         const formData = new FormData();
         formData.append("thread_id", threadIdAtSend);
-        formData.append("body", outgoingBody);
+        formData.append("body", body);
         if (selectedFile) formData.append("attachment", selectedFile);
         res = await fetch("/api/communications/mail/reply", { method: "POST", body: formData });
       } else if (selectedFile) {
         const formData = new FormData();
         formData.append("wa_id", threadIdAtSend);
-        formData.append("caption", outgoingBody);
+        formData.append("caption", body);
         formData.append("attachment", selectedFile);
         res = await fetch("/api/send-attachment", {
           method: "POST",
@@ -1551,7 +1560,10 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
+        if (channelAtSend === "whatsapp") {
+          const list = optimisticMessagesByThread.get(threadIdAtSend) || [];
+          optimisticMessagesByThread.set(threadIdAtSend, list.filter((msg) => msg.id !== optimisticId));
+        }
         alert("Send failed: " + JSON.stringify(result));
         return;
       }
@@ -1559,7 +1571,10 @@
       box.value = "";
       clearReplyContext();
       clearAttachmentSelection();
-      clearReplyContext();
+      if (channelAtSend === "whatsapp") {
+        const list = optimisticMessagesByThread.get(threadIdAtSend) || [];
+        optimisticMessagesByThread.set(threadIdAtSend, list.filter((msg) => msg.id !== optimisticId));
+      }
       if (currentWaId === threadIdAtSend && currentChannel === channelAtSend) {
         await loadConversation(threadIdAtSend, contactNameAtSend, null, null, channelAtSend);
       }
@@ -1602,7 +1617,6 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Label update failed: " + JSON.stringify(result));
         return;
       }
@@ -1628,7 +1642,6 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Clear chat failed: " + JSON.stringify(result));
         return;
       }
@@ -1660,7 +1673,6 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Delete thread failed: " + JSON.stringify(result));
         return;
       }
@@ -1686,7 +1698,6 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Archive thread failed: " + JSON.stringify(result));
         return;
       }
@@ -1712,7 +1723,6 @@
       const result = await res.json();
 
       if (!res.ok) {
-        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Unarchive thread failed: " + JSON.stringify(result));
         return;
       }
