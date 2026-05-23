@@ -727,7 +727,7 @@
         if (settings.notifications?.vibration_enabled && navigator.vibrate) {
           try { navigator.vibrate(90); } catch (_) {}
         }
-        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
+        inboxDebug("load-messages-loading-cleared", { context: "unread-increase", totalUnread: total, previousUnreadTotal });
       }
       previousUnreadTotal = total;
     }
@@ -867,8 +867,8 @@
         if (value !== undefined && value !== null && String(value).trim() !== "") {
           return String(value).trim();
         }
-        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
       }
+      inboxDebug("load-messages-loading-cleared", { context: "resolve-thread-id-no-match", channel });
       return "";
     }
     const MEDIA_TYPES = new Set(["image", "video", "audio", "document"]);
@@ -1544,7 +1544,6 @@
           renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "invalid payload", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
           loadStateResolved = true;
         }
-        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
       }
     }
 
