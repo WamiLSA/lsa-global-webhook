@@ -1440,12 +1440,15 @@
       }
     }
 
-    function startSelectedConversationWatchdog({ requestId, threadId, threadName, channel, endpoint, retry, threadMeta }) {
+    function startSelectedConversationWatchdog({ requestId, threadId, threadName, channel, endpoint, retry, threadMeta, onTimeout = null }) {
       clearSelectedConversationWatchdog();
       selectedConversationWatchdogStartedAt = Date.now();
       selectedConversationWatchdogTimer = setTimeout(() => {
         const isCurrent = selectedConversationRequestId === requestId && String(currentWaId || '') === String(threadId || '') && currentChannel === channel;
         if (!isCurrent) return;
+        if (typeof onTimeout === "function") {
+          try { onTimeout(); } catch (_) {}
+        }
         const elapsedMs = Date.now() - selectedConversationWatchdogStartedAt;
         renderConversationTimeoutError({
           threadName,
@@ -1523,10 +1526,10 @@
         return;
       }
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
-      clearSelectedConversationWatchdog();
       const requestSeq = ++conversationRequestSeq;
       const requestId = ++selectedConversationRequestId;
       if (currentChannel !== channelAtRequest) return;
+      clearSelectedConversationWatchdog();
       const canonicalThreadId = String(wa_id).trim();
       const conversationChanged = String(currentWaId || "") !== canonicalThreadId;
       currentWaId = canonicalThreadId;
@@ -1552,7 +1555,18 @@
         conversationUrl = channelAtRequest === "mail"
           ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}`
           : `/api/inbox/conversation?thread_id=${encodeURIComponent(canonicalThreadId)}&conversation_id=${encodeURIComponent(canonicalThreadId)}&wa_id=${encodeURIComponent(canonicalThreadId)}&phone=${encodeURIComponent(canonicalThreadId)}&from=${encodeURIComponent(canonicalThreadId)}&id=${encodeURIComponent(canonicalThreadId)}&channel=${encodeURIComponent(channelAtRequest)}&requestId=${encodeURIComponent(conversationRequestId)}`;
-        startSelectedConversationWatchdog({ requestId, threadId: canonicalThreadId, threadName: contactName, channel: channelAtRequest, endpoint: conversationUrl, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta), threadMeta: { ...(threadMeta || {}), last_activity_at: knownActivityTime } });
+        startSelectedConversationWatchdog({
+          requestId,
+          threadId: canonicalThreadId,
+          threadName: contactName,
+          channel: channelAtRequest,
+          endpoint: conversationUrl,
+          retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta),
+          threadMeta: { ...(threadMeta || {}), last_activity_at: knownActivityTime },
+          onTimeout: () => {
+            if (!controller.signal.aborted) controller.abort(new DOMException("Conversation request timed out", "TimeoutError"));
+          }
+        });
         inboxDebug("load-messages-fetch-url", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, requestId, conversationRequestId, url: conversationUrl });
         const res = await fetch(conversationUrl, { signal: controller.signal });
         let payload = null;

@@ -94,7 +94,8 @@ assert(server.includes('ok: false') && server.includes('messages: []') && server
 assert(web.includes('selectedConversationRequestId'), 'selected conversation request sequence missing');
 assert(web.includes('selectedConversationWatchdogTimer'), 'selected conversation watchdog timer state missing');
 assert(web.includes('startSelectedConversationWatchdog('), 'watchdog starter missing');
-assert(web.includes('clearSelectedConversationWatchdog();\n      const requestSeq = ++conversationRequestSeq;'), 'thread switch does not clear prior watchdog before new request');
+assert(web.includes('if (currentChannel !== channelAtRequest) return;\n      clearSelectedConversationWatchdog();'), 'watchdog should only be cleared after active-channel guard');
+assert(web.includes('onTimeout: () => {') && web.includes('controller.abort(new DOMException("Conversation request timed out", "TimeoutError"))'), 'watchdog timeout is not wired to abort the in-flight fetch');
 assert(web.includes('setTimeout(() => {') && web.includes('}, conversationLoadTimeoutMs);'), 'watchdog setTimeout missing');
 assert(web.includes('const conversationLoadTimeoutMs = 8000;'), 'watchdog timeout constant must be 8000ms');
 assert(web.includes('renderConversationTimeoutError('), 'forced timeout renderer missing');
