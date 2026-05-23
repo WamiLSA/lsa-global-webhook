@@ -57,9 +57,9 @@ assert(web.includes('clearReplyContext();'), 'thread switching does not clear re
 assert(web.includes('retryConversationLoadBtn'), 'retry button missing from conversation error state');
 assert(web.includes("AbortController"), 'conversation fetch timeout controller missing');
 assert(web.includes("conversationLoadTimeoutMs"), 'conversation loading timeout fallback missing');
-assert(web.includes("Conversation could not be loaded"), 'conversation error card title missing');
+assert(web.includes("Conversation could not load. Please retry."), 'conversation error card title missing');
 assert(web.includes("Retry loading conversation"), 'retry loading conversation button missing');
-assert(web.includes("No messages found for this conversation yet."), 'empty conversation renderer missing');
+assert(web.includes("No messages yet for this conversation."), 'empty conversation renderer missing');
 assert(web.includes("payload.messages") && web.includes("payload.items") && web.includes("payload.records") && web.includes("payload.data?.messages") && web.includes("payload.thread?.messages") && web.includes("payload.conversation?.messages"), 'message normalization keys incomplete');
 assert(web.includes("if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {") && web.includes("loadStateResolved = true;"), 'stale request handling does not safely resolve loading state');
 assert(web.includes("staleRequestDetected"), 'stale request tracking flag missing for conversation loading');
@@ -75,3 +75,9 @@ assert(server.includes('[inbox-api] selected conversation lookup result'), 'sele
 assert(web.includes('renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "stale request dropped"'), 'stale request visible error fallback missing');
 assert(web.includes('load-messages-loading-cleared'), 'loading-cleared diagnostic log missing');
 assert(web.includes('payload.rows'), 'message normalization rows fallback missing');
+assert(web.includes('selectedConversationLoading = true') && web.includes('selectedConversationLoading = false'), 'selected conversation loading state is not forcibly resolved');
+assert(web.includes('Conversation could not load. Please retry.'), 'timeout/fetch error customer-facing copy missing');
+assert(server.includes('function resolveSelectedThread('), 'canonical resolver for selected thread identifiers missing');
+assert(server.includes('[inbox-api] selected conversation messages result'), 'selected conversation messages result log missing');
+assert(server.includes('[inbox-api] selected conversation load failed'), 'selected conversation load failed log missing');
+assert(server.includes('ok: false') && server.includes('messages: []') && server.includes('debug:'), 'selected conversation failure JSON shape incomplete');
