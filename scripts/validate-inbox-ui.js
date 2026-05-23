@@ -27,6 +27,18 @@ assert(web.includes('attachment-media') && web.includes('msg.media_url'), 'attac
 
 assert(web.includes('catch (error)'), 'loadThreads network error fallback missing');
 assert(web.includes('Thread loading problem'), 'loadThreads safe fallback UI missing');
+assert(web.includes('function resolveThreadId('), 'resolveThreadId helper missing');
+assert(web.includes('div.dataset.threadId = threadId'), 'thread cards missing stable data-thread-id assignment');
+assert(web.includes('event.stopPropagation();'), 'thread action buttons are not isolating click propagation');
+assert(web.includes('div.onclick = async () => {'), 'thread click handler missing');
+assert(web.includes('await loadConversation(threadId'), 'thread click handler does not call loadConversation');
+assert(web.includes('if (!threadId) {') && web.includes('Unable to open this conversation because its identifier is missing.'), 'thread click missing safe fallback for absent threadId');
+assert(web.includes('if (wa_id === undefined || wa_id === null || String(wa_id).trim() === "")'), 'loadConversation missing missing-id guard');
+assert(web.includes('div.classList.toggle("selected"'), 'selected-thread visual state toggle missing');
+assert(web.includes('document.getElementById("messages").innerHTML = "<div class=\'small\'>Unable to load this thread right now.</div>";'), 'selected conversation render/error path missing');
+assert(web.includes('setThreadActionButtons();'), 'composer/thread actions not tied to selected-thread flow');
+assert(web.includes('channelAtRequest === "mail"') && web.includes('channelAtRequest === "whatsapp"'), 'mobile/desktop/channel thread opening paths not covered');
+assert(!web.includes('loadConversation(undefined'), 'thread-opening path may call loadConversation with undefined');
 
 assert(mobile.includes('attachmentCard'), 'mobile attachment card styles missing');
 assert(mobile.includes('formatFileSize'), 'mobile attachment size formatter missing');

@@ -198,6 +198,11 @@
       background: color-mix(in srgb, #22c55e 7%, var(--lsa-surface));
       border-left: 4px solid #22c55e;
     }
+    .thread.selected {
+      outline: 2px solid color-mix(in srgb, var(--lsa-blue) 70%, #93c5fd);
+      outline-offset: -2px;
+      background: color-mix(in srgb, var(--lsa-blue) 10%, var(--lsa-surface));
+    }
     .thread.pinned { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--lsa-blue) 70%, #22c55e); }
     .thread-name-row { display:flex; align-items:center; gap:6px; min-width:0; }
     .thread-name-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -843,6 +848,20 @@
       }
       return `/api/conversations/${safeThreadId}/${action}`;
     }
+
+    function resolveThreadId(thread, channel = currentChannel) {
+      if (!thread || typeof thread !== "object") return "";
+      const preferredFields = channel === "mail"
+        ? ["thread_id", "id", "conversation_id", "wa_id", "phone", "from"]
+        : ["wa_id", "thread_id", "id", "conversation_id", "phone", "from"];
+      for (const field of preferredFields) {
+        const value = thread[field];
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      }
+      return "";
+    }
     const MEDIA_TYPES = new Set(["image", "video", "audio", "document"]);
 
     function fileToBase64(file) {
@@ -1281,7 +1300,7 @@
         const activityTime = getMessageTimestamp(thread) || thread.timestamp;
         const preview = thread.last_message || thread.preview || "";
         const displayName = thread.contact_name || thread.subject || "Unknown";
-        const threadId = channelAtRequest === "mail" ? thread.thread_id : thread.wa_id;
+        const threadId = resolveThreadId(thread, channelAtRequest);
         const unreadCount = Number(thread.unread_count || thread.unreadCount || 0);
         const settings = getCommunicationsSettings();
         const showBadges = settings.thread_list?.show_unread_badge_count !== false;
@@ -1289,6 +1308,9 @@
         const showActivity = settings.thread_list?.recency_display !== "hidden";
         div.className = "thread";
         div.id = `thread-${encodeURIComponent(threadId || "latest")}`;
+        div.dataset.threadId = threadId;
+        div.dataset.channel = channelAtRequest;
+        div.classList.toggle("selected", Boolean(currentWaId) && String(currentWaId) === String(threadId));
         div.classList.toggle("unread", unreadCount > 0);
         div.classList.toggle("pinned", thread.is_pinned === true);
         const iconHtml = `<span class="thread-icons">${thread.is_pinned ? "📌" : ""}${thread.is_muted ? "🔕" : ""}</span>`;
@@ -1312,13 +1334,20 @@
         div.querySelectorAll("button[data-action]").forEach((button) => {
           button.addEventListener("click", async (event) => {
             event.stopPropagation();
+            if (!threadId) return;
             if (currentChannel !== channelAtRequest) return;
             if (await updateThreadStateAction(threadId, channelAtRequest, button.dataset.action)) await loadThreads();
           });
         });
-        div.onclick = () => {
+        div.onclick = async () => {
+          if (!threadId) {
+            document.getElementById("chatTitle").textContent = "Conversation unavailable";
+            document.getElementById("chatActivity").textContent = "Missing thread identifier";
+            document.getElementById("messages").innerHTML = "<div class='small'>Unable to open this conversation because its identifier is missing.</div>";
+            return;
+          }
           if (currentChannel !== channelAtRequest) return;
-          loadConversation(threadId, displayName, activityTime, thread.last_direction || thread.direction, channelAtRequest, thread);
+          await loadConversation(threadId, displayName, activityTime, thread.last_direction || thread.direction, channelAtRequest, thread);
         };
         container.appendChild(div);
       });
@@ -1354,6 +1383,13 @@
       messageReplyContext = null;
     }
     async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null, options = {}) {
+      if (wa_id === undefined || wa_id === null || String(wa_id).trim() === "") {
+        document.getElementById("chatTitle").textContent = "Conversation unavailable";
+        document.getElementById("chatActivity").textContent = "Missing thread identifier";
+        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread because the thread identifier is missing.</div>";
+        setThreadActionButtons();
+        return;
+      }
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
