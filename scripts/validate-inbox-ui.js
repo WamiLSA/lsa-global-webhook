@@ -61,5 +61,7 @@ assert(web.includes("Retry loading conversation"), 'retry loading conversation b
 assert(web.includes("No messages found for this conversation yet."), 'empty conversation renderer missing');
 assert(web.includes("payload.messages") && web.includes("payload.items") && web.includes("payload.records") && web.includes("payload.data?.messages") && web.includes("payload.thread?.messages") && web.includes("payload.conversation?.messages"), 'message normalization keys incomplete');
 assert(web.includes("if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {") && web.includes("loadStateResolved = true;"), 'stale request handling does not safely resolve loading state');
+assert(web.includes("staleRequestDetected"), 'stale request tracking flag missing for conversation loading');
 assert(web.includes("render exception:"), 'render exceptions are not surfaced to error renderer');
 assert(web.includes('inboxDebug('), 'debug diagnostics hook missing for selection/render pipeline');
+assert(!web.includes('console.log("[inbox-frontend] thread messages fetched"'), 'production console logging for conversation fetch should stay behind debug hook');
