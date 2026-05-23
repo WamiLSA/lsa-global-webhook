@@ -1526,59 +1526,64 @@
         optimisticMessagesByThread.set(threadIdAtSend, list);
       }
 
-      let res;
-      if (channelAtSend === "mail") {
-        const formData = new FormData();
-        formData.append("thread_id", threadIdAtSend);
-        formData.append("body", body);
-        if (selectedFile) formData.append("attachment", selectedFile);
-        res = await fetch("/api/communications/mail/reply", { method: "POST", body: formData });
-      } else if (selectedFile) {
-        const formData = new FormData();
-        formData.append("wa_id", threadIdAtSend);
-        formData.append("caption", body);
-        formData.append("attachment", selectedFile);
-        res = await fetch("/api/send-attachment", {
-          method: "POST",
-          body: formData
-        });
-      } else {
-        res = await fetch("/api/send", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            wa_id: threadIdAtSend,
-            body,
-            reply_to_message_id: contextAtSend?.messageId || undefined,
-            reply_context: contextAtSend?.context || undefined
-          })
-        });
-      }
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        if (channelAtSend === "whatsapp") {
-          const list = optimisticMessagesByThread.get(threadIdAtSend) || [];
-          optimisticMessagesByThread.set(threadIdAtSend, list.filter((msg) => msg.id !== optimisticId));
-        }
-        alert("Send failed: " + JSON.stringify(result));
-        return;
-      }
-
-      box.value = "";
-      clearReplyContext();
-      clearAttachmentSelection();
-      if (channelAtSend === "whatsapp") {
+      const cleanupOptimisticMessage = () => {
+        if (channelAtSend !== "whatsapp") return;
         const list = optimisticMessagesByThread.get(threadIdAtSend) || [];
         optimisticMessagesByThread.set(threadIdAtSend, list.filter((msg) => msg.id !== optimisticId));
+      };
+
+      try {
+        let res;
+        if (channelAtSend === "mail") {
+          const formData = new FormData();
+          formData.append("thread_id", threadIdAtSend);
+          formData.append("body", body);
+          if (selectedFile) formData.append("attachment", selectedFile);
+          res = await fetch("/api/communications/mail/reply", { method: "POST", body: formData });
+        } else if (selectedFile) {
+          const formData = new FormData();
+          formData.append("wa_id", threadIdAtSend);
+          formData.append("caption", body);
+          formData.append("attachment", selectedFile);
+          res = await fetch("/api/send-attachment", {
+            method: "POST",
+            body: formData
+          });
+        } else {
+          res = await fetch("/api/send", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              wa_id: threadIdAtSend,
+              body,
+              reply_to_message_id: contextAtSend?.messageId || undefined,
+              reply_context: contextAtSend?.context || undefined
+            })
+          });
+        }
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          alert("Send failed: " + JSON.stringify(result));
+          return;
+        }
+
+        box.value = "";
+        clearReplyContext();
+        clearAttachmentSelection();
+        if (currentWaId === threadIdAtSend && currentChannel === channelAtSend) {
+          await loadConversation(threadIdAtSend, contactNameAtSend, null, null, channelAtSend);
+        }
+        await loadThreads();
+      } catch (error) {
+        console.error("Failed to send reply", error);
+        alert("Send failed due to a network error. Please try again.");
+      } finally {
+        cleanupOptimisticMessage();
       }
-      if (currentWaId === threadIdAtSend && currentChannel === channelAtSend) {
-        await loadConversation(threadIdAtSend, contactNameAtSend, null, null, channelAtSend);
-      }
-      await loadThreads();
     }
 
     function setPendingAttachmentFromInput(inputElement, counterpartInputId) {
