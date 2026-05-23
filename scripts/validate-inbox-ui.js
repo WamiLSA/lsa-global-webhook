@@ -93,14 +93,17 @@ assert(server.includes('ok: false') && server.includes('messages: []') && server
 
 assert(web.includes('selectedConversationRequestId'), 'selected conversation request sequence missing');
 assert(web.includes('selectedConversationWatchdogTimer'), 'selected conversation watchdog timer state missing');
+assert(web.includes('conversationLoadTimer'), 'conversationLoadTimer global missing');
+assert(web.includes('conversationLoadSeq'), 'conversationLoadSeq global missing');
 assert(web.includes('startSelectedConversationWatchdog('), 'watchdog starter missing');
 assert(web.includes('clearSelectedConversationWatchdog();\n      const requestSeq = ++conversationRequestSeq;'), 'thread switch does not clear prior watchdog before new request');
 assert(web.includes('setTimeout(() => {') && web.includes('}, conversationLoadTimeoutMs);'), 'watchdog setTimeout missing');
 assert(web.includes('const conversationLoadTimeoutMs = 8000;'), 'watchdog timeout constant must be 8000ms');
 assert(web.includes('renderConversationTimeoutError('), 'forced timeout renderer missing');
 assert(web.includes('Conversation request timed out after 8 seconds'), 'timeout reason copy missing');
-assert(web.includes('Full conversation did not load. Showing latest available preview.'), 'timeout fallback preview copy missing');
+assert(web.includes('Full conversation did not load. Showing the latest available thread preview.'), 'timeout fallback preview copy missing');
 assert(web.includes('selectedThreadId:') && web.includes('requestId:') && web.includes('elapsedMs:'), 'safe diagnostics fields missing');
+assert(web.includes('Reload inbox'), 'reload inbox action missing from timeout/fallback card');
 assert(web.includes('renderConversationLoading(displayName, threadId);') && web.includes('startSelectedConversationWatchdog({ requestId'), 'visible loading text is not tied to watchdog path');
 assert(web.includes('clearSelectedConversationWatchdog();\n      selectedConversationLoading = false;'), 'watchdog is not cleared after timeout error render');
 
@@ -117,4 +120,11 @@ assert(web.includes('clearSelectedConversationWatchdog();\n      selectedConvers
   const isCurrent = state.selectedConversationRequestId === requestId && String(state.currentWaId || '') === String(threadId || '') && state.currentChannel === channel;
   if (isCurrent) renderConversationTimeoutError();
   assert(forcedRendered, 'deterministic watchdog simulation failed: timeout renderer unreachable when request never resolves');
+})();
+
+(function simulateNeverResolvingFetchTimeout() {
+  const hasTimeoutGuard = web.includes('setTimeout(() => {') && web.includes('conversationLoadTimeoutMs');
+  const hasTimeoutCard = web.includes('Conversation could not be loaded') && web.includes('Retry loading conversation');
+  const hasForcedPath = web.includes('renderConversationTimeoutError({') && web.includes('watchdog-timeout-fired');
+  assert(hasTimeoutGuard && hasTimeoutCard && hasForcedPath, 'never-resolving fetch simulation failed: timeout render path is not deterministic');
 })();

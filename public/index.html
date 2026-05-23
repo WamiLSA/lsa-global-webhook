@@ -649,6 +649,8 @@
     let conversationRequestSeq = 0;
     let selectedConversationRequestId = 0;
     let selectedConversationWatchdogTimer = null;
+    let conversationLoadSeq = 0;
+    let conversationLoadTimer = null;
     let selectedConversationWatchdogStartedAt = 0;
     let selectedConversationLoading = false;
     let threadSearchQuery = "";
@@ -1438,15 +1440,20 @@
         clearTimeout(selectedConversationWatchdogTimer);
         selectedConversationWatchdogTimer = null;
       }
+      if (conversationLoadTimer) {
+        clearTimeout(conversationLoadTimer);
+        conversationLoadTimer = null;
+      }
     }
 
     function startSelectedConversationWatchdog({ requestId, threadId, threadName, channel, endpoint, retry, threadMeta }) {
       clearSelectedConversationWatchdog();
       selectedConversationWatchdogStartedAt = Date.now();
       selectedConversationWatchdogTimer = setTimeout(() => {
-        const isCurrent = selectedConversationRequestId === requestId && String(currentWaId || '') === String(threadId || '') && currentChannel === channel;
+        const isCurrent = selectedConversationRequestId === requestId && String(currentWaId || '') === String(threadId || '') && currentChannel === channel && conversationLoadSeq === requestId;
         if (!isCurrent) return;
         const elapsedMs = Date.now() - selectedConversationWatchdogStartedAt;
+        inboxDebug("watchdog-timeout-fired", { threadId, requestId, elapsedMs, channel, endpoint });
         renderConversationTimeoutError({
           threadName,
           threadId,
@@ -1458,13 +1465,22 @@
           threadMeta
         });
       }, conversationLoadTimeoutMs);
+      conversationLoadTimer = selectedConversationWatchdogTimer;
     }
 
-    function renderConversationLoading(contactName, threadId) {
+    function renderConversationLoading(contactName, threadId, details = {}) {
       selectedConversationLoading = true;
       document.getElementById("chatTitle").textContent = `${contactName || "Contact"} — ${threadId}`;
       document.getElementById("chatActivity").textContent = "Loading conversation... (timeout: 8s)";
-      document.getElementById("messages").innerHTML = "<div class='small'>Loading conversation…</div><div class='small'>If this takes longer than 8 seconds, an error card with retry will appear.</div>";
+      const safe = {
+        threadId: String(details.threadId || threadId || ""),
+        threadName: String(details.threadName || contactName || ""),
+        channel: String(details.channel || currentChannel || ""),
+        endpoint: String(details.endpoint || "(pending endpoint resolution)"),
+        requestId: String(details.requestId || conversationLoadSeq || ""),
+        startedAt: details.startedAt ? new Date(details.startedAt).toISOString() : new Date().toISOString()
+      };
+      document.getElementById("messages").innerHTML = `<div class='small'>Loading conversation…</div><div class='small'>If this takes longer than 8 seconds, an error card with retry will appear.</div><details class="small" style="margin-top:8px;"><summary>Loading diagnostics</summary><div>selectedThreadId: ${escapeHtml(safe.threadId)}</div><div>selectedThreadName: ${escapeHtml(safe.threadName)}</div><div>channel: ${escapeHtml(safe.channel)}</div><div>endpoint: ${escapeHtml(safe.endpoint)}</div><div>request sequence id: ${escapeHtml(safe.requestId)}</div><div>loading start: ${escapeHtml(safe.startedAt)}</div></details>`;
     }
 
     function renderConversationError({ threadName, threadId, reason, retry, endpoint, status = "n/a", channel = currentChannel, payloadKeys = [], diagnostics = null, clearWatchdog = true }) {
@@ -1489,8 +1505,10 @@
       const preview = String(thread?.preview || thread?.last_message || thread?.body || "No preview text available.");
       const activityText = thread?.last_activity_at ? formatLastActivity(thread.last_activity_at, thread?.last_direction || "in") : "Unknown last activity";
       const safePayloadKeys = Array.isArray(payloadKeys) ? payloadKeys.slice(0, 20).join(", ") : "";
-      document.getElementById("messages").innerHTML = `<div class="thread-diagnostic"><strong>Full conversation failed to load. Showing latest available thread preview.</strong><div class="small">Thread: ${escapeHtml(String(thread?.name || thread?.display_name || currentContactName || "Unknown"))}</div><div class="small">ID: ${escapeHtml(String(thread?.id || currentWaId || "Unknown"))}</div><div class="small">Channel: ${escapeHtml(String(thread?.channel || currentChannel || "unknown"))}</div>${endpoint ? `<div class="small">Endpoint: ${escapeHtml(String(endpoint))}</div>` : ""}<div class="small">HTTP status: ${escapeHtml(String(status))}</div><div class="small">Reason: ${escapeHtml(String(reason || "Unknown error"))}</div><div class="small">Payload keys: ${escapeHtml(safePayloadKeys || "none")}</div><div class="small" style="margin-top:8px;">Full conversation did not load. Showing latest available preview.</div><div class="small">Last activity: ${escapeHtml(activityText)}</div><div class="small" style="margin-top:8px;">${escapeHtml(preview)}</div>${retry ? '<button type="button" id="retryConversationLoadBtn">Retry loading conversation</button>' : ''}</div>`;
+      const unread = Number(thread?.unread_count || thread?.unreadCount || 0);
+      document.getElementById("messages").innerHTML = `<div class="thread-diagnostic"><strong>Full conversation failed to load. Showing latest available thread preview.</strong><div class="small">Thread: ${escapeHtml(String(thread?.name || thread?.display_name || currentContactName || "Unknown"))}</div><div class="small">ID: ${escapeHtml(String(thread?.id || currentWaId || "Unknown"))}</div><div class="small">Channel: ${escapeHtml(String(thread?.channel || currentChannel || "unknown"))}</div>${endpoint ? `<div class="small">Endpoint: ${escapeHtml(String(endpoint))}</div>` : ""}<div class="small">HTTP status: ${escapeHtml(String(status))}</div><div class="small">Reason: ${escapeHtml(String(reason || "Unknown error"))}</div><div class="small">Payload keys: ${escapeHtml(safePayloadKeys || "none")}</div><div class="small" style="margin-top:8px;">Full conversation did not load. Showing the latest available thread preview.</div><div class="small">Last activity: ${escapeHtml(activityText)}</div><div class="small">Unread count: ${escapeHtml(String(unread))}</div><div class="small">Label: ${escapeHtml(String(thread?.label || "None"))}</div><div class="small" style="margin-top:8px;">${escapeHtml(preview)}</div>${retry ? '<button type="button" id="retryConversationLoadBtn">Retry loading conversation</button>' : ''}<button type="button" id="reloadInboxBtn">Reload inbox</button></div>`;
       if (retry) document.getElementById("retryConversationLoadBtn")?.addEventListener("click", retry);
+      document.getElementById("reloadInboxBtn")?.addEventListener("click", () => window.location.reload());
     }
 
     function renderConversationTimeoutError({ threadName, threadId, channel, endpoint, requestId, elapsedMs, retry, threadMeta }) {
@@ -1526,6 +1544,7 @@
       clearSelectedConversationWatchdog();
       const requestSeq = ++conversationRequestSeq;
       const requestId = ++selectedConversationRequestId;
+      conversationLoadSeq = requestId;
       if (currentChannel !== channelAtRequest) return;
       const canonicalThreadId = String(wa_id).trim();
       const conversationChanged = String(currentWaId || "") !== canonicalThreadId;
@@ -1552,6 +1571,7 @@
         conversationUrl = channelAtRequest === "mail"
           ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}`
           : `/api/inbox/conversation?thread_id=${encodeURIComponent(canonicalThreadId)}&conversation_id=${encodeURIComponent(canonicalThreadId)}&wa_id=${encodeURIComponent(canonicalThreadId)}&phone=${encodeURIComponent(canonicalThreadId)}&from=${encodeURIComponent(canonicalThreadId)}&id=${encodeURIComponent(canonicalThreadId)}&channel=${encodeURIComponent(channelAtRequest)}&requestId=${encodeURIComponent(conversationRequestId)}`;
+        renderConversationLoading(contactName, canonicalThreadId, { threadId: canonicalThreadId, threadName: contactName, channel: channelAtRequest, endpoint: conversationUrl, requestId, startedAt: selectedConversationWatchdogStartedAt || Date.now() });
         startSelectedConversationWatchdog({ requestId, threadId: canonicalThreadId, threadName: contactName, channel: channelAtRequest, endpoint: conversationUrl, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta), threadMeta: { ...(threadMeta || {}), last_activity_at: knownActivityTime } });
         inboxDebug("load-messages-fetch-url", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, requestId, conversationRequestId, url: conversationUrl });
         const res = await fetch(conversationUrl, { signal: controller.signal });
