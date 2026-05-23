@@ -1454,6 +1454,7 @@
       let payload;
       let messages;
       let loadStateResolved = false;
+      let staleRequestDetected = false;
       const conversationLoadTimeoutMs = 10000;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(new DOMException("Conversation request timed out", "TimeoutError")), conversationLoadTimeoutMs);
@@ -1463,8 +1464,11 @@
         payload = await res.json();
         messages = normalizeConversationMessages(payload);
       } catch (error) {
-        if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) return;
-        console.error("[inbox-frontend] thread message fetch failed", { wa_id: canonicalThreadId, channel: channelAtRequest, error: error?.message || String(error) });
+        if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
+          staleRequestDetected = true;
+          return;
+        }
+        inboxDebug("load-messages-request-failed", { threadId: canonicalThreadId, channel: channelAtRequest, error: error?.message || String(error), errorName: error?.name || null });
         const reason = error?.name === "TimeoutError" ? "timeout" : (error?.name === "AbortError" ? "request aborted" : (error?.message || "Unable to load this thread right now."));
         renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
         loadStateResolved = true;
@@ -1473,6 +1477,7 @@
         clearTimeout(timeoutId);
       }
       if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
+        staleRequestDetected = true;
         loadStateResolved = true;
         return;
       }
@@ -1487,10 +1492,7 @@
           return;
         }
       }
-      console.log("[inbox-frontend] thread messages fetched", {
-        wa_id,
-        count: Array.isArray(messages) ? messages.length : 0
-      });
+      inboxDebug("thread-messages-fetched", { wa_id, count: Array.isArray(messages) ? messages.length : 0 });
 
       const container = document.getElementById("messages");
       container.innerHTML = renderCurrentThreadAutomationSync();
@@ -1591,6 +1593,10 @@
         renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `render exception: ${renderError?.message || String(renderError)}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
         loadStateResolved = true;
       } finally {
+        if (staleRequestDetected && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
+          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "stale request dropped", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          loadStateResolved = true;
+        }
         if (!loadStateResolved && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
           renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "invalid payload", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
         }
