@@ -663,6 +663,13 @@
     }
     let communicationsSettings = null;
     let currentThreadMeta = null;
+    const INBOX_DEBUG = Boolean(window.__LSA_INBOX_DEBUG__);
+
+    function inboxDebug(stage, details = {}) {
+      if (!INBOX_DEBUG) return;
+      console.debug("[inbox-debug]", stage, details);
+    }
+
     let previousUnreadTotal = null;
 
     
@@ -1340,13 +1347,18 @@
           });
         });
         div.onclick = async () => {
+          inboxDebug("thread-clicked", { label: displayName, channel: channelAtRequest, resolvedThreadId: threadId });
           if (!threadId) {
-            document.getElementById("chatTitle").textContent = "Conversation unavailable";
-            document.getElementById("chatActivity").textContent = "Missing thread identifier";
-            document.getElementById("messages").innerHTML = "<div class='small'>Unable to open this conversation because its identifier is missing.</div>";
+            renderConversationError({
+              threadName: displayName,
+              threadId: "(missing)",
+              reason: "Unable to open this conversation because its identifier is missing.",
+              retry: null
+            });
             return;
           }
           if (currentChannel !== channelAtRequest) return;
+          renderConversationLoading(displayName, threadId);
           await loadConversation(threadId, displayName, activityTime, thread.last_direction || thread.direction, channelAtRequest, thread);
         };
         container.appendChild(div);
@@ -1382,19 +1394,43 @@
     function clearReplyContext() {
       messageReplyContext = null;
     }
+    function normalizeConversationMessages(payload) {
+      if (Array.isArray(payload)) return payload;
+      if (!payload || typeof payload !== "object") return [];
+      const candidates = [payload.messages, payload.items, payload.records, payload.thread?.messages, payload.conversation?.messages];
+      for (const candidate of candidates) {
+        if (Array.isArray(candidate)) return candidate;
+      }
+      return [];
+    }
+
+    function renderConversationLoading(contactName, threadId) {
+      document.getElementById("chatTitle").textContent = `${contactName || "Contact"} — ${threadId}`;
+      document.getElementById("chatActivity").textContent = "Loading conversation...";
+      document.getElementById("messages").innerHTML = "<div class='small'>Loading conversation…</div>";
+    }
+
+    function renderConversationError({ threadName, threadId, reason, retry }) {
+      document.getElementById("chatTitle").textContent = "Conversation unavailable";
+      document.getElementById("chatActivity").textContent = "Thread loading failed";
+      document.getElementById("messages").innerHTML = `<div class="thread-diagnostic"><strong>Conversation loading problem</strong><div class="small">Thread: ${escapeHtml(String(threadName || "Unknown"))}</div><div class="small">ID: ${escapeHtml(String(threadId || "Unknown"))}</div><div class="small">${escapeHtml(String(reason || "Unknown error"))}</div>${retry ? '<button type="button" id="retryConversationLoadBtn">Retry</button>' : ''}</div>`;
+      if (retry) {
+        document.getElementById("retryConversationLoadBtn")?.addEventListener("click", retry);
+      }
+    }
+
     async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null, options = {}) {
       if (wa_id === undefined || wa_id === null || String(wa_id).trim() === "") {
-        document.getElementById("chatTitle").textContent = "Conversation unavailable";
-        document.getElementById("chatActivity").textContent = "Missing thread identifier";
-        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread because the thread identifier is missing.</div>";
+        renderConversationError({ threadName: contactName, threadId: wa_id, reason: "Unable to load this thread because the thread identifier is missing.", retry: null });
         setThreadActionButtons();
         return;
       }
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
-      const conversationChanged = currentWaId !== wa_id;
-      currentWaId = wa_id;
+      const canonicalThreadId = String(wa_id).trim();
+      const conversationChanged = String(currentWaId || "") !== canonicalThreadId;
+      currentWaId = canonicalThreadId;
       currentContactName = contactName || "Contact";
       currentThreadMeta = { ...(threadMeta || {}), is_unread: false, unread_count: 0 };
       syncThreadHeaderActions();
@@ -1415,22 +1451,29 @@
         : "Loading latest activity...";
 
       let res;
+      let payload;
       let messages;
       try {
-        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(wa_id)}` : `/api/conversations/${encodeURIComponent(wa_id)}`);
-        messages = await res.json();
+        inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest });
+        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}` : `/api/conversations/${encodeURIComponent(canonicalThreadId)}`);
+        payload = await res.json();
+        messages = normalizeConversationMessages(payload);
       } catch (error) {
-        if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
-        console.error("[inbox-frontend] thread message fetch failed", { wa_id, channel: channelAtRequest, error: error?.message || String(error) });
-        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
-        document.getElementById("chatActivity").textContent = "Thread loading failed";
+        if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) return;
+        console.error("[inbox-frontend] thread message fetch failed", { wa_id: canonicalThreadId, channel: channelAtRequest, error: error?.message || String(error) });
+        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: error?.message || "Unable to load this thread right now.", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
         return;
       }
-      if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
+      if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) return;
       if (!res.ok) {
-        document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
-        document.getElementById("chatActivity").textContent = "Thread loading failed";
-        return;
+        const reason = payload?.error?.message || payload?.error || `HTTP ${res.status}`;
+        const fallbackMessages = normalizeConversationMessages(threadMeta);
+        if (fallbackMessages.length > 0) {
+          messages = fallbackMessages;
+        } else {
+          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          return;
+        }
       }
       console.log("[inbox-frontend] thread messages fetched", {
         wa_id,
@@ -1441,7 +1484,8 @@
       container.innerHTML = renderCurrentThreadAutomationSync();
       container.onscroll = () => { const distance = container.scrollHeight - container.scrollTop - container.clientHeight; isUserNearBottom = distance < 120; };
 
-      const serverMessages = Array.isArray(messages) ? messages : [];
+      const serverMessages = Array.isArray(messages) ? messages : normalizeConversationMessages(threadMeta);
+      inboxDebug("load-messages-response", { threadId: canonicalThreadId, status: res?.status, loadedCount: serverMessages.length });
       const optimisticMessages = channelAtRequest === "whatsapp" ? (optimisticMessagesByThread.get(wa_id) || []) : [];
       messages = [...serverMessages, ...optimisticMessages];
 

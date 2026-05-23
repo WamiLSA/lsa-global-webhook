@@ -35,7 +35,7 @@ assert(web.includes('await loadConversation(threadId'), 'thread click handler do
 assert(web.includes('if (!threadId) {') && web.includes('Unable to open this conversation because its identifier is missing.'), 'thread click missing safe fallback for absent threadId');
 assert(web.includes('if (wa_id === undefined || wa_id === null || String(wa_id).trim() === "")'), 'loadConversation missing missing-id guard');
 assert(web.includes('div.classList.toggle("selected"'), 'selected-thread visual state toggle missing');
-assert(web.includes('document.getElementById("messages").innerHTML = "<div class=\'small\'>Unable to load this thread right now.</div>";'), 'selected conversation render/error path missing');
+assert(web.includes('renderConversationError({'), 'selected conversation render/error path missing');
 assert(web.includes('setThreadActionButtons();'), 'composer/thread actions not tied to selected-thread flow');
 assert(web.includes('channelAtRequest === "mail"') && web.includes('channelAtRequest === "whatsapp"'), 'mobile/desktop/channel thread opening paths not covered');
 assert(!web.includes('loadConversation(undefined'), 'thread-opening path may call loadConversation with undefined');
@@ -45,3 +45,13 @@ assert(mobile.includes('formatFileSize'), 'mobile attachment size formatter miss
 assert(mobile.includes('flexShrink: 1'), 'mobile long message wrapping guard missing');
 
 console.log('validate-inbox-ui: PASS');
+
+assert(web.includes('renderConversationLoading('), 'conversation loading state renderer missing');
+assert(web.includes('renderConversationError({'), 'conversation error card renderer missing');
+assert(web.includes('normalizeConversationMessages('), 'message payload normalization helper missing');
+assert(web.includes('payload.thread?.messages') && web.includes('payload.conversation?.messages') && web.includes('payload.records'), 'message fallback key parsing is incomplete');
+assert(web.includes('renderConversationLoading(displayName, threadId);'), 'thread click does not render loading state before fetch');
+assert(web.includes('currentWaId = canonicalThreadId'), 'selected thread ID is not canonicalized before binding state');
+assert(web.includes('clearReplyContext();'), 'thread switching does not clear reply context');
+assert(web.includes('retryConversationLoadBtn'), 'retry button missing from conversation error state');
+assert(web.includes('inboxDebug('), 'debug diagnostics hook missing for selection/render pipeline');
