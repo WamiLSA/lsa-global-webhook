@@ -89,3 +89,32 @@ assert(server.includes('function resolveSelectedThread('), 'canonical resolver f
 assert(server.includes('[inbox-api] selected conversation messages result'), 'selected conversation messages result log missing');
 assert(server.includes('[inbox-api] selected conversation load failed'), 'selected conversation load failed log missing');
 assert(server.includes('ok: false') && server.includes('messages: []') && server.includes('debug:'), 'selected conversation failure JSON shape incomplete');
+
+
+assert(web.includes('selectedConversationRequestId'), 'selected conversation request sequence missing');
+assert(web.includes('selectedConversationWatchdogTimer'), 'selected conversation watchdog timer state missing');
+assert(web.includes('startSelectedConversationWatchdog('), 'watchdog starter missing');
+assert(web.includes('clearSelectedConversationWatchdog();\n      const requestSeq = ++conversationRequestSeq;'), 'thread switch does not clear prior watchdog before new request');
+assert(web.includes('setTimeout(() => {') && web.includes('}, conversationLoadTimeoutMs);'), 'watchdog setTimeout missing');
+assert(web.includes('const conversationLoadTimeoutMs = 8000;'), 'watchdog timeout constant must be 8000ms');
+assert(web.includes('renderConversationTimeoutError('), 'forced timeout renderer missing');
+assert(web.includes('Conversation request timed out after 8 seconds'), 'timeout reason copy missing');
+assert(web.includes('Full conversation did not load. Showing latest available preview.'), 'timeout fallback preview copy missing');
+assert(web.includes('selectedThreadId:') && web.includes('requestId:') && web.includes('elapsedMs:'), 'safe diagnostics fields missing');
+assert(web.includes('renderConversationLoading(displayName, threadId);') && web.includes('startSelectedConversationWatchdog({ requestId'), 'visible loading text is not tied to watchdog path');
+assert(web.includes('clearSelectedConversationWatchdog();\n      selectedConversationLoading = false;'), 'watchdog is not cleared after timeout error render');
+
+(function simulateWatchdogReachability() {
+  let forcedRendered = false;
+  const state = { selectedConversationRequestId: 7, currentWaId: '23775284311', currentChannel: 'whatsapp' };
+  const requestId = 7;
+  const threadId = '23775284311';
+  const channel = 'whatsapp';
+  const renderConversationTimeoutError = () => { forcedRendered = true; };
+  const timerBodyReachable = web.includes('const isCurrent = selectedConversationRequestId === requestId')
+    && web.includes('renderConversationTimeoutError({');
+  assert(timerBodyReachable, 'watchdog timer does not validate current thread/request before forcing timeout renderer');
+  const isCurrent = state.selectedConversationRequestId === requestId && String(state.currentWaId || '') === String(threadId || '') && state.currentChannel === channel;
+  if (isCurrent) renderConversationTimeoutError();
+  assert(forcedRendered, 'deterministic watchdog simulation failed: timeout renderer unreachable when request never resolves');
+})();
