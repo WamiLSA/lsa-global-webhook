@@ -727,6 +727,7 @@
         if (settings.notifications?.vibration_enabled && navigator.vibrate) {
           try { navigator.vibrate(90); } catch (_) {}
         }
+        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
       }
       previousUnreadTotal = total;
     }
@@ -866,6 +867,7 @@
         if (value !== undefined && value !== null && String(value).trim() !== "") {
           return String(value).trim();
         }
+        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
       }
       return "";
     }
@@ -1397,7 +1399,7 @@
     function normalizeConversationMessages(payload) {
       if (Array.isArray(payload)) return payload;
       if (!payload || typeof payload !== "object") return [];
-      const candidates = [payload.messages, payload.items, payload.records, payload.data?.messages, payload.thread?.messages, payload.conversation?.messages];
+      const candidates = [payload.messages, payload.items, payload.records, payload.rows, payload.data?.messages, payload.thread?.messages, payload.conversation?.messages];
       for (const candidate of candidates) {
         if (Array.isArray(candidate)) return candidate;
       }
@@ -1437,169 +1439,112 @@
       setThreadActionButtons();
       const isMail = channelAtRequest === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
-
-      if (conversationChanged) {
-        clearAttachmentSelection();
-        clearReplyContext();
-      }
+      if (conversationChanged) { clearAttachmentSelection(); clearReplyContext(); }
       updateThreadPolling();
 
-      document.getElementById("chatTitle").textContent =
-        channelAtRequest === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
-      document.getElementById("chatActivity").textContent = knownActivityTime
-        ? formatLastActivity(knownActivityTime, knownActivityDirection)
-        : "Loading latest activity...";
+      document.getElementById("chatTitle").textContent = channelAtRequest === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
+      document.getElementById("chatActivity").textContent = knownActivityTime ? formatLastActivity(knownActivityTime, knownActivityDirection) : "Loading latest activity...";
 
-      let res;
-      let payload;
-      let messages;
       let loadStateResolved = false;
       let staleRequestDetected = false;
       const conversationLoadTimeoutMs = 10000;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(new DOMException("Conversation request timed out", "TimeoutError")), conversationLoadTimeoutMs);
       try {
-        inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest, timeoutMs: conversationLoadTimeoutMs });
-        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}` : `/api/conversations/${encodeURIComponent(canonicalThreadId)}`, { signal: controller.signal });
-        payload = await res.json();
-        messages = normalizeConversationMessages(payload);
-      } catch (error) {
+        inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest, timeoutMs: conversationLoadTimeoutMs, requestSeq });
+        const conversationRequestId = `${channelAtRequest}-${requestSeq}-${Date.now()}`;
+        const conversationUrl = channelAtRequest === "mail"
+          ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}`
+          : `/api/inbox/conversation?thread_id=${encodeURIComponent(canonicalThreadId)}&conversation_id=${encodeURIComponent(canonicalThreadId)}&wa_id=${encodeURIComponent(canonicalThreadId)}&phone=${encodeURIComponent(canonicalThreadId)}&from=${encodeURIComponent(canonicalThreadId)}&id=${encodeURIComponent(canonicalThreadId)}&channel=${encodeURIComponent(channelAtRequest)}&requestId=${encodeURIComponent(conversationRequestId)}`;
+        inboxDebug("load-messages-fetch-url", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, conversationRequestId, url: conversationUrl });
+        const res = await fetch(conversationUrl, { signal: controller.signal });
+        const payload = await res.json();
+        inboxDebug("load-messages-response-status", { threadId: canonicalThreadId, channel: channelAtRequest, status: res.status, requestSeq });
         if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
           staleRequestDetected = true;
-          return;
-        }
-        inboxDebug("load-messages-request-failed", { threadId: canonicalThreadId, channel: channelAtRequest, error: error?.message || String(error), errorName: error?.name || null });
-        const reason = error?.name === "TimeoutError" ? "timeout" : (error?.name === "AbortError" ? "request aborted" : (error?.message || "Unable to load this thread right now."));
-        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
-        loadStateResolved = true;
-        return;
-      } finally {
-        clearTimeout(timeoutId);
-      }
-      if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
-        staleRequestDetected = true;
-        loadStateResolved = true;
-        return;
-      }
-      if (!res.ok) {
-        const reason = payload?.error?.message || payload?.error || `HTTP ${res.status}`;
-        const fallbackMessages = normalizeConversationMessages(threadMeta);
-        if (fallbackMessages.length > 0) {
-          messages = fallbackMessages;
-        } else {
-          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `non-OK response: ${reason}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
           loadStateResolved = true;
           return;
         }
-      }
-      inboxDebug("thread-messages-fetched", { wa_id, count: Array.isArray(messages) ? messages.length : 0 });
 
-      const container = document.getElementById("messages");
-      container.innerHTML = renderCurrentThreadAutomationSync();
-      container.onscroll = () => { const distance = container.scrollHeight - container.scrollTop - container.clientHeight; isUserNearBottom = distance < 120; };
+        let messages = normalizeConversationMessages(payload);
+        inboxDebug("load-messages-normalized", { threadId: canonicalThreadId, channel: channelAtRequest, normalizedCount: Array.isArray(messages) ? messages.length : 0, requestSeq });
 
-      const serverMessages = Array.isArray(messages) ? messages : normalizeConversationMessages(threadMeta);
-      inboxDebug("load-messages-response", { threadId: canonicalThreadId, status: res?.status, loadedCount: serverMessages.length });
-      const optimisticMessages = channelAtRequest === "whatsapp" ? (optimisticMessagesByThread.get(wa_id) || []) : [];
-      messages = [...serverMessages, ...optimisticMessages];
+        if (!res.ok) {
+          const reason = payload?.error?.message || payload?.error || `HTTP ${res.status}`;
+          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `non-OK response: ${reason}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          loadStateResolved = true;
+          inboxDebug("load-messages-render-error", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, reason: `non-OK response: ${reason}` });
+          return;
+        }
 
-      if (messages.length === 0) {
-        container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages found for this conversation yet.</div>";
-        document.getElementById("labelSelect").value = "";
+        const container = document.getElementById("messages");
+        container.innerHTML = renderCurrentThreadAutomationSync();
+        container.onscroll = () => { const distance = container.scrollHeight - container.scrollTop - container.clientHeight; isUserNearBottom = distance < 120; };
+
+        const serverMessages = Array.isArray(messages) ? messages : [];
+        const optimisticMessages = channelAtRequest === "whatsapp" ? (optimisticMessagesByThread.get(wa_id) || []) : [];
+        messages = [...serverMessages, ...optimisticMessages];
+
+        if (messages.length === 0) {
+          container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages found for this conversation yet.</div>";
+          document.getElementById("labelSelect").value = "";
+          currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
+          syncThreadHeaderActions();
+          document.getElementById("chatActivity").textContent = "No activity yet";
+          loadStateResolved = true;
+          inboxDebug("load-messages-render-empty", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq });
+          return;
+        }
+
+        let previousDayKey = null;
+        messages.forEach((msg) => {
+          const timestamp = getMessageTimestamp(msg);
+          const dayKey = getDayKey(timestamp);
+          if (dayKey !== previousDayKey) {
+            const separator = document.createElement("div");
+            separator.className = "day-separator";
+            separator.innerHTML = `<span>${escapeHtml(formatDayLabel(timestamp))}</span>`;
+            container.appendChild(separator);
+            previousDayKey = dayKey;
+          }
+          const div = document.createElement("div");
+          const direction = msg.direction || (msg.is_read ? "in" : "in");
+          div.className = `msg ${direction === "out" || direction === "outgoing" ? "out" : "in"}`;
+          div.innerHTML = `${renderMessageBody(msg)}<div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
+          container.appendChild(div);
+        });
+
+        const last = messages[messages.length - 1];
+        document.getElementById("labelSelect").value = last.label || "";
+        document.getElementById("chatActivity").textContent = formatLastActivity(getMessageTimestamp(last), last.direction);
+        if (!options.silent || isUserNearBottom) container.scrollTop = container.scrollHeight;
         currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
         syncThreadHeaderActions();
-        document.getElementById("chatActivity").textContent = "No activity yet";
-        return;
-      }
-
-      try {
-      let previousDayKey = null;
-      messages.forEach(msg => {
-        const timestamp = getMessageTimestamp(msg);
-        const dayKey = getDayKey(timestamp);
-        if (dayKey !== previousDayKey) {
-          const separator = document.createElement("div");
-          separator.className = "day-separator";
-          separator.innerHTML = `<span>${escapeHtml(formatDayLabel(timestamp))}</span>`;
-          container.appendChild(separator);
-          previousDayKey = dayKey;
+        await loadThreads();
+        loadStateResolved = true;
+        inboxDebug("load-messages-render-success", { threadId: canonicalThreadId, channel: channelAtRequest, renderedCount: messages.length, requestSeq });
+      } catch (error) {
+        const isCurrentPanel = requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest;
+        if (!isCurrentPanel) {
+          staleRequestDetected = true;
+          loadStateResolved = true;
+          return;
         }
-
-        const div = document.createElement("div");
-        const direction = msg.direction || (msg.is_read ? "in" : "in");
-        div.className = `msg ${direction === "out" || direction === "outgoing" ? "out" : "in"}`;
-        if (channelAtRequest === "mail") {
-          const recipients = Array.isArray(msg.recipients) ? msg.recipients.join(", ") : (msg.recipient || "-");
-          const attachmentHtml = msg.attachment?.path
-            ? `<div class="small">Attachment: <a href="${encodeURI(msg.attachment.path)}" target="_blank" rel="noopener noreferrer">${escapeHtml(msg.attachment.file_name || "document")}</a></div>`
-            : "";
-          div.innerHTML = `<div><strong>${escapeHtml(msg.subject || "(no subject)")}</strong></div>
-            <div class="small">From: ${escapeHtml(msg.sender || "-")}</div>
-            <div class="small">To: ${escapeHtml(recipients)}</div>
-            <div class="small">${escapeHtml(msg.is_read ? "Read" : "Unread")}</div>
-            <div>${escapeHtml(msg.body || msg.preview || "")}</div>${attachmentHtml}
-            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatBubbleTimestamp(timestamp))}${msg.direction === "out" || msg.direction === "outgoing" ? ` <span class="msg-status">${getMessageStatusGlyph(msg)}</span>` : ""}</div>`;
-        } else {
-          const key = messageKey(msg);
-          const starred = Boolean(getThreadStateBucket("starredByThread")[key]);
-          const hidden = Boolean(getThreadStateBucket("hiddenByThread")[key]);
-          if (hidden) return;
-          div.innerHTML = `${renderMessageBody(msg)}
-            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>
-            <div class="small" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
-              <button type="button" data-msg-action="reply">↩ Reply</button>
-              <button type="button" data-msg-action="copy">📋 Copy</button>
-              <button type="button" data-msg-action="star">${starred ? "⭐ Unstar" : "☆ Star"}</button>
-              <button type="button" data-msg-action="note">📝 Note</button>
-              <button type="button" data-msg-action="hide">🙈 Hide</button>
-            </div>`;
-          div.querySelectorAll("button[data-msg-action]").forEach((btn) => {
-            btn.addEventListener("click", async (event) => {
-              event.stopPropagation();
-              const action = btn.dataset.msgAction;
-              if (action === "reply") setReplyContext(msg);
-              if (action === "copy") await copyMessageText(msg);
-              if (action === "star") {
-                const bucket = getThreadStateBucket("starredByThread");
-                bucket[key] = !bucket[key];
-                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
-              }
-              if (action === "note") {
-                const note = window.prompt("Internal staff-only note");
-                if (note && note.trim()) getThreadStateBucket("notesByThread")[key] = note.trim();
-                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
-              }
-              if (action === "hide") {
-                getThreadStateBucket("hiddenByThread")[key] = true;
-                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
-              }
-            });
-          });
-        }
-        container.appendChild(div);
-      });
-
-      const last = messages[messages.length - 1];
-      loadStateResolved = true;
-      const lastTimestamp = getMessageTimestamp(last);
-      document.getElementById("labelSelect").value = last.label || "";
-      document.getElementById("chatActivity").textContent = formatLastActivity(lastTimestamp, last.direction);
-
-      if (!options.silent || isUserNearBottom) container.scrollTop = container.scrollHeight;
-      currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
-      syncThreadHeaderActions();
-      await loadThreads();
-      } catch (renderError) {
-        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `render exception: ${renderError?.message || String(renderError)}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        const reason = error?.name === "TimeoutError" ? "timeout" : (error?.name === "AbortError" ? "request aborted" : `render exception: ${error?.message || "Unable to load this thread right now."}`);
+        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        inboxDebug("load-messages-render-error", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, reason });
         loadStateResolved = true;
       } finally {
+        clearTimeout(timeoutId);
         if (staleRequestDetected && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
           renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "stale request dropped", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
           loadStateResolved = true;
         }
         if (!loadStateResolved && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
           renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "invalid payload", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          loadStateResolved = true;
         }
+        inboxDebug("load-messages-loading-cleared", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, resolved: loadStateResolved, staleRequestDetected });
       }
     }
 

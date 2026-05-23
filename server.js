@@ -7718,6 +7718,45 @@ app.get("/api/conversations/diagnostics/visibility", async (req, res) => {
   }
 });
 
+
+app.get("/api/inbox/conversation", async (req, res) => {
+  const requestId = String(req.query.requestId || `req-${Date.now()}`);
+  const channel = String(req.query.channel || "whatsapp");
+  const receivedThreadId = req.query.thread_id || null;
+  const receivedWaId = req.query.wa_id || null;
+  const receivedPhone = req.query.phone || req.query.from || null;
+  const receivedConversationId = req.query.conversation_id || req.query.id || null;
+  console.log("[inbox-api] selected conversation load started", { requestId, channel, receivedThreadId, receivedWaId, receivedPhone, receivedConversationId });
+
+  const attemptedLookups = [];
+  try {
+    const candidates = [receivedThreadId, receivedConversationId, receivedWaId, req.query.from, req.query.id, receivedPhone]
+      .map((v) => (v === undefined || v === null ? "" : String(v).trim()))
+      .filter(Boolean);
+    const deduped = [...new Set(candidates)];
+    let messages = [];
+    let resolvedThread = deduped[0] || null;
+
+    for (const candidate of deduped) {
+      attemptedLookups.push(candidate);
+      const { data, error } = await supabase.from("conversations").select("*").eq("wa_id", candidate).order("created_at", { ascending: true });
+      if (!error && Array.isArray(data)) {
+        messages = data;
+        resolvedThread = candidate;
+        if (data.length > 0) break;
+      }
+    }
+
+    if (resolvedThread) await markThreadReadState("whatsapp", resolvedThread);
+    const response = { ok: true, thread: { id: resolvedThread, wa_id: resolvedThread, channel }, messages: messages || [], debug: { requestId, messageCount: Array.isArray(messages) ? messages.length : 0, attemptedLookups } };
+    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: response.debug.messageCount, ok: true });
+    return res.json(response);
+  } catch (error) {
+    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
+    return res.status(500).json({ ok: false, error: error.message, messages: [], debug: { requestId, messageCount: 0, attemptedLookups } });
+  }
+});
+
 app.get("/api/conversations/:wa_id", async (req, res) => {
   try {
     const wa_id = req.params.wa_id;
