@@ -1397,7 +1397,7 @@
     function normalizeConversationMessages(payload) {
       if (Array.isArray(payload)) return payload;
       if (!payload || typeof payload !== "object") return [];
-      const candidates = [payload.messages, payload.items, payload.records, payload.thread?.messages, payload.conversation?.messages];
+      const candidates = [payload.messages, payload.items, payload.records, payload.data?.messages, payload.thread?.messages, payload.conversation?.messages];
       for (const candidate of candidates) {
         if (Array.isArray(candidate)) return candidate;
       }
@@ -1413,7 +1413,7 @@
     function renderConversationError({ threadName, threadId, reason, retry }) {
       document.getElementById("chatTitle").textContent = "Conversation unavailable";
       document.getElementById("chatActivity").textContent = "Thread loading failed";
-      document.getElementById("messages").innerHTML = `<div class="thread-diagnostic"><strong>Conversation loading problem</strong><div class="small">Thread: ${escapeHtml(String(threadName || "Unknown"))}</div><div class="small">ID: ${escapeHtml(String(threadId || "Unknown"))}</div><div class="small">${escapeHtml(String(reason || "Unknown error"))}</div>${retry ? '<button type="button" id="retryConversationLoadBtn">Retry</button>' : ''}</div>`;
+      document.getElementById("messages").innerHTML = `<div class="thread-diagnostic"><strong>Conversation could not be loaded</strong><div class="small">Thread: ${escapeHtml(String(threadName || "Unknown"))}</div><div class="small">ID: ${escapeHtml(String(threadId || "Unknown"))}</div><div class="small">Reason: ${escapeHtml(String(reason || "Unknown error"))}</div>${retry ? '<button type="button" id="retryConversationLoadBtn">Retry loading conversation</button>' : ''}</div>`;
       if (retry) {
         document.getElementById("retryConversationLoadBtn")?.addEventListener("click", retry);
       }
@@ -1453,25 +1453,37 @@
       let res;
       let payload;
       let messages;
+      let loadStateResolved = false;
+      const conversationLoadTimeoutMs = 10000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(new DOMException("Conversation request timed out", "TimeoutError")), conversationLoadTimeoutMs);
       try {
-        inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest });
-        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}` : `/api/conversations/${encodeURIComponent(canonicalThreadId)}`);
+        inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest, timeoutMs: conversationLoadTimeoutMs });
+        res = await fetch(channelAtRequest === "mail" ? `/api/communications/mail/threads/${encodeURIComponent(canonicalThreadId)}` : `/api/conversations/${encodeURIComponent(canonicalThreadId)}`, { signal: controller.signal });
         payload = await res.json();
         messages = normalizeConversationMessages(payload);
       } catch (error) {
         if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) return;
         console.error("[inbox-frontend] thread message fetch failed", { wa_id: canonicalThreadId, channel: channelAtRequest, error: error?.message || String(error) });
-        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: error?.message || "Unable to load this thread right now.", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        const reason = error?.name === "TimeoutError" ? "timeout" : (error?.name === "AbortError" ? "request aborted" : (error?.message || "Unable to load this thread right now."));
+        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        loadStateResolved = true;
+        return;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
+        loadStateResolved = true;
         return;
       }
-      if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) return;
       if (!res.ok) {
         const reason = payload?.error?.message || payload?.error || `HTTP ${res.status}`;
         const fallbackMessages = normalizeConversationMessages(threadMeta);
         if (fallbackMessages.length > 0) {
           messages = fallbackMessages;
         } else {
-          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `non-OK response: ${reason}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          loadStateResolved = true;
           return;
         }
       }
@@ -1490,7 +1502,7 @@
       messages = [...serverMessages, ...optimisticMessages];
 
       if (messages.length === 0) {
-        container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages yet.</div>";
+        container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages found for this conversation yet.</div>";
         document.getElementById("labelSelect").value = "";
         currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
         syncThreadHeaderActions();
@@ -1498,6 +1510,7 @@
         return;
       }
 
+      try {
       let previousDayKey = null;
       messages.forEach(msg => {
         const timestamp = getMessageTimestamp(msg);
@@ -1565,6 +1578,7 @@
       });
 
       const last = messages[messages.length - 1];
+      loadStateResolved = true;
       const lastTimestamp = getMessageTimestamp(last);
       document.getElementById("labelSelect").value = last.label || "";
       document.getElementById("chatActivity").textContent = formatLastActivity(lastTimestamp, last.direction);
@@ -1573,6 +1587,14 @@
       currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
       syncThreadHeaderActions();
       await loadThreads();
+      } catch (renderError) {
+        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `render exception: ${renderError?.message || String(renderError)}`, retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        loadStateResolved = true;
+      } finally {
+        if (!loadStateResolved && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
+          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "invalid payload", retry: () => loadConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        }
+      }
     }
 
     async function sendReply() {

@@ -54,4 +54,12 @@ assert(web.includes('renderConversationLoading(displayName, threadId);'), 'threa
 assert(web.includes('currentWaId = canonicalThreadId'), 'selected thread ID is not canonicalized before binding state');
 assert(web.includes('clearReplyContext();'), 'thread switching does not clear reply context');
 assert(web.includes('retryConversationLoadBtn'), 'retry button missing from conversation error state');
+assert(web.includes("AbortController"), 'conversation fetch timeout controller missing');
+assert(web.includes("conversationLoadTimeoutMs"), 'conversation loading timeout fallback missing');
+assert(web.includes("Conversation could not be loaded"), 'conversation error card title missing');
+assert(web.includes("Retry loading conversation"), 'retry loading conversation button missing');
+assert(web.includes("No messages found for this conversation yet."), 'empty conversation renderer missing');
+assert(web.includes("payload.messages") && web.includes("payload.items") && web.includes("payload.records") && web.includes("payload.data?.messages") && web.includes("payload.thread?.messages") && web.includes("payload.conversation?.messages"), 'message normalization keys incomplete');
+assert(web.includes("if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {") && web.includes("loadStateResolved = true;"), 'stale request handling does not safely resolve loading state');
+assert(web.includes("render exception:"), 'render exceptions are not surfaced to error renderer');
 assert(web.includes('inboxDebug('), 'debug diagnostics hook missing for selection/render pipeline');
