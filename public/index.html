@@ -637,6 +637,10 @@
     let currentView = "active";
     let currentChannel = "whatsapp";
     let threadListRequestSeq = 0;
+    let activeThreadPollTimer = null;
+    let isUserNearBottom = true;
+    let optimisticMessagesByThread = new Map();
+    let messageReplyContext = null;
     let conversationRequestSeq = 0;
     let messageReplyContext = null;
     let threadSearchQuery = "";
@@ -734,7 +738,10 @@
       if (!threadId) return;
       const res = await fetch(getThreadActionEndpoint(channel, threadId, `state/${action}`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
       const result = await res.json();
-      if (!res.ok) { alert("Thread state update failed: " + JSON.stringify(result)); return false; }
+      if (!res.ok) {
+        alert("Thread state update failed: " + JSON.stringify(result));
+        return false;
+      }
       return true;
     }
 
@@ -1091,7 +1098,8 @@
     }
 
     function renderMessageBody(msg) {
-      const textBody = msg.body || "";
+      const rawTextBody = String(msg.body || "").trim();
+      const textBody = /^\[[^\]]+ attachment\]$/i.test(rawTextBody) ? "" : rawTextBody;
       const safeCaption = escapeHtml(msg.caption || "");
       const attachmentHtml = renderAttachment(msg);
       const shouldRenderCaption = Boolean(msg.caption) && msg.caption !== textBody;
@@ -1151,7 +1159,7 @@
       const noteHtml = note ? `<div class="small" style="margin-top:6px;padding:6px;border-radius:8px;background:#f8fafc;border:1px dashed #94a3b8;"><strong>Internal note</strong>: ${escapeHtml(note)}</div>` : "";
       if (attachmentHtml) {
         return `
-          <div>${escapeHtml(textBody)}</div>
+          ${textBody ? `<div>${escapeHtml(textBody)}</div>` : ""}
           ${attachmentHtml}
           ${shouldRenderCaption ? `<div class="caption">${safeCaption}</div>` : ""}
           ${metadataHtml}
@@ -1275,7 +1283,6 @@
         const preview = thread.last_message || thread.preview || "";
         const displayName = thread.contact_name || thread.subject || "Unknown";
         const threadId = channelAtRequest === "mail" ? thread.thread_id : thread.wa_id;
-        const threadIdText = channelAtRequest === "mail" ? (thread.sender || "") : thread.wa_id;
         const unreadCount = Number(thread.unread_count || thread.unreadCount || 0);
         const settings = getCommunicationsSettings();
         const showBadges = settings.thread_list?.show_unread_badge_count !== false;
@@ -1292,7 +1299,6 @@
             <div class="thread-name-row"><strong>${escapeHtml(displayName)}</strong>${iconHtml}</div>
             <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(settings.thread_list?.recency_display === "exact" ? (parseMessageDate(activityTime)?.toLocaleString() || "—") : formatThreadRecency(activityTime))}</span>
           </div>
-          ${threadIdText ? `<div class="small">${escapeHtml(threadIdText)}</div>` : ""}
           ${showPreview ? `<div class="small thread-preview">${escapeHtml(preview)}</div>` : `<div class="small thread-preview">Preview hidden by Communications Settings</div>`}
           ${showActivity ? `<div class="thread-activity">${escapeHtml(formatLastActivity(activityTime, thread.last_direction || thread.direction))}</div>` : ""}
           <div class="thread-controls">
@@ -1343,7 +1349,7 @@
       document.getElementById("attachmentName").textContent = "";
     }
 
-    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null) {
+    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null, options = {}) {
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
@@ -1358,7 +1364,9 @@
 
       if (conversationChanged) {
         clearAttachmentSelection();
+        if (!messageReplyContext || messageReplyContext.threadId !== wa_id) messageReplyContext = null;
       }
+      updateThreadPolling();
 
       document.getElementById("chatTitle").textContent =
         channelAtRequest === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
@@ -1380,6 +1388,7 @@
       }
       if (requestSeq !== conversationRequestSeq || currentWaId !== wa_id || currentChannel !== channelAtRequest) return;
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         document.getElementById("messages").innerHTML = "<div class='small'>Unable to load this thread right now.</div>";
         document.getElementById("chatActivity").textContent = "Thread loading failed";
         return;
@@ -1391,6 +1400,7 @@
 
       const container = document.getElementById("messages");
       container.innerHTML = renderCurrentThreadAutomationSync();
+      container.onscroll = () => { const distance = container.scrollHeight - container.scrollTop - container.clientHeight; isUserNearBottom = distance < 120; };
 
       if (!Array.isArray(messages) || messages.length === 0) {
         container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages yet.</div>";
@@ -1426,7 +1436,7 @@
             <div class="small">To: ${escapeHtml(recipients)}</div>
             <div class="small">${escapeHtml(msg.is_read ? "Read" : "Unread")}</div>
             <div>${escapeHtml(msg.body || msg.preview || "")}</div>${attachmentHtml}
-            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
+            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatBubbleTimestamp(timestamp))}${msg.direction === "out" || msg.direction === "outgoing" ? ` <span class="msg-status">${getMessageStatusGlyph(msg)}</span>` : ""}</div>`;
         } else {
           const key = messageKey(msg);
           const starred = Boolean(getThreadStateBucket("starredByThread")[key]);
@@ -1472,7 +1482,7 @@
       document.getElementById("labelSelect").value = last.label || "";
       document.getElementById("chatActivity").textContent = formatLastActivity(lastTimestamp, last.direction);
 
-      container.scrollTop = container.scrollHeight;
+      if (!options.silent || isUserNearBottom) container.scrollTop = container.scrollHeight;
       currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
       syncThreadHeaderActions();
       await loadThreads();
@@ -1528,6 +1538,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Send failed: " + JSON.stringify(result));
         return;
       }
@@ -1577,6 +1588,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Label update failed: " + JSON.stringify(result));
         return;
       }
@@ -1602,6 +1614,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Clear chat failed: " + JSON.stringify(result));
         return;
       }
@@ -1633,6 +1646,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Delete thread failed: " + JSON.stringify(result));
         return;
       }
@@ -1658,6 +1672,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Archive thread failed: " + JSON.stringify(result));
         return;
       }
@@ -1683,6 +1698,7 @@
       const result = await res.json();
 
       if (!res.ok) {
+        const optimisticEl = document.getElementById(optimisticId); if (optimisticEl) optimisticEl.querySelector(".msg-status").textContent = "⚠";
         alert("Unarchive thread failed: " + JSON.stringify(result));
         return;
       }
@@ -1709,6 +1725,7 @@
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       loadCommunicationsSettings().then(loadThreads);
     }
+    document.addEventListener("visibilitychange", updateThreadPolling);
     setInterval(loadThreads, 5000);
   </script>
 </body>
