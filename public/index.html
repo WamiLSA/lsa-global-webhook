@@ -607,8 +607,10 @@
     </div>
 
     <div id="messages"></div>
+    <div id="copyToast" style="display:none;position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;padding:6px 12px;border-radius:999px;font-size:12px;z-index:40;">Copied</div>
 
     <div id="composer">
+      <div id="replyContext"></div>
       <textarea id="replyBox" placeholder="Type your reply..."></textarea>
       <div class="composer-tools">
         <div class="composer-attachment-actions">
@@ -636,6 +638,21 @@
     let currentChannel = "whatsapp";
     let threadListRequestSeq = 0;
     let conversationRequestSeq = 0;
+    let messageReplyContext = null;
+    let threadSearchQuery = "";
+    const threadUiState = {
+      starredByThread: {},
+      hiddenByThread: {},
+      notesByThread: {}
+    };
+    function messageKey(msg) {
+      return String(msg.id || msg.message_id || msg.wamid || `${msg.direction || "in"}-${msg.created_at || msg.timestamp || Date.now()}`);
+    }
+    function getThreadStateBucket(bucketName) {
+      const key = currentWaId || "__none__";
+      if (!threadUiState[bucketName][key]) threadUiState[bucketName][key] = {};
+      return threadUiState[bucketName][key];
+    }
     let communicationsSettings = null;
     let currentThreadMeta = null;
     let previousUnreadTotal = null;
@@ -1129,16 +1146,51 @@
         metadataHtml = blocks.length ? `<div class="mediation-panel">${blocks.join("")}</div>` : "";
       }
 
+      const key = messageKey(msg);
+      const note = getThreadStateBucket("notesByThread")[key];
+      const noteHtml = note ? `<div class="small" style="margin-top:6px;padding:6px;border-radius:8px;background:#f8fafc;border:1px dashed #94a3b8;"><strong>Internal note</strong>: ${escapeHtml(note)}</div>` : "";
       if (attachmentHtml) {
         return `
           <div>${escapeHtml(textBody)}</div>
           ${attachmentHtml}
           ${shouldRenderCaption ? `<div class="caption">${safeCaption}</div>` : ""}
           ${metadataHtml}
+          ${noteHtml}
         `;
       }
 
-      return `<div>${escapeHtml(textBody)}</div>${metadataHtml}`;
+      return `<div>${escapeHtml(textBody)}</div>${metadataHtml}${noteHtml}`;
+    }
+    function setReplyContext(msg) {
+      messageReplyContext = {
+        id: messageKey(msg),
+        body: String(msg.body || msg.caption || "[Attachment]").slice(0, 180),
+        sender: msg.direction === "out" ? "Staff" : (currentContactName || "Contact"),
+        timestamp: getMessageTimestamp(msg)
+      };
+      const pane = document.getElementById("replyContext");
+      if (pane) {
+        pane.innerHTML = `<div style="padding:8px;border-left:3px solid #2563eb;background:#eff6ff;border-radius:8px;margin:8px 0;">
+          <strong>Replying to ${escapeHtml(messageReplyContext.sender)}</strong>
+          <div class="small">${escapeHtml(messageReplyContext.body)}</div>
+          <button type="button" onclick="clearReplyContext()">Cancel</button>
+        </div>`;
+      }
+    }
+    function clearReplyContext() {
+      messageReplyContext = null;
+      const pane = document.getElementById("replyContext");
+      if (pane) pane.innerHTML = "";
+    }
+    async function copyMessageText(msg) {
+      const text = String(msg.body || msg.caption || "").trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      const toast = document.getElementById("copyToast");
+      if (toast) {
+        toast.style.display = "block";
+        window.setTimeout(() => { toast.style.display = "none"; }, 1200);
+      }
     }
 
     async function loadThreads() {
@@ -1150,6 +1202,7 @@
         : (viewAtRequest === "archived" ? "/api/conversations/archived" : "/api/conversations");
       const container = document.getElementById("threads");
       let res;
+      const outgoingBody = body;
       let payload;
       try {
         res = await fetch(endpoint);
@@ -1376,7 +1429,41 @@
             <div>${escapeHtml(msg.body || msg.preview || "")}</div>${attachmentHtml}
             <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
         } else {
-          div.innerHTML = `${renderMessageBody(msg)}<div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>`;
+          const key = messageKey(msg);
+          const starred = Boolean(getThreadStateBucket("starredByThread")[key]);
+          const hidden = Boolean(getThreadStateBucket("hiddenByThread")[key]);
+          if (hidden) return;
+          div.innerHTML = `${renderMessageBody(msg)}
+            <div class="msg-time" title="${escapeHtml(parseMessageDate(timestamp)?.toLocaleString() || "Time unavailable")}">${escapeHtml(formatMessageTime(timestamp))}</div>
+            <div class="small" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;">
+              <button type="button" data-msg-action="reply">↩ Reply</button>
+              <button type="button" data-msg-action="copy">📋 Copy</button>
+              <button type="button" data-msg-action="star">${starred ? "⭐ Unstar" : "☆ Star"}</button>
+              <button type="button" data-msg-action="note">📝 Note</button>
+              <button type="button" data-msg-action="hide">🙈 Hide</button>
+            </div>`;
+          div.querySelectorAll("button[data-msg-action]").forEach((btn) => {
+            btn.addEventListener("click", async (event) => {
+              event.stopPropagation();
+              const action = btn.dataset.msgAction;
+              if (action === "reply") setReplyContext(msg);
+              if (action === "copy") await copyMessageText(msg);
+              if (action === "star") {
+                const bucket = getThreadStateBucket("starredByThread");
+                bucket[key] = !bucket[key];
+                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
+              }
+              if (action === "note") {
+                const note = window.prompt("Internal staff-only note");
+                if (note && note.trim()) getThreadStateBucket("notesByThread")[key] = note.trim();
+                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
+              }
+              if (action === "hide") {
+                getThreadStateBucket("hiddenByThread")[key] = true;
+                await loadConversation(currentWaId, currentContactName, null, null, channelAtRequest, currentThreadMeta);
+              }
+            });
+          });
         }
         container.appendChild(div);
       });
@@ -1407,17 +1494,18 @@
       const channelAtSend = currentChannel;
       const threadIdAtSend = currentWaId;
       const contactNameAtSend = currentContactName;
+      const outgoingBody = body;
       let res;
       if (channelAtSend === "mail") {
         const formData = new FormData();
         formData.append("thread_id", threadIdAtSend);
-        formData.append("body", body);
+        formData.append("body", outgoingBody);
         if (selectedFile) formData.append("attachment", selectedFile);
         res = await fetch("/api/communications/mail/reply", { method: "POST", body: formData });
       } else if (selectedFile) {
         const formData = new FormData();
         formData.append("wa_id", threadIdAtSend);
-        formData.append("caption", body);
+        formData.append("caption", outgoingBody);
         formData.append("attachment", selectedFile);
         res = await fetch("/api/send-attachment", {
           method: "POST",
@@ -1431,7 +1519,9 @@
           },
           body: JSON.stringify({
             wa_id: threadIdAtSend,
-            body
+            body: outgoingBody,
+            reply_to_message_id: messageReplyContext?.id || null,
+            reply_context: messageReplyContext || null
           })
         });
       }
@@ -1444,6 +1534,7 @@
       }
 
       box.value = "";
+      clearReplyContext();
       clearAttachmentSelection();
       if (currentWaId === threadIdAtSend && currentChannel === channelAtSend) {
         await loadConversation(threadIdAtSend, contactNameAtSend, null, null, channelAtSend);
