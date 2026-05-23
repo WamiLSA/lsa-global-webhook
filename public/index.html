@@ -1445,6 +1445,10 @@
       const channelAtSend = currentChannel;
       const threadIdAtSend = currentWaId;
       const contactNameAtSend = currentContactName;
+      const contextAtSend =
+        channelAtSend === "whatsapp" && messageReplyContext?.threadId === threadIdAtSend
+          ? messageReplyContext
+          : null;
       let res;
       if (channelAtSend === "mail") {
         const formData = new FormData();
