@@ -7719,6 +7719,20 @@ app.get("/api/conversations/diagnostics/visibility", async (req, res) => {
 });
 
 
+function resolveSelectedThread(input = {}) {
+  const candidates = [
+    input.thread_id,
+    input.conversation_id,
+    input.wa_id,
+    input.phone,
+    input.from,
+    input.id
+  ]
+    .map((value) => (value === undefined || value === null ? "" : String(value).trim()))
+    .filter(Boolean);
+  return [...new Set(candidates)];
+}
+
 app.get("/api/inbox/conversation", async (req, res) => {
   const requestId = String(req.query.requestId || `req-${Date.now()}`);
   const channel = String(req.query.channel || "whatsapp");
@@ -7730,30 +7744,50 @@ app.get("/api/inbox/conversation", async (req, res) => {
 
   const attemptedLookups = [];
   try {
-    const candidates = [receivedThreadId, receivedConversationId, receivedWaId, req.query.from, req.query.id, receivedPhone]
-      .map((v) => (v === undefined || v === null ? "" : String(v).trim()))
-      .filter(Boolean);
-    const deduped = [...new Set(candidates)];
+    const lookupInput = {
+      thread_id: req.query.thread_id,
+      conversation_id: req.query.conversation_id,
+      wa_id: req.query.wa_id,
+      phone: req.query.phone,
+      from: req.query.from,
+      id: req.query.id,
+      channel
+    };
+    console.log("[inbox-api] selected conversation lookup input", { requestId, lookupInput });
+    const deduped = resolveSelectedThread(lookupInput);
+    const requestedId = deduped[0] || null;
     let messages = [];
-    let resolvedThread = deduped[0] || null;
+    let resolvedThread = null;
+    let matchedBy = null;
 
     for (const candidate of deduped) {
       attemptedLookups.push(candidate);
       const { data, error } = await supabase.from("conversations").select("*").eq("wa_id", candidate).order("created_at", { ascending: true });
-      if (!error && Array.isArray(data)) {
+      if (error) continue;
+      if (Array.isArray(data) && data.length > 0) {
         messages = data;
         resolvedThread = candidate;
-        if (data.length > 0) break;
+        matchedBy = "wa_id";
+        break;
       }
     }
 
-    if (resolvedThread) await markThreadReadState("whatsapp", resolvedThread);
-    const response = { ok: true, thread: { id: resolvedThread, wa_id: resolvedThread, channel }, messages: messages || [], debug: { requestId, messageCount: Array.isArray(messages) ? messages.length : 0, attemptedLookups } };
-    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: response.debug.messageCount, ok: true });
+    if (!requestedId) {
+      return res.status(400).json({ ok: false, error: "Missing thread identifier.", messages: [], debug: { requestedId: null, channel, requestId, attemptedLookups } });
+    }
+    if (!resolvedThread) {
+      console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
+      return res.status(404).json({ ok: false, error: "Conversation not found for provided identifiers.", messages: [], debug: { requestedId, channel, requestId, attemptedLookups } });
+    }
+    await markThreadReadState("whatsapp", resolvedThread);
+    const thread = messages[0] || { wa_id: resolvedThread };
+    console.log("[inbox-api] selected conversation messages result", { requestId, resolvedThread, count: messages.length });
+    const response = { ok: true, thread, messages, debug: { matchedBy, requestedId, channel, requestId, attemptedLookups } };
+    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: messages.length, ok: true });
     return res.json(response);
   } catch (error) {
-    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
-    return res.status(500).json({ ok: false, error: error.message, messages: [], debug: { requestId, messageCount: 0, attemptedLookups } });
+    console.log("[inbox-api] selected conversation load failed", { requestId, error: error?.message || String(error) });
+    return res.status(500).json({ ok: false, error: error.message, messages: [], debug: { requestedId: receivedThreadId || null, channel, requestId, attemptedLookups } });
   }
 });
 
