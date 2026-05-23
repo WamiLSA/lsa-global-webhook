@@ -660,6 +660,7 @@
     let communicationsSettings = null;
     let currentThreadMeta = null;
     let previousUnreadTotal = null;
+    let messageReplyContext = null;
 
     
     const DEFAULT_COMMUNICATIONS_SETTINGS = {
@@ -1349,7 +1350,12 @@
       document.getElementById("attachmentName").textContent = "";
     }
 
-    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null, options = {}) {
+
+
+    function clearReplyContext() {
+      messageReplyContext = null;
+    }
+    async function loadConversation(wa_id, contactName = "Contact", knownActivityTime = null, knownActivityDirection = null, channel = currentChannel, threadMeta = null) {
       const channelAtRequest = channel === "mail" ? "mail" : "whatsapp";
       const requestSeq = ++conversationRequestSeq;
       if (currentChannel !== channelAtRequest) return;
@@ -1364,7 +1370,7 @@
 
       if (conversationChanged) {
         clearAttachmentSelection();
-        if (!messageReplyContext || messageReplyContext.threadId !== wa_id) messageReplyContext = null;
+        clearReplyContext();
       }
       updateThreadPolling();
 
@@ -1503,7 +1509,14 @@
       const channelAtSend = currentChannel;
       const threadIdAtSend = currentWaId;
       const contactNameAtSend = currentContactName;
-      const outgoingBody = body;
+      const contextAtSend =
+        messageReplyContext &&
+        messageReplyContext.threadId === threadIdAtSend
+          ? { ...messageReplyContext }
+          : null;
+      if (messageReplyContext && !contextAtSend) {
+        clearReplyContext();
+      }
       let res;
       if (channelAtSend === "mail") {
         const formData = new FormData();
@@ -1528,9 +1541,9 @@
           },
           body: JSON.stringify({
             wa_id: threadIdAtSend,
-            body: outgoingBody,
-            reply_to_message_id: messageReplyContext?.id || null,
-            reply_context: messageReplyContext || null
+            body,
+            reply_to_message_id: contextAtSend?.messageId || undefined,
+            reply_context: contextAtSend?.context || undefined
           })
         });
       }
@@ -1546,6 +1559,7 @@
       box.value = "";
       clearReplyContext();
       clearAttachmentSelection();
+      clearReplyContext();
       if (currentWaId === threadIdAtSend && currentChannel === channelAtSend) {
         await loadConversation(threadIdAtSend, contactNameAtSend, null, null, channelAtSend);
       }
