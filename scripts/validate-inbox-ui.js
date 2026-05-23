@@ -5,6 +5,11 @@ const mobile=fs.readFileSync('mobile-app/src/screens/ConversationScreen.js','utf
 assert(web.includes('function renderAttachmentCard'), 'attachment card renderer missing');
 assert(web.includes('attachment-grid'), 'attachment grid css missing');
 assert(web.includes('formatFileSize'), 'file size formatter missing');
+assert(web.includes('data-msg-action="reply"'), 'message reply action missing');
+assert(web.includes('data-msg-action="copy"'), 'message copy action missing');
+assert(web.includes('data-msg-action="star"'), 'message star action missing');
+assert(web.includes('id="replyContext"'), 'reply context preview container missing');
+assert(web.includes('id="copyToast"'), 'copy confirmation toast missing');
 assert(!web.includes('<div>${escapeHtml(threadIdText || "")}</div>'), 'raw thread id row still present');
 assert(/overflow-wrap:\s*anywhere/.test(web), 'message overflow wrapping not enforced');
 assert(mobile.includes('attachmentCard'), 'mobile attachment card styles missing');
