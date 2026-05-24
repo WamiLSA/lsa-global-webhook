@@ -7318,7 +7318,8 @@ const CONVERSATION_THREAD_OPTIONAL_COLUMNS = [
   "conversation_owner",
   "human_takeover",
   "conversation_type",
-  "followup_eligible"
+  "followup_eligible",
+  "cleared_at"
 ];
 
 const CONVERSATION_THREAD_SELECT_COLUMNS = [
@@ -7333,10 +7334,11 @@ const CONVERSATION_THREAD_SCHEMA_FIELD_PURPOSE = {
   conversation_owner: "ownership display and human takeover state",
   human_takeover: "human takeover state",
   conversation_type: "follow-up classification",
-  followup_eligible: "follow-up eligibility"
+  followup_eligible: "follow-up eligibility",
+  cleared_at: "chat clear visibility filtering"
 };
 
-async function buildConversationThreadSummary(rows) {
+async function buildConversationThreadSummary(rows, { contacts = [] } = {}) {
   const settings = await readCommunicationsSettings();
   const groupedRows = new Map();
 
@@ -7381,7 +7383,38 @@ async function buildConversationThreadSummary(rows) {
     summaries.push(decorateThreadSummaryWithState({ ...group.summary, unread_count: unreadCount }, state));
   }
 
+  for (const contact of contacts || []) {
+    const waId = String(contact?.wa_id || "").trim();
+    if (!waId || groupedRows.has(waId)) continue;
+    const preferredContactName = getPreferredContactName(null, contact.contact_name, { waId });
+    const state = getThreadState(settings, "whatsapp", waId);
+    summaries.push(decorateThreadSummaryWithState({
+      wa_id: waId,
+      contact_name: preferredContactName,
+      last_message: "",
+      last_direction: null,
+      last_time: null,
+      last_activity_at: contact.updated_at || contact.created_at || null,
+      label: "",
+      is_archived: false,
+      conversation_owner: null,
+      human_takeover: null,
+      conversation_type: null,
+      followup_eligible: null,
+      unread_count: 0,
+      conversation_state: "no_messages"
+    }, state));
+  }
+
   return sortThreadSummaries(summaries, settings);
+}
+
+async function fetchWhatsAppContacts() {
+  const { data, error } = await supabase
+    .from("whatsapp_contacts")
+    .select("wa_id, contact_name, created_at, updated_at");
+  if (error) return { data: [], error };
+  return { data: Array.isArray(data) ? data : [], error: null };
 }
 
 async function queryConversationRowsForThreadView({ archived = false } = {}) {
@@ -7427,7 +7460,7 @@ async function queryConversationRowsForThreadView({ archived = false } = {}) {
     });
 
     if (!error) {
-      const rows = Array.isArray(data) ? data : [];
+      const rows = (Array.isArray(data) ? data : []).filter((row) => row?.cleared_at === null || row?.cleared_at === undefined);
       console.log("[inbox-api] conversation thread query succeeded", {
         view,
         rows: rows.length,
@@ -7634,7 +7667,15 @@ app.get("/api/conversations", async (req, res) => {
       });
     }
 
-    const threads = await buildConversationThreadSummary(result.rows);
+    const contactsResult = await fetchWhatsAppContacts();
+    const contacts = contactsResult.error ? [] : contactsResult.data;
+    if (contactsResult.error) {
+      console.warn("[inbox-api] whatsapp_contacts load failed; continuing with conversation fallback only", {
+        error_code: contactsResult.error?.code || null,
+        error_message: contactsResult.error?.message || String(contactsResult.error)
+      });
+    }
+    const threads = await buildConversationThreadSummary(result.rows, { contacts });
     if (!threads.length) {
       const diagnostics = await getConversationVisibilityDiagnostics();
       console.warn("[inbox-api] active conversation thread view returned zero threads", {
@@ -7805,8 +7846,9 @@ app.get("/api/inbox/conversation", async (req, res) => {
         });
         continue;
       }
-      if (Array.isArray(data) && data.length > 0) {
-        messages = data;
+      const visibleMessages = (Array.isArray(data) ? data : []).filter((row) => row?.cleared_at === null || row?.cleared_at === undefined);
+      if (visibleMessages.length > 0) {
+        messages = visibleMessages;
         canonical.resolvedThread = candidate;
         canonical.matchedBy = "wa_id";
         break;
@@ -7838,6 +7880,23 @@ app.get("/api/inbox/conversation", async (req, res) => {
         };
         console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: "all-candidates-failed" });
         return res.status(500).json(payload);
+      }
+      const { data: contactData, error: contactError } = await supabase
+        .from("whatsapp_contacts")
+        .select("wa_id, contact_name")
+        .in("wa_id", deduped)
+        .limit(1);
+      if (!contactError && Array.isArray(contactData) && contactData.length > 0) {
+        const resolvedThread = String(contactData[0].wa_id || requestedId);
+        await markThreadReadState("whatsapp", resolvedThread);
+        return res.status(200).json({
+          ok: true,
+          thread: { wa_id: resolvedThread, id: resolvedThread, channel, contact_name: contactData[0].contact_name || null },
+          conversation: {},
+          messages: [],
+          conversation_state: "cleared",
+          debug: { matchedBy: "whatsapp_contacts", requestedId, resolvedThread, channel, requestId, attemptedLookups }
+        });
       }
       const payload = {
         ok: false,
@@ -8011,7 +8070,9 @@ app.get("/api/mobile/inbox", async (req, res) => {
       return res.status(500).json({ ok: false, error: result.error, diagnostics: { attempts: result.attempts, blocked_columns: result.blockedColumns || [] } });
     }
     const mode = await getCurrentSystemMode();
-    const conversations = (await buildConversationThreadSummary(result.rows)).map(summarizeThreadForMobile);
+    const contactsResult = await fetchWhatsAppContacts();
+    const contacts = contactsResult.error ? [] : contactsResult.data;
+    const conversations = (await buildConversationThreadSummary(result.rows, { contacts })).map(summarizeThreadForMobile);
     console.log("[mobile-api] inbox load succeeded", { user: req.accountIdentifier || getAuthenticatedIdentifier(req), count: conversations.length, runtime_mode: mode });
     return res.json({ ok: true, conversations, runtimeMode: mode.toUpperCase(), degraded: Boolean(result.degraded) });
   } catch (error) {
@@ -8084,7 +8145,7 @@ app.post("/api/mobile/inbox/:conversationId/reply", async (req, res) => {
 async function clearConversationByWaId(wa_id) {
   return supabase
     .from("conversations")
-    .delete()
+    .update({ cleared_at: new Date().toISOString() })
     .eq("wa_id", wa_id);
 }
 
@@ -8108,8 +8169,7 @@ app.post("/api/conversations/:wa_id/clear", async (req, res) => {
     return res.json({
       ok: true,
       action: "clear",
-      contactRetained: false,
-      reason: "Contact visibility is derived from conversation rows. Keeping contacts visible after clear requires a separate contacts table."
+      contactRetained: true
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });

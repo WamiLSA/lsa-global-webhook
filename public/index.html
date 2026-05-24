@@ -1530,11 +1530,12 @@
         document.getElementById("retryConversationLoadBtn")?.addEventListener("click", retry);
       }
     }
-    function renderConversationEmptyState() {
+    function renderConversationEmptyState(state = "no_messages") {
       selectedConversationLoading = false;
       clearSelectedConversationWatchdog();
       const container = document.getElementById("messages");
-      container.innerHTML = renderCurrentThreadAutomationSync() + "<div class='small'>No messages found for this conversation yet.</div>";
+      const message = state === "cleared" ? "Conversation cleared." : "No messages yet.";
+      container.innerHTML = renderCurrentThreadAutomationSync() + `<div class='small'>${escapeHtml(message)}</div>`;
     }
     function renderConversationFallbackPreview({ thread, retry, reason, endpoint, status = "n/a", payloadKeys = [] }) {
       selectedConversationLoading = false;
@@ -1665,7 +1666,7 @@
         }
 
         if (messages.length === 0) {
-          renderConversationEmptyState();
+          renderConversationEmptyState(payload?.conversation_state || "no_messages");
           document.getElementById("labelSelect").value = "";
           currentThreadMeta = { ...(currentThreadMeta || {}), is_unread: false, unread_count: 0 };
           syncThreadHeaderActions();
