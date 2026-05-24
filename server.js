@@ -8142,11 +8142,28 @@ app.post("/api/mobile/inbox/:conversationId/reply", async (req, res) => {
   }
 });
 
-async function clearConversationByWaId(wa_id) {
-  return supabase
-    .from("conversations")
-    .update({ cleared_at: new Date().toISOString() })
-    .eq("wa_id", wa_id);
+async function resolveConversationWaId(payload = {}) {
+  const directWaId = String(payload.wa_id || "").trim();
+  if (directWaId) return directWaId;
+  const candidateFields = ["phone", "thread_id", "conversation_id", "from", "id"];
+  for (const field of candidateFields) {
+    const value = String(payload[field] || "").trim();
+    if (!value) continue;
+    const attempts = [
+      supabase.from("conversations").select("wa_id").eq("wa_id", value).limit(1).maybeSingle(),
+      supabase.from("conversations").select("wa_id").eq("phone", value).limit(1).maybeSingle(),
+      supabase.from("conversations").select("wa_id").eq("from", value).limit(1).maybeSingle(),
+      supabase.from("conversations").select("wa_id").eq("conversation_id", value).limit(1).maybeSingle(),
+      supabase.from("whatsapp_contacts").select("wa_id").eq("wa_id", value).limit(1).maybeSingle(),
+      supabase.from("whatsapp_contacts").select("wa_id").eq("phone", value).limit(1).maybeSingle()
+    ];
+    for (const attempt of attempts) {
+      if (attempt.error) continue;
+      const foundWaId = String(attempt.data?.wa_id || "").trim();
+      if (foundWaId) return foundWaId;
+    }
+  }
+  return "";
 }
 
 
@@ -8156,45 +8173,59 @@ app.post("/api/conversations/:wa_id/state/:action", async (req, res) => {
 
 app.post("/api/conversations/:wa_id/clear", async (req, res) => {
   try {
-    const wa_id = req.params.wa_id;
-    if (!wa_id) {
-      return res.status(400).json({ error: "wa_id is required" });
+    const resolvedWaId = await resolveConversationWaId({
+      ...req.body,
+      ...req.query,
+      wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id
+    });
+    if (!resolvedWaId) {
+      return res.status(400).json({ ok: false, error: "A valid conversation identity is required (wa_id, phone, thread_id, conversation_id, from, or id)." });
     }
-
-    const { error } = await clearConversationByWaId(wa_id);
-    if (error) {
-      return res.status(500).json({ error });
+    const [{ count: deletedConversationRows, error: conversationDeleteError }, { count: deletedContactRows, error: contactDeleteError }] = await Promise.all([
+      supabase.from("conversations").delete({ count: "exact" }).eq("wa_id", resolvedWaId),
+      supabase.from("whatsapp_contacts").delete({ count: "exact" }).eq("wa_id", resolvedWaId)
+    ]);
+    if (conversationDeleteError || contactDeleteError) {
+      return res.status(500).json({ ok: false, error: conversationDeleteError || contactDeleteError });
     }
-
     return res.json({
       ok: true,
-      action: "clear",
-      contactRetained: true
+      deleted: true,
+      wa_id: resolvedWaId,
+      deleted_conversation_rows: Number(deletedConversationRows || 0),
+      deleted_contact_rows: Number(deletedContactRows || 0)
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
 app.post("/api/conversations/:wa_id/delete", async (req, res) => {
   try {
-    const wa_id = req.params.wa_id;
-    if (!wa_id) {
-      return res.status(400).json({ error: "wa_id is required" });
+    const resolvedWaId = await resolveConversationWaId({
+      ...req.body,
+      ...req.query,
+      wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id
+    });
+    if (!resolvedWaId) {
+      return res.status(400).json({ ok: false, error: "A valid conversation identity is required (wa_id, phone, thread_id, conversation_id, from, or id)." });
     }
-
-    const { error } = await clearConversationByWaId(wa_id);
-    if (error) {
-      return res.status(500).json({ error });
+    const [{ count: deletedConversationRows, error: conversationDeleteError }, { count: deletedContactRows, error: contactDeleteError }] = await Promise.all([
+      supabase.from("conversations").delete({ count: "exact" }).eq("wa_id", resolvedWaId),
+      supabase.from("whatsapp_contacts").delete({ count: "exact" }).eq("wa_id", resolvedWaId)
+    ]);
+    if (conversationDeleteError || contactDeleteError) {
+      return res.status(500).json({ ok: false, error: conversationDeleteError || contactDeleteError });
     }
-
     return res.json({
       ok: true,
-      action: "delete",
-      removedFromList: true
+      deleted: true,
+      wa_id: resolvedWaId,
+      deleted_conversation_rows: Number(deletedConversationRows || 0),
+      deleted_contact_rows: Number(deletedContactRows || 0)
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
