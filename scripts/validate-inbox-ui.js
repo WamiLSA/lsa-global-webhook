@@ -32,7 +32,7 @@ assert(web.includes('function resolveThreadId('), 'resolveThreadId helper missin
 assert(web.includes('div.dataset.threadId = threadId'), 'thread cards missing stable data-thread-id assignment');
 assert(web.includes('event.stopPropagation();'), 'thread action buttons are not isolating click propagation');
 assert(web.includes('div.onclick = async () => {'), 'thread click handler missing');
-assert(web.includes('await loadConversation(threadId'), 'thread click handler does not call loadConversation');
+assert(web.includes('await loadConversation(canonicalId'), 'thread click handler does not call loadConversation with canonical id');
 assert(web.includes('if (!threadId) {') && web.includes('Unable to open this conversation because its identifier is missing.'), 'thread click missing safe fallback for absent threadId');
 assert(web.includes('if (wa_id === undefined || wa_id === null || String(wa_id).trim() === "")'), 'loadConversation missing missing-id guard');
 assert(web.includes('div.classList.toggle("selected"'), 'selected-thread visual state toggle missing');
@@ -53,7 +53,7 @@ assert(web.includes('async function loadConversation(...args) { return loadSelec
 assert(web.includes('renderConversationError({'), 'conversation error card renderer missing');
 assert(web.includes('normalizeConversationMessages('), 'message payload normalization helper missing');
 assert(web.includes('payload.thread?.messages') && web.includes('payload.conversation?.messages') && web.includes('payload.records') && web.includes('payload.conversation_messages'), 'message fallback key parsing is incomplete');
-assert(web.includes('renderConversationLoading(displayName, threadId);'), 'thread click does not render loading state before fetch');
+assert(!web.includes('renderConversationLoading(displayName, threadId);') && !web.includes('renderConversationLoading(displayName, canonicalId'), 'thread click must not render loading directly');
 assert(web.includes('currentWaId = canonicalThreadId'), 'selected thread ID is not canonicalized before binding state');
 assert(web.includes('clearReplyContext();'), 'thread switching does not clear reply context');
 assert(web.includes('retryConversationLoadBtn'), 'retry button missing from conversation error state');
@@ -104,9 +104,16 @@ assert(web.includes('Conversation request timed out after 8 seconds'), 'timeout 
 assert(web.includes('Full conversation did not load. Showing the latest available thread preview.'), 'timeout fallback preview copy missing');
 assert(web.includes('selectedThreadId:') && web.includes('requestId:') && web.includes('elapsedMs:'), 'safe diagnostics fields missing');
 assert(web.includes('Reload inbox'), 'reload inbox action missing from timeout/fallback card');
-assert(web.includes('renderConversationLoading(displayName, threadId);') && web.includes('startSelectedConversationWatchdog({ requestId'), 'visible loading text is not tied to watchdog path');
+assert(web.includes('conversationUrl =') && web.includes('renderConversationLoading(contactName, canonicalThreadId'), 'loadSelectedConversation must build endpoint before rendering loading');
 assert(web.includes('clearSelectedConversationWatchdog();\n      selectedConversationLoading = false;'), 'watchdog is not cleared after timeout error render');
 
+
+const htmlCloseIdx = web.lastIndexOf('</html>');
+assert(htmlCloseIdx !== -1, 'missing closing </html>');
+const afterHtml = web.slice(htmlCloseIdx + '</html>'.length).trim();
+assert(afterHtml.length === 0, 'raw JavaScript appears after </html>');
+assert(!afterHtml.includes('if (!Array.isArray(messages))'), 'malformed payload guard appears after </html>');
+assert(web.includes('document.getElementById("chatTitle").textContent = "Conversation unavailable";') && web.includes('document.getElementById("chatActivity").textContent = "Thread loading failed";'), 'failure paths must update chat header fields');
 (function simulateWatchdogReachability() {
   let forcedRendered = false;
   const state = { selectedConversationRequestId: 7, currentWaId: '23775284311', currentChannel: 'whatsapp' };

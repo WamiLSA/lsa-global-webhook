@@ -1390,10 +1390,8 @@
             });
             return;
           }
-          if (currentChannel !== selectedChannel) setInboxChannel(selectedChannel);
-          renderConversationLoading(displayName, threadId);
-          renderConversationLoading(displayName, canonicalId, { channel: selectedChannel, threadId: canonicalId });
-          await loadConversation(threadId, displayName, activityTime, thread.last_direction || thread.direction, selectedChannel, {
+          if (currentChannel !== selectedChannel && typeof setInboxChannel === "function") setInboxChannel(selectedChannel);
+          await loadConversation(canonicalId, displayName, activityTime, thread.last_direction || thread.direction, selectedChannel, {
             _canonical_id: canonicalId,
             ...(thread || {}),
             wa_id: div.dataset.waId || thread.wa_id || canonicalId,
@@ -1540,6 +1538,8 @@
     }
     function renderConversationFallbackPreview({ thread, retry, reason, endpoint, status = "n/a", payloadKeys = [] }) {
       selectedConversationLoading = false;
+      document.getElementById("chatTitle").textContent = "Conversation unavailable";
+      document.getElementById("chatActivity").textContent = "Thread loading failed";
       const preview = String(thread?.preview || thread?.last_message || thread?.body || "No preview text available.");
       const activityText = thread?.last_activity_at ? formatLastActivity(thread.last_activity_at, thread?.last_direction || "in") : "Unknown last activity";
       const safePayloadKeys = Array.isArray(payloadKeys) ? payloadKeys.slice(0, 20).join(", ") : "";
@@ -1587,7 +1587,7 @@
       const isMail = channelAtRequest === "mail";
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       if (conversationChanged) { clearAttachmentSelection(); clearReplyContext(); }
-      updateThreadPolling();
+      if (typeof updateThreadPolling === "function") updateThreadPolling();
 
       document.getElementById("chatTitle").textContent = channelAtRequest === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
       document.getElementById("chatActivity").textContent = knownActivityTime ? formatLastActivity(knownActivityTime, knownActivityDirection) : "Loading latest activity...";
@@ -1653,6 +1653,16 @@
         const serverMessages = Array.isArray(messages) ? messages : [];
         const optimisticMessages = channelAtRequest === "whatsapp" ? (optimisticMessagesByThread.get(wa_id) || []) : [];
         messages = [...serverMessages, ...optimisticMessages];
+
+        if (!Array.isArray(messages)) {
+          const keys = normalized?.diagnostics?.payloadKeys || [];
+          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason: `Malformed conversation payload: unsupported messages shape. Payload keys: ${keys.join(", ") || "none"}`, endpoint: conversationUrl, status: res.status, payloadKeys: keys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          document.getElementById("chatTitle").textContent = "Conversation unavailable";
+          document.getElementById("chatActivity").textContent = "Malformed payload received";
+          loadStateResolved = true;
+          selectedConversationLoading = false;
+          return;
+        }
 
         if (messages.length === 0) {
           renderConversationEmptyState();
@@ -1982,15 +1992,8 @@
       document.getElementById("labelSelect").style.display = isMail ? "none" : "inline-block";
       loadCommunicationsSettings().then(loadThreads);
     }
-    document.addEventListener("visibilitychange", updateThreadPolling);
+    document.addEventListener("visibilitychange", () => { if (typeof updateThreadPolling === "function") updateThreadPolling(); });
     setInterval(loadThreads, 5000);
   </script>
 </body>
 </html>
-        if (!Array.isArray(messages)) {
-          const keys = normalized?.diagnostics?.payloadKeys || [];
-          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason: `Malformed conversation payload: unsupported messages shape. Payload keys: ${keys.join(", ") || "none"}`, endpoint: conversationUrl, status: res.status, payloadKeys: keys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
-          loadStateResolved = true;
-          selectedConversationLoading = false;
-          return;
-        }
