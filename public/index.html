@@ -585,7 +585,7 @@
     <div id="chatHeader">
       <div class="chat-header-row">
         <div>
-          <div id="chatTitle">Select a conversation</div>
+          <div id="chatTitle">No conversation selected</div>
           <div id="chatActivity"></div>
         </div>
         <div class="thread-actions">
@@ -594,7 +594,7 @@
           <button type="button" id="muteToggleBtn" onclick="toggleCurrentThreadMute()">Mute</button>
           <button type="button" id="archiveBtn" onclick="archiveThread()">Archive</button>
           <button type="button" id="unarchiveBtn" onclick="unarchiveThread()" style="display:none;">Unarchive</button>
-          <button type="button" onclick="clearChat()">Clear Chat</button>
+          <button type="button" onclick="clearChat()">Delete Chat Permanently</button>
           <button type="button" class="danger" onclick="deleteThread()">Delete Thread</button>
         </div>
       </div>
@@ -846,12 +846,25 @@
     function resetConversationPane() {
       currentWaId = null;
       currentContactName = "Contact";
-      document.getElementById("chatTitle").textContent = "Select a conversation";
+      document.getElementById("chatTitle").textContent = "No conversation selected";
       document.getElementById("chatActivity").textContent = "";
-      document.getElementById("messages").innerHTML = "<div class='small'>Select a conversation.</div>";
+      document.getElementById("messages").innerHTML = "<div class='small'>No conversation selected.</div>";
       document.getElementById("labelSelect").value = "";
       currentThreadMeta = null;
       syncThreadHeaderActions();
+    }
+
+    function removeThreadFromCurrentLists(threadId) {
+      const normalized = String(threadId || "").trim();
+      if (!normalized) return;
+      const list = document.getElementById("threads");
+      if (!list) return;
+      const items = Array.from(list.querySelectorAll(".thread"));
+      for (const item of items) {
+        const itemThreadId = String(item.dataset.threadId || "").trim();
+        const itemWaId = String(item.datasetWaId || "").trim();
+        if (itemThreadId === normalized || itemWaId === normalized) item.remove();
+      }
     }
 
     function getThreadActionEndpoint(channel, threadId, action) {
@@ -1877,7 +1890,7 @@
 
       const clearingThreadId = currentWaId;
       const channelAtAction = currentChannel;
-      const confirmed = window.confirm("Clear all messages in this chat? This cannot be undone.");
+      const confirmed = window.confirm("Delete this chat permanently from the database? This cannot be undone.");
       if (!confirmed) return;
 
       const res = await fetch(getThreadActionEndpoint(channelAtAction, clearingThreadId, "clear"), {
@@ -1890,14 +1903,9 @@
         return;
       }
 
-      if (currentWaId === clearingThreadId && currentChannel === channelAtAction) {
-        await loadConversation(clearingThreadId, currentContactName, null, null, channelAtAction);
-      }
+      removeThreadFromCurrentLists(clearingThreadId);
+      if (currentWaId === clearingThreadId && currentChannel === channelAtAction) resetConversationPane();
       await loadThreads();
-
-      if (result.contactRetained === false && result.reason) {
-        alert(result.reason);
-      }
     }
 
     async function deleteThread() {
@@ -1921,7 +1929,8 @@
         return;
       }
 
-      resetConversationPane();
+      removeThreadFromCurrentLists(deletingWaId);
+      if (currentWaId === deletingWaId && currentChannel === channelAtAction) resetConversationPane();
       await loadThreads();
     }
 
