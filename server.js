@@ -7226,7 +7226,8 @@ app.post("/api/communications/mail/threads/:thread_id/clear", async (req, res) =
     thread.last_activity_at = now;
     thread.is_read = true;
     await writeCommunicationsLayerState(state);
-    return res.json({ ok: true, contactRetained: true });
+    return res.json({ ok: true, contactRetained: true,
+      fallbackMode: clearResult.mode });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -7953,7 +7954,7 @@ app.get("/api/conversations/:wa_id", async (req, res) => {
       .order("created_at", { ascending: true });
 
     if (error) {
-      return res.status(500).json({ error });
+      return res.status(500).json({ error: clearResult.error });
     }
     console.log("[inbox-api] /api/conversations/:wa_id rows returned", {
       wa_id,
@@ -8142,11 +8143,38 @@ app.post("/api/mobile/inbox/:conversationId/reply", async (req, res) => {
   }
 });
 
-async function clearConversationByWaId(wa_id) {
+async function deleteConversationByWaId(wa_id) {
   return supabase
+    .from("conversations")
+    .delete()
+    .eq("wa_id", wa_id);
+}
+
+async function clearConversationByWaId(wa_id) {
+  const clearResult = await supabase
     .from("conversations")
     .update({ cleared_at: new Date().toISOString() })
     .eq("wa_id", wa_id);
+
+  const missingColumn = extractMissingColumnName(clearResult?.error);
+  if (!clearResult?.error || missingColumn !== "cleared_at") {
+    return {
+      ...clearResult,
+      mode: "soft_clear"
+    };
+  }
+
+  console.warn("[conversation-clear] cleared_at column unavailable; falling back to hard delete", {
+    wa_id,
+    error_code: clearResult?.error?.code || null,
+    error_message: clearResult?.error?.message || String(clearResult?.error)
+  });
+
+  const deleteResult = await deleteConversationByWaId(wa_id);
+  return {
+    ...deleteResult,
+    mode: "hard_delete_fallback"
+  };
 }
 
 
@@ -8161,15 +8189,16 @@ app.post("/api/conversations/:wa_id/clear", async (req, res) => {
       return res.status(400).json({ error: "wa_id is required" });
     }
 
-    const { error } = await clearConversationByWaId(wa_id);
-    if (error) {
-      return res.status(500).json({ error });
+    const clearResult = await clearConversationByWaId(wa_id);
+    if (clearResult.error) {
+      return res.status(500).json({ error: clearResult.error });
     }
 
     return res.json({
       ok: true,
       action: "clear",
-      contactRetained: true
+      contactRetained: true,
+      fallbackMode: clearResult.mode
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -8183,9 +8212,9 @@ app.post("/api/conversations/:wa_id/delete", async (req, res) => {
       return res.status(400).json({ error: "wa_id is required" });
     }
 
-    const { error } = await clearConversationByWaId(wa_id);
-    if (error) {
-      return res.status(500).json({ error });
+    const deleteResult = await deleteConversationByWaId(wa_id);
+    if (deleteResult.error) {
+      return res.status(500).json({ error: deleteResult.error });
     }
 
     return res.json({
