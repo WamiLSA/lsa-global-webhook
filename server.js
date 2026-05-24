@@ -7763,9 +7763,19 @@ app.get("/api/inbox/conversation", async (req, res) => {
     resolvedThread: null
   };
   console.log("[inbox-api] selected conversation canonical identity resolved", { requestId, canonical });
+  console.log("[inbox-api] selected conversation candidate identifiers", { requestId, candidates: deduped });
 
   if (!requestedId) {
-    const payload = { ok: false, error: "Missing thread identifier.", messages: [], debug: { requested, canonical, attemptedLookups } };
+    const payload = {
+      ok: false,
+      error: {
+        code: "MISSING_THREAD_IDENTIFIER",
+        message: "Missing thread identifier.",
+        operator_message: "Selected conversation request did not include a usable identifier."
+      },
+      messages: [],
+      debug: { requestId, attemptedLookups, receivedIdentifiers: requested }
+    };
     console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: "missing identifier" });
     return res.status(400).json(payload);
   }
@@ -7773,6 +7783,7 @@ app.get("/api/inbox/conversation", async (req, res) => {
   try {
     console.log("[inbox-api] selected conversation message query started", { requestId, channel, requestedId, candidates: deduped.length });
     let messages = [];
+    const lookupErrors = [];
     for (const candidate of deduped) {
       attemptedLookups.push(candidate);
       const queryPromise = supabase.from("conversations").select("*").eq("wa_id", candidate).order("created_at", { ascending: true });
@@ -7782,6 +7793,16 @@ app.get("/api/inbox/conversation", async (req, res) => {
       ]);
       const { data, error } = result || {};
       if (error) {
+        lookupErrors.push({
+          candidate,
+          code: error?.code || "SUPABASE_QUERY_ERROR",
+          message: error?.message || "Supabase query failed"
+        });
+        console.log("[inbox-api] selected conversation Supabase error per candidate", {
+          requestId,
+          candidate,
+          error: { code: error?.code || null, message: error?.message || String(error) }
+        });
         continue;
       }
       if (Array.isArray(data) && data.length > 0) {
@@ -7803,16 +7824,34 @@ app.get("/api/inbox/conversation", async (req, res) => {
     });
 
     if (!canonical.resolvedThread) {
+      if (lookupErrors.length === deduped.length) {
+        const firstError = lookupErrors[0] || {};
+        const payload = {
+          ok: false,
+          error: {
+            code: firstError.code || "SUPABASE_QUERY_ERROR",
+            message: firstError.message || "Supabase selected conversation query failed.",
+            operator_message: "Supabase returned errors for all selected conversation lookup candidates."
+          },
+          messages: [],
+          debug: { requestId, attemptedLookups, receivedIdentifiers: requested }
+        };
+        console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: "all-candidates-failed" });
+        return res.status(500).json(payload);
+      }
       const payload = {
-        ok: true,
-        thread: { id: requestedId, wa_id: requested.wa_id || requestedId, phone: requested.phone || requested.from || null, channel },
+        ok: false,
+        error: {
+          code: "CONVERSATION_NOT_FOUND",
+          message: "Conversation not found for provided identifier(s).",
+          operator_message: "No rows were returned for the selected conversation identifiers."
+        },
         messages: [],
-        debug: { reason: "no messages found", matchedBy: "none", requested, canonical, attemptedLookups }
+        debug: { requestId, attemptedLookups, receivedIdentifiers: requested }
       };
-      console.log("[inbox-api] selected conversation response sent", { requestId, ok: true, count: 0, reason: "no messages found" });
-      console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: messages.length, ok: true });
-    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
-      return res.json(payload);
+      console.log("[inbox-api] selected conversation zero-row not-found result", { requestId, attemptedLookups });
+      console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
+      return res.status(404).json(payload);
     }
 
     await markThreadReadState("whatsapp", canonical.resolvedThread);
@@ -7820,14 +7859,25 @@ app.get("/api/inbox/conversation", async (req, res) => {
       ok: true,
       thread: messages[0] || { wa_id: canonical.resolvedThread, id: canonical.resolvedThread, channel },
       messages,
-      debug: { matchedBy: canonical.matchedBy, requested, canonical, attemptedLookups }
+      debug: { matchedBy: canonical.matchedBy, requestedId, resolvedThread: canonical.resolvedThread, channel, requestId, attemptedLookups }
     };
+    console.log("[inbox-api] selected conversation successful resolved thread", { requestId, resolvedThread: canonical.resolvedThread, matchedBy: canonical.matchedBy, count: messages.length });
+    console.log("[inbox-api] selected conversation final response shape", { requestId, ok: payload.ok, keys: Object.keys(payload), debugKeys: Object.keys(payload.debug || {}) });
     console.log("[inbox-api] selected conversation response sent", { requestId, ok: true, count: messages.length, resolvedThread: canonical.resolvedThread });
     return res.json(payload);
   } catch (error) {
     console.log("[inbox-api] selected conversation failed", { requestId, error: error?.message || String(error) });
     console.log("[inbox-api] selected conversation load failed", { requestId, error: error?.message || String(error) });
-    const payload = { ok: false, error: error?.message || "selected conversation query failed", messages: [], debug: { requested, canonical, attemptedLookups } };
+    const payload = {
+      ok: false,
+      error: {
+        code: "SELECTED_CONVERSATION_ROUTE_ERROR",
+        message: error?.message || "selected conversation query failed",
+        operator_message: "Unexpected selected conversation route failure."
+      },
+      messages: [],
+      debug: { requestId, attemptedLookups, receivedIdentifiers: requested }
+    };
     console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: payload.error });
     return res.status(500).json(payload);
   }

@@ -1549,7 +1549,7 @@
       document.getElementById("reloadInboxBtn")?.addEventListener("click", () => window.location.reload());
     }
 
-    function renderConversationTimeoutError({ threadName, threadId, channel, endpoint, requestId, elapsedMs, retry, threadMeta }) {
+    function renderConversationTimeoutError({ threadName, threadId, channel, endpoint, requestId, elapsedMs, retry }) {
       renderConversationError({
         threadName,
         threadId,
@@ -1559,14 +1559,7 @@
         status: "timeout",
         diagnostics: { selectedThreadId: currentWaId, selectedThreadName: currentContactName, currentChannel, endpoint, requestId, elapsedMs },
         retry,
-        clearWatchdog: false
-      });
-      renderConversationFallbackPreview({
-        thread: { ...(threadMeta || {}), id: threadId, name: threadName, channel, last_activity_at: threadMeta?.last_activity_at || threadMeta?.last_message_at },
-        reason: "Conversation request timed out after 8 seconds",
-        endpoint,
-        status: "timeout",
-        retry
+        clearWatchdog: true
       });
       clearSelectedConversationWatchdog();
       selectedConversationLoading = false;
@@ -1603,6 +1596,7 @@
       let staleRequestDetected = false;
       let conversationUrl = "";
       const controller = new AbortController();
+      let fetchTimeoutHandle = null;
       try {
         inboxDebug("load-messages-request-started", { threadId: canonicalThreadId, channel: channelAtRequest, timeoutMs: conversationLoadTimeoutMs, requestSeq, requestId });
         const conversationRequestId = `${channelAtRequest}-${requestSeq}-${Date.now()}`;
@@ -1617,12 +1611,21 @@
         renderConversationLoading(contactName, canonicalThreadId, { threadId: canonicalThreadId, threadName: contactName, channel: selectedThreadChannel, endpoint: conversationUrl, requestId, startedAt: selectedConversationWatchdogStartedAt || Date.now(), waId: selectedWaId, phone: selectedPhone, conversationId: selectedConversationId });
         startSelectedConversationWatchdog({ requestId, threadId: canonicalThreadId, threadName: contactName, channel: channelAtRequest, endpoint: conversationUrl, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta), threadMeta: { ...(threadMeta || {}), last_activity_at: knownActivityTime } });
         inboxDebug("load-messages-fetch-url", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, requestId, conversationRequestId, url: conversationUrl });
+        fetchTimeoutHandle = setTimeout(() => {
+          if (requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
+            controller.abort("selected conversation fetch timeout");
+          }
+        }, conversationLoadTimeoutMs);
         const res = await fetch(conversationUrl, { signal: controller.signal });
+        const contentType = String(res.headers.get("content-type") || "").toLowerCase();
         let payload = null;
         try {
+          if (!contentType.includes("application/json")) {
+            throw new Error(`response content-type is not JSON (${contentType || "unknown"})`);
+          }
           payload = await res.json();
         } catch (jsonError) {
-          throw new Error(`invalid JSON response: ${jsonError?.message || "Unable to parse JSON"}`);
+          throw new Error(`Malformed conversation response: ${jsonError?.message || "Unable to parse JSON"}`);
         }
         inboxDebug("load-messages-response-status", { threadId: canonicalThreadId, channel: channelAtRequest, status: res.status, requestSeq });
         if (requestSeq !== conversationRequestSeq || currentWaId !== canonicalThreadId || currentChannel !== channelAtRequest) {
@@ -1637,8 +1640,7 @@
 
         if (!res.ok) {
           const reason = payload?.error?.message || payload?.error || `HTTP ${res.status}`;
-          renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: `non-OK response: ${reason}`, endpoint: conversationUrl, status: res.status, channel: channelAtRequest, payloadKeys: normalized.diagnostics.payloadKeys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
-          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason: `non-OK response: ${reason}`, endpoint: conversationUrl, status: res.status, payloadKeys: normalized.diagnostics.payloadKeys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason: `backend/API failure: ${reason}`, endpoint: conversationUrl, status: res.status, payloadKeys: normalized.diagnostics.payloadKeys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
           loadStateResolved = true;
           inboxDebug("load-messages-render-error", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, reason: `non-OK response: ${reason}` });
           return;
@@ -1699,12 +1701,18 @@
           loadStateResolved = true;
           return;
         }
-        const reason = error?.name === "TimeoutError" ? "timeout" : (error?.name === "AbortError" ? "request aborted" : `render exception: ${error?.message || "Unable to load this thread right now."}`);
-        renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason, endpoint: conversationUrl, channel: channelAtRequest, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
-        renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason, endpoint: conversationUrl, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        const reason = error?.name === "AbortError"
+          ? "Conversation request timed out after 8 seconds"
+          : `backend/API failure (render exception: ${error?.message || "Unable to load this thread right now."})`;
+        if (error?.name === "AbortError") {
+          renderConversationTimeoutError({ threadName: contactName, threadId: canonicalThreadId, channel: channelAtRequest, endpoint: conversationUrl, requestId, elapsedMs: conversationLoadTimeoutMs, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        } else {
+          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason, endpoint: conversationUrl, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+        }
         inboxDebug("load-messages-render-error", { threadId: canonicalThreadId, channel: channelAtRequest, requestSeq, reason });
         loadStateResolved = true;
       } finally {
+        if (fetchTimeoutHandle) clearTimeout(fetchTimeoutHandle);
         clearSelectedConversationWatchdog();
         if (staleRequestDetected && requestSeq === conversationRequestSeq && currentWaId === canonicalThreadId && currentChannel === channelAtRequest) {
           renderConversationError({ threadName: contactName, threadId: canonicalThreadId, reason: "stale request dropped", endpoint: null, channel: channelAtRequest, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
@@ -1979,3 +1987,10 @@
   </script>
 </body>
 </html>
+        if (!Array.isArray(messages)) {
+          const keys = normalized?.diagnostics?.payloadKeys || [];
+          renderConversationFallbackPreview({ thread: { ...(threadMeta || {}), id: canonicalThreadId, name: contactName, channel: channelAtRequest }, reason: `Malformed conversation payload: unsupported messages shape. Payload keys: ${keys.join(", ") || "none"}`, endpoint: conversationUrl, status: res.status, payloadKeys: keys, retry: () => loadSelectedConversation(canonicalThreadId, contactName, knownActivityTime, knownActivityDirection, channelAtRequest, threadMeta) });
+          loadStateResolved = true;
+          selectedConversationLoading = false;
+          return;
+        }
