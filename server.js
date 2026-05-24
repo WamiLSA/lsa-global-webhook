@@ -7735,59 +7735,101 @@ function resolveSelectedThread(input = {}) {
 
 app.get("/api/inbox/conversation", async (req, res) => {
   const requestId = String(req.query.requestId || `req-${Date.now()}`);
-  const channel = String(req.query.channel || "whatsapp");
-  const receivedThreadId = req.query.thread_id || null;
-  const receivedWaId = req.query.wa_id || null;
-  const receivedPhone = req.query.phone || req.query.from || null;
-  const receivedConversationId = req.query.conversation_id || req.query.id || null;
-  console.log("[inbox-api] selected conversation load started", { requestId, channel, receivedThreadId, receivedWaId, receivedPhone, receivedConversationId });
-
+  const requested = {
+    thread_id: req.query.thread_id || null,
+    conversation_id: req.query.conversation_id || req.query.id || null,
+    wa_id: req.query.wa_id || null,
+    phone: req.query.phone || null,
+    from: req.query.from || null,
+    id: req.query.id || null,
+    channel: String(req.query.channel || "").trim().toLowerCase() || null,
+    requestId
+  };
   const attemptedLookups = [];
-  try {
-    const lookupInput = {
-      thread_id: req.query.thread_id,
-      conversation_id: req.query.conversation_id,
-      wa_id: req.query.wa_id,
-      phone: req.query.phone,
-      from: req.query.from,
-      id: req.query.id,
-      channel
-    };
-    console.log("[inbox-api] selected conversation lookup input", { requestId, lookupInput });
-    const deduped = resolveSelectedThread(lookupInput);
-    const requestedId = deduped[0] || null;
-    let messages = [];
-    let resolvedThread = null;
-    let matchedBy = null;
+  console.log("[inbox-api] selected conversation request received", { requestId });
+  console.log("[inbox-api] selected conversation load started", { requestId, channel: requested.channel });
+  console.log("[inbox-api] selected conversation query params", requested);
 
+  const hasWhatsAppIdentity = [requested.wa_id, requested.phone, requested.from, requested.thread_id, requested.conversation_id, requested.id]
+    .some((value) => value !== undefined && value !== null && String(value).trim() !== "");
+  const channel = requested.channel === "mail" && !hasWhatsAppIdentity ? "mail" : "whatsapp";
+  const deduped = resolveSelectedThread(requested);
+  const requestedId = deduped[0] || null;
+  const canonical = {
+    channel,
+    requestedId,
+    candidateIds: deduped,
+    matchedBy: null,
+    resolvedThread: null
+  };
+  console.log("[inbox-api] selected conversation canonical identity resolved", { requestId, canonical });
+
+  if (!requestedId) {
+    const payload = { ok: false, error: "Missing thread identifier.", messages: [], debug: { requested, canonical, attemptedLookups } };
+    console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: "missing identifier" });
+    return res.status(400).json(payload);
+  }
+
+  try {
+    console.log("[inbox-api] selected conversation message query started", { requestId, channel, requestedId, candidates: deduped.length });
+    let messages = [];
     for (const candidate of deduped) {
       attemptedLookups.push(candidate);
-      const { data, error } = await supabase.from("conversations").select("*").eq("wa_id", candidate).order("created_at", { ascending: true });
-      if (error) continue;
+      const queryPromise = supabase.from("conversations").select("*").eq("wa_id", candidate).order("created_at", { ascending: true });
+      const result = await Promise.race([
+        queryPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("conversation query timeout after 5000ms")), 5000))
+      ]);
+      const { data, error } = result || {};
+      if (error) {
+        continue;
+      }
       if (Array.isArray(data) && data.length > 0) {
         messages = data;
-        resolvedThread = candidate;
-        matchedBy = "wa_id";
+        canonical.resolvedThread = candidate;
+        canonical.matchedBy = "wa_id";
         break;
       }
     }
 
-    if (!requestedId) {
-      return res.status(400).json({ ok: false, error: "Missing thread identifier.", messages: [], debug: { requestedId: null, channel, requestId, attemptedLookups } });
+    console.log("[inbox-api] selected conversation messages result", { requestId, resolvedThread: canonical.resolvedThread, count: messages.length });
+    console.log("[inbox-api] selected conversation message query completed", {
+      requestId,
+      channel,
+      attemptedLookups,
+      matchedBy: canonical.matchedBy,
+      resolvedThread: canonical.resolvedThread,
+      count: messages.length
+    });
+
+    if (!canonical.resolvedThread) {
+      const payload = {
+        ok: true,
+        thread: { id: requestedId, wa_id: requested.wa_id || requestedId, phone: requested.phone || requested.from || null, channel },
+        messages: [],
+        debug: { reason: "no messages found", matchedBy: "none", requested, canonical, attemptedLookups }
+      };
+      console.log("[inbox-api] selected conversation response sent", { requestId, ok: true, count: 0, reason: "no messages found" });
+      console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: messages.length, ok: true });
+    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
+      return res.json(payload);
     }
-    if (!resolvedThread) {
-      console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: 0, ok: false });
-      return res.status(404).json({ ok: false, error: "Conversation not found for provided identifiers.", messages: [], debug: { requestedId, channel, requestId, attemptedLookups } });
-    }
-    await markThreadReadState("whatsapp", resolvedThread);
-    const thread = messages[0] || { wa_id: resolvedThread };
-    console.log("[inbox-api] selected conversation messages result", { requestId, resolvedThread, count: messages.length });
-    const response = { ok: true, thread, messages, debug: { matchedBy, requestedId, channel, requestId, attemptedLookups } };
-    console.log("[inbox-api] selected conversation lookup result", { requestId, attemptedLookups, messageCount: messages.length, ok: true });
-    return res.json(response);
+
+    await markThreadReadState("whatsapp", canonical.resolvedThread);
+    const payload = {
+      ok: true,
+      thread: messages[0] || { wa_id: canonical.resolvedThread, id: canonical.resolvedThread, channel },
+      messages,
+      debug: { matchedBy: canonical.matchedBy, requested, canonical, attemptedLookups }
+    };
+    console.log("[inbox-api] selected conversation response sent", { requestId, ok: true, count: messages.length, resolvedThread: canonical.resolvedThread });
+    return res.json(payload);
   } catch (error) {
+    console.log("[inbox-api] selected conversation failed", { requestId, error: error?.message || String(error) });
     console.log("[inbox-api] selected conversation load failed", { requestId, error: error?.message || String(error) });
-    return res.status(500).json({ ok: false, error: error.message, messages: [], debug: { requestedId: receivedThreadId || null, channel, requestId, attemptedLookups } });
+    const payload = { ok: false, error: error?.message || "selected conversation query failed", messages: [], debug: { requested, canonical, attemptedLookups } };
+    console.log("[inbox-api] selected conversation response sent", { requestId, ok: false, reason: payload.error });
+    return res.status(500).json(payload);
   }
 });
 
