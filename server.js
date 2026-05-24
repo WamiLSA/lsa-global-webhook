@@ -7226,8 +7226,7 @@ app.post("/api/communications/mail/threads/:thread_id/clear", async (req, res) =
     thread.last_activity_at = now;
     thread.is_read = true;
     await writeCommunicationsLayerState(state);
-    return res.json({ ok: true, contactRetained: true,
-      fallbackMode: clearResult.mode });
+    return res.json({ ok: true, contactRetained: true });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
