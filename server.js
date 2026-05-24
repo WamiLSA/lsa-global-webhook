@@ -8166,6 +8166,58 @@ async function resolveConversationWaId(payload = {}) {
   return "";
 }
 
+function collectWaIdCandidates(payload = {}) {
+  const candidates = [
+    payload.wa_id,
+    payload.phone,
+    payload.thread_id,
+    payload.conversation_id,
+    payload.from,
+    payload.id
+  ];
+  if (Array.isArray(payload.wa_ids)) candidates.push(...payload.wa_ids);
+  return Array.from(new Set(candidates.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+async function resolveConversationWaIds(payload = {}) {
+  const resolved = new Set();
+  const candidates = collectWaIdCandidates(payload);
+  for (const candidate of candidates) {
+    const resolvedWaId = await resolveConversationWaId({ wa_id: candidate });
+    if (resolvedWaId) resolved.add(resolvedWaId);
+  }
+  return Array.from(resolved);
+}
+
+async function applyConversationDataAction({ waIds = [], action = "clear_chat" } = {}) {
+  const normalizedWaIds = Array.from(new Set((Array.isArray(waIds) ? waIds : []).map((value) => String(value || "").trim()).filter(Boolean)));
+  if (!normalizedWaIds.length) {
+    return { ok: false, status: 400, error: "At least one valid conversation identity is required.", action, wa_ids: [] };
+  }
+  let deletedConversationRows = 0;
+  let deletedContactRows = 0;
+  let archivedRows = 0;
+  if (action === "archive") {
+    const { count, error } = await supabase.from("conversations").update({ is_archived: true }).in("wa_id", normalizedWaIds).select("*", { count: "exact", head: true });
+    if (error) return { ok: false, status: 500, error, action, wa_ids: normalizedWaIds };
+    archivedRows = Number(count || 0);
+  } else if (action === "clear_chat" || action === "delete_thread") {
+    const { count, error } = await supabase.from("conversations").delete({ count: "exact" }).in("wa_id", normalizedWaIds);
+    if (error) return { ok: false, status: 500, error, action, wa_ids: normalizedWaIds };
+    deletedConversationRows = Number(count || 0);
+  } else if (action === "delete_chat_permanently") {
+    const [conversationDelete, contactDelete] = await Promise.all([
+      supabase.from("conversations").delete({ count: "exact" }).in("wa_id", normalizedWaIds),
+      supabase.from("whatsapp_contacts").delete({ count: "exact" }).in("wa_id", normalizedWaIds)
+    ]);
+    if (conversationDelete.error || contactDelete.error) {
+      return { ok: false, status: 500, error: conversationDelete.error || contactDelete.error, action, wa_ids: normalizedWaIds };
+    }
+    deletedConversationRows = Number(conversationDelete.count || 0);
+    deletedContactRows = Number(contactDelete.count || 0);
+  }
+  return { ok: true, action, wa_ids: normalizedWaIds, deleted_conversation_rows: deletedConversationRows, deleted_contact_rows: deletedContactRows, archived_rows: archivedRows };
+}
 
 app.post("/api/conversations/:wa_id/state/:action", async (req, res) => {
   return applyThreadStateAction(req, res, "whatsapp", req.params.wa_id);
@@ -8173,28 +8225,14 @@ app.post("/api/conversations/:wa_id/state/:action", async (req, res) => {
 
 app.post("/api/conversations/:wa_id/clear", async (req, res) => {
   try {
-    const resolvedWaId = await resolveConversationWaId({
+    const resolvedWaIds = await resolveConversationWaIds({
       ...req.body,
       ...req.query,
       wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id
     });
-    if (!resolvedWaId) {
-      return res.status(400).json({ ok: false, error: "A valid conversation identity is required (wa_id, phone, thread_id, conversation_id, from, or id)." });
-    }
-    const [{ count: deletedConversationRows, error: conversationDeleteError }, { count: deletedContactRows, error: contactDeleteError }] = await Promise.all([
-      supabase.from("conversations").delete({ count: "exact" }).eq("wa_id", resolvedWaId),
-      supabase.from("whatsapp_contacts").delete({ count: "exact" }).eq("wa_id", resolvedWaId)
-    ]);
-    if (conversationDeleteError || contactDeleteError) {
-      return res.status(500).json({ ok: false, error: conversationDeleteError || contactDeleteError });
-    }
-    return res.json({
-      ok: true,
-      deleted: true,
-      wa_id: resolvedWaId,
-      deleted_conversation_rows: Number(deletedConversationRows || 0),
-      deleted_contact_rows: Number(deletedContactRows || 0)
-    });
+    const result = await applyConversationDataAction({ waIds: resolvedWaIds, action: "clear_chat" });
+    if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error });
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
@@ -8202,28 +8240,14 @@ app.post("/api/conversations/:wa_id/clear", async (req, res) => {
 
 app.post("/api/conversations/:wa_id/delete", async (req, res) => {
   try {
-    const resolvedWaId = await resolveConversationWaId({
+    const resolvedWaIds = await resolveConversationWaIds({
       ...req.body,
       ...req.query,
       wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id
     });
-    if (!resolvedWaId) {
-      return res.status(400).json({ ok: false, error: "A valid conversation identity is required (wa_id, phone, thread_id, conversation_id, from, or id)." });
-    }
-    const [{ count: deletedConversationRows, error: conversationDeleteError }, { count: deletedContactRows, error: contactDeleteError }] = await Promise.all([
-      supabase.from("conversations").delete({ count: "exact" }).eq("wa_id", resolvedWaId),
-      supabase.from("whatsapp_contacts").delete({ count: "exact" }).eq("wa_id", resolvedWaId)
-    ]);
-    if (conversationDeleteError || contactDeleteError) {
-      return res.status(500).json({ ok: false, error: conversationDeleteError || contactDeleteError });
-    }
-    return res.json({
-      ok: true,
-      deleted: true,
-      wa_id: resolvedWaId,
-      deleted_conversation_rows: Number(deletedConversationRows || 0),
-      deleted_contact_rows: Number(deletedContactRows || 0)
-    });
+    const result = await applyConversationDataAction({ waIds: resolvedWaIds, action: "delete_chat_permanently" });
+    if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error });
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
@@ -8231,33 +8255,38 @@ app.post("/api/conversations/:wa_id/delete", async (req, res) => {
 
 app.post("/api/conversations/:wa_id/archive", async (req, res) => {
   try {
-    const wa_id = req.params.wa_id;
-    if (!wa_id) {
-      return res.status(400).json({ error: "wa_id is required" });
-    }
-
-    const { error } = await supabase
-      .from("conversations")
-      .update({ is_archived: true })
-      .eq("wa_id", wa_id);
-
-    if (error) {
-      const errorMessage = String(error.message || "");
-      if (errorMessage.toLowerCase().includes("is_archived")) {
-        return res.status(500).json({
-          error: "Archive requires the is_archived column. Run the SQL migration before using archive."
-        });
-      }
-      return res.status(500).json({ error });
-    }
-
-    return res.json({
-      ok: true,
-      action: "archive",
-      removedFromList: true
-    });
+    const resolvedWaIds = await resolveConversationWaIds({ ...req.body, ...req.query, wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id });
+    const result = await applyConversationDataAction({ waIds: resolvedWaIds, action: "archive" });
+    if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error });
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/conversations/:wa_id/delete-thread", async (req, res) => {
+  try {
+    const resolvedWaIds = await resolveConversationWaIds({ ...req.body, ...req.query, wa_id: req.params.wa_id || req.body?.wa_id || req.query?.wa_id });
+    const result = await applyConversationDataAction({ waIds: resolvedWaIds, action: "delete_thread" });
+    if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error });
+    return res.json({ ...result, thread_scope: "wa_id_only_schema" });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/conversations/bulk/:action", async (req, res) => {
+  try {
+    const actionMap = { archive: "archive", clear: "clear_chat", delete: "delete_chat_permanently" };
+    const requested = String(req.params.action || "").trim().toLowerCase();
+    const mappedAction = actionMap[requested];
+    if (!mappedAction) return res.status(400).json({ ok: false, error: "Invalid bulk action." });
+    const resolvedWaIds = await resolveConversationWaIds({ ...req.body, ...req.query, wa_ids: req.body?.wa_ids || req.query?.wa_ids || [] });
+    const result = await applyConversationDataAction({ waIds: resolvedWaIds, action: mappedAction });
+    if (!result.ok) return res.status(result.status || 500).json({ ok: false, error: result.error });
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 

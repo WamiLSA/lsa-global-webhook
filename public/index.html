@@ -578,6 +578,14 @@
       </div>
     </div>
     <div class="thread-list-heading"><span id="threadListHeading">Active threads</span><span id="threadListChannel">WhatsApp</span></div>
+    <div class="small" style="display:flex;gap:8px;align-items:center;margin:8px 0;">
+      <button type="button" onclick="selectAllVisibleThreads()">Select all visible</button>
+      <button type="button" onclick="deselectAllThreads()">Deselect all</button>
+      <span id="bulkSelectionCount">0 selected.</span>
+      <button type="button" onclick="bulkArchiveThreads()">Bulk Archive</button>
+      <button type="button" onclick="bulkClearChats()">Bulk Clear Chats</button>
+      <button type="button" class="danger" onclick="bulkDeletePermanently()">Bulk Delete Permanently</button>
+    </div>
     <div id="threads"></div>
   </div>
 
@@ -594,8 +602,9 @@
           <button type="button" id="muteToggleBtn" onclick="toggleCurrentThreadMute()">Mute</button>
           <button type="button" id="archiveBtn" onclick="archiveThread()">Archive</button>
           <button type="button" id="unarchiveBtn" onclick="unarchiveThread()" style="display:none;">Unarchive</button>
-          <button type="button" onclick="clearChat()">Delete Chat Permanently</button>
-          <button type="button" class="danger" onclick="deleteThread()">Delete Thread</button>
+          <button type="button" onclick="clearChat()">Clear Chat</button>
+          <button type="button" class="danger" onclick="deleteChatPermanently()">Delete Chat Permanently</button>
+          <button type="button" id="deleteThreadBtn" onclick="deleteThread()">Delete Thread (same as Clear)</button>
         </div>
       </div>
       <div>
@@ -653,6 +662,7 @@
     let conversationLoadTimer = null;
     let selectedConversationWatchdogStartedAt = 0;
     let selectedConversationLoading = false;
+    let selectedThreadIds = new Set();
     let threadSearchQuery = "";
     const threadUiState = {
       starredByThread: {},
@@ -852,6 +862,7 @@
       document.getElementById("labelSelect").value = "";
       currentThreadMeta = null;
       syncThreadHeaderActions();
+      document.getElementById("replyBox").disabled = true;
     }
 
     function removeThreadFromCurrentLists(threadId) {
@@ -873,6 +884,24 @@
         return `/api/communications/mail/threads/${safeThreadId}/${action}`;
       }
       return `/api/conversations/${safeThreadId}/${action}`;
+    }
+    function updateBulkSelectionCount() {
+      document.getElementById("bulkSelectionCount").textContent = `${selectedThreadIds.size} selected.`;
+    }
+    function selectAllVisibleThreads() {
+      document.querySelectorAll("#threads .thread").forEach((item) => {
+        const threadId = String(item.dataset.threadId || "").trim();
+        if (!threadId) return;
+        selectedThreadIds.add(threadId);
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = true;
+      });
+      updateBulkSelectionCount();
+    }
+    function deselectAllThreads() {
+      selectedThreadIds = new Set();
+      document.querySelectorAll('#threads .thread input[type="checkbox"]').forEach((checkbox) => { checkbox.checked = false; });
+      updateBulkSelectionCount();
     }
 
     function resolveThreadId(thread, channel = currentChannel) {
@@ -1348,6 +1377,7 @@
         const badgeHtml = showBadges && unreadCount > 0 ? `<span class="unread-badge" title="${unreadCount} unread message${unreadCount === 1 ? "" : "s"}">${unreadCount > 99 ? "99+" : unreadCount}</span>` : "";
         div.innerHTML = `
           <div class="thread-top">
+            <input type="checkbox" class="thread-select-checkbox" />
             <div class="thread-name-row"><strong>${escapeHtml(displayName)}</strong>${iconHtml}</div>
             <span class="thread-time" title="${escapeHtml(parseMessageDate(activityTime)?.toLocaleString() || "Time unavailable")}">${escapeHtml(settings.thread_list?.recency_display === "exact" ? (parseMessageDate(activityTime)?.toLocaleString() || "—") : formatThreadRecency(activityTime))}</span>
           </div>
@@ -1361,6 +1391,16 @@
           </div>
           <div class="badge">${escapeHtml(thread.label || (unreadCount > 0 ? "Unread" : "No label"))}</div>
         `;
+        const selectionCheckbox = div.querySelector(".thread-select-checkbox");
+        if (selectionCheckbox) {
+          selectionCheckbox.checked = selectedThreadIds.has(threadId);
+          selectionCheckbox.addEventListener("click", (event) => event.stopPropagation());
+          selectionCheckbox.addEventListener("change", (event) => {
+            if (event.target.checked) selectedThreadIds.add(threadId);
+            else selectedThreadIds.delete(threadId);
+            updateBulkSelectionCount();
+          });
+        }
         if (channelAtRequest === "mail") div.classList.add("thread-mail");
         div.querySelectorAll("button[data-action]").forEach((button) => {
           button.addEventListener("click", async (event) => {
@@ -1419,6 +1459,7 @@
         container.appendChild(div);
       });
       openHashThreadIfPresent();
+      updateBulkSelectionCount();
     }
 
 
@@ -1547,7 +1588,7 @@
       selectedConversationLoading = false;
       clearSelectedConversationWatchdog();
       const container = document.getElementById("messages");
-      const message = state === "cleared" ? "Conversation cleared." : "No messages yet.";
+      const message = state === "cleared" ? "Chat cleared. No messages yet." : "No messages found for this conversation yet.";
       container.innerHTML = renderCurrentThreadAutomationSync() + `<div class='small'>${escapeHtml(message)}</div>`;
     }
     function renderConversationFallbackPreview({ thread, retry, reason, endpoint, status = "n/a", payloadKeys = [] }) {
@@ -1604,6 +1645,7 @@
       if (typeof updateThreadPolling === "function") updateThreadPolling();
 
       document.getElementById("chatTitle").textContent = channelAtRequest === "mail" ? `Mail Thread — ${contactName}` : `${contactName} — ${wa_id}`;
+      document.getElementById("replyBox").disabled = false;
       document.getElementById("chatActivity").textContent = knownActivityTime ? formatLastActivity(knownActivityTime, knownActivityDirection) : "Loading latest activity...";
 
       let loadStateResolved = false;
@@ -1890,7 +1932,7 @@
 
       const clearingThreadId = currentWaId;
       const channelAtAction = currentChannel;
-      const confirmed = window.confirm("Delete this chat permanently from the database? This cannot be undone.");
+      const confirmed = window.confirm("Clear this chat history? Messages will be removed but contact will remain.");
       if (!confirmed) return;
 
       const res = await fetch(getThreadActionEndpoint(channelAtAction, clearingThreadId, "clear"), {
@@ -1903,12 +1945,11 @@
         return;
       }
 
-      removeThreadFromCurrentLists(clearingThreadId);
-      if (currentWaId === clearingThreadId && currentChannel === channelAtAction) resetConversationPane();
+      if (currentWaId === clearingThreadId && currentChannel === channelAtAction) renderConversationEmptyState("cleared");
       await loadThreads();
     }
 
-    async function deleteThread() {
+    async function deleteChatPermanently() {
       if (!currentWaId) {
         alert("Select a conversation first.");
         return;
@@ -1916,7 +1957,7 @@
 
       const deletingWaId = currentWaId;
       const channelAtAction = currentChannel;
-      const confirmed = window.confirm("Delete this thread completely? This cannot be undone.");
+      const confirmed = window.confirm("Delete chat permanently? Contact and messages will be removed and this cannot be undone.");
       if (!confirmed) return;
 
       const res = await fetch(getThreadActionEndpoint(channelAtAction, deletingWaId, "delete"), {
@@ -1933,6 +1974,31 @@
       if (currentWaId === deletingWaId && currentChannel === channelAtAction) resetConversationPane();
       await loadThreads();
     }
+    async function deleteThread() {
+      if (!currentWaId) return alert("Select a conversation first.");
+      const confirmed = window.confirm("Delete Thread currently maps to wa_id-only schema. It will clear messages and keep contact. Continue?");
+      if (!confirmed) return;
+      const res = await fetch(getThreadActionEndpoint(currentChannel, currentWaId, "delete-thread"), { method: "POST" });
+      const result = await res.json();
+      if (!res.ok) return alert("Delete thread failed: " + JSON.stringify(result));
+      renderConversationEmptyState("cleared");
+      await loadThreads();
+    }
+    async function runBulkAction(action, warningText) {
+      const wa_ids = Array.from(selectedThreadIds);
+      if (!wa_ids.length) return alert("Select at least one conversation.");
+      if (!window.confirm(warningText)) return;
+      const res = await fetch(`/api/conversations/bulk/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wa_ids }) });
+      const result = await res.json();
+      if (!res.ok) return alert(`Bulk ${action} failed: ${JSON.stringify(result)}`);
+      if (action === "delete" && currentWaId && selectedThreadIds.has(currentWaId)) resetConversationPane();
+      if (action === "clear" && currentWaId && selectedThreadIds.has(currentWaId)) renderConversationEmptyState("cleared");
+      deselectAllThreads();
+      await loadThreads();
+    }
+    async function bulkArchiveThreads() { return runBulkAction("archive", "Archive selected chats?"); }
+    async function bulkClearChats() { return runBulkAction("clear", "Clear selected chats? Contacts will remain."); }
+    async function bulkDeletePermanently() { return runBulkAction("delete", "Permanently delete selected chats and contacts? This cannot be undone."); }
 
     async function archiveThread() {
       if (!currentWaId) {
